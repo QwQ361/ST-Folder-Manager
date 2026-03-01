@@ -1,0 +1,10 @@
+{
+    "display_name": "角色卡文件夹分类",
+    "loading_order": 1001,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "Assistant",
+    "version": "1.0.0"
+}

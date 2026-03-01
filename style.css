@@ -1,0 +1,880 @@
+/* ========== 浮动按钮 ========== */
+#cfm-folder-button {
+    position: fixed !important;
+    z-index: 1050;
+    cursor: grab;
+    width: 44px;
+    height: 44px;
+    background-color: var(--SmartThemeBlurTintColor, #007bff);
+    color: var(--SmartThemeBodyColor, white);
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    border-radius: 50%;
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    user-select: none;
+    transition: box-shadow 0.2s;
+}
+#cfm-folder-button:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+#cfm-folder-button:active {
+    cursor: grabbing;
+}
+
+/* ========== 顶栏按钮 ========== */
+#cfm-topbar-button {
+    display: flex;
+    align-items: center;
+}
+#cfm-topbar-button .drawer-icon {
+    cursor: pointer;
+    opacity: 0.7;
+    transition: opacity 0.15s;
+}
+#cfm-topbar-button .drawer-icon:hover {
+    opacity: 1;
+}
+
+/* ========== 弹窗遮罩 ========== */
+#cfm-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 10000;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding-top: 3vh;
+}
+
+/* ========== 主弹窗 ========== */
+#cfm-popup {
+    position: relative;
+    width: 96vw;
+    max-width: 960px;
+    height: 88vh;
+    background-color: var(--SmartThemeBlurTintColor, #1e1e2e);
+    color: var(--SmartThemeBodyColor, #cdd6f4);
+    border: 1px solid var(--SmartThemeBorderColor, #45475a);
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+/* ========== 弹窗头部 ========== */
+#cfm-popup .cfm-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--SmartThemeBorderColor, #45475a);
+    flex-shrink: 0;
+}
+#cfm-popup .cfm-header h3 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+}
+#cfm-popup .cfm-header-actions {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+#cfm-popup .cfm-header-actions button {
+    background: none;
+    border: none;
+    color: var(--SmartThemeBodyColor, #cdd6f4);
+    cursor: pointer;
+    font-size: 15px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    opacity: 0.8;
+}
+#cfm-popup .cfm-header-actions button:hover {
+    opacity: 1;
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+/* ========== 双栏布局 ========== */
+.cfm-dual-pane {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+}
+
+/* ========== 左侧面板：文件夹树 ========== */
+.cfm-left-pane {
+    width: 260px;
+    min-width: 200px;
+    max-width: 360px;
+    border-right: 1px solid var(--SmartThemeBorderColor, #45475a);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    overflow: hidden;
+    background-color: rgba(0, 0, 0, 0.08);
+}
+.cfm-left-header {
+    padding: 8px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    opacity: 0.5;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--SmartThemeBorderColor, #45475a);
+}
+.cfm-left-tree {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+    scrollbar-width: thin;
+}
+.cfm-left-tree::-webkit-scrollbar {
+    width: 4px;
+}
+.cfm-left-tree::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 2px;
+}
+
+/* 树节点 */
+.cfm-tnode {
+    display: flex;
+    align-items: center;
+    padding: 5px 10px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: background-color 0.1s;
+    user-select: none;
+    white-space: nowrap;
+    border-left: 3px solid transparent;
+}
+.cfm-tnode:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+}
+.cfm-tnode.cfm-tnode-selected {
+    background-color: rgba(137, 180, 250, 0.15);
+    border-left-color: #89b4fa;
+}
+.cfm-tnode .cfm-tnode-arrow {
+    width: 18px;
+    text-align: center;
+    font-size: 10px;
+    opacity: 0.5;
+    flex-shrink: 0;
+    transition: transform 0.15s;
+}
+.cfm-tnode .cfm-tnode-arrow.cfm-arrow-expanded {
+    transform: rotate(90deg);
+}
+.cfm-tnode .cfm-tnode-arrow.cfm-arrow-hidden {
+    visibility: hidden;
+}
+.cfm-tnode .cfm-tnode-icon {
+    margin-right: 6px;
+    font-size: 14px;
+    color: #f9e2af;
+    flex-shrink: 0;
+}
+.cfm-tnode.cfm-tnode-uncategorized .cfm-tnode-icon {
+    color: #a6adc8;
+}
+.cfm-tnode .cfm-tnode-label {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.cfm-tnode .cfm-tnode-count {
+    font-size: 11px;
+    opacity: 0.4;
+    margin-left: 6px;
+    flex-shrink: 0;
+}
+.cfm-tnode-children {
+    display: none;
+}
+.cfm-tnode-children.cfm-children-expanded {
+    display: block;
+}
+
+/* 左侧拖拽高亮 */
+.cfm-tnode.cfm-drop-target {
+    background-color: rgba(137, 180, 250, 0.25) !important;
+    border-left-color: #89b4fa !important;
+}
+.cfm-tnode.cfm-drop-forbidden {
+    background-color: rgba(243, 139, 168, 0.15) !important;
+    border-left-color: #f38ba8 !important;
+}
+
+/* ========== 右侧面板：内容列表 ========== */
+.cfm-right-pane {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+}
+.cfm-right-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    font-size: 13px;
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--SmartThemeBorderColor, #45475a);
+    background-color: rgba(0, 0, 0, 0.05);
+}
+.cfm-right-header .cfm-rh-path {
+    flex: 1;
+    opacity: 0.6;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.cfm-right-header .cfm-rh-count {
+    opacity: 0.4;
+    font-size: 12px;
+    flex-shrink: 0;
+}
+.cfm-right-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+    scrollbar-width: thin;
+}
+.cfm-right-list::-webkit-scrollbar {
+    width: 4px;
+}
+.cfm-right-list::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 2px;
+}
+
+/* 右侧列表行 */
+.cfm-row {
+    display: flex;
+    align-items: center;
+    padding: 6px 14px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: background-color 0.1s;
+    user-select: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+.cfm-row:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+}
+.cfm-row .cfm-row-icon {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 10px;
+    flex-shrink: 0;
+    font-size: 16px;
+}
+.cfm-row.cfm-row-folder .cfm-row-icon {
+    color: #f9e2af;
+}
+.cfm-row.cfm-row-char .cfm-row-icon {
+    border-radius: 4px;
+    overflow: hidden;
+}
+.cfm-row.cfm-row-char .cfm-row-icon img {
+    width: 28px;
+    height: 28px;
+    object-fit: cover;
+}
+.cfm-row .cfm-row-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.cfm-row .cfm-row-meta {
+    font-size: 11px;
+    opacity: 0.4;
+    margin-left: 8px;
+    flex-shrink: 0;
+}
+
+/* 右侧拖拽高亮 */
+.cfm-row.cfm-drop-target {
+    background-color: rgba(137, 180, 250, 0.2) !important;
+    outline: 1px dashed #89b4fa;
+}
+.cfm-row.cfm-dragging {
+    opacity: 0.4;
+}
+
+/* 右侧空状态 */
+.cfm-right-empty {
+    text-align: center;
+    padding: 40px 20px;
+    opacity: 0.4;
+    font-size: 14px;
+}
+
+/* ========== 标签管理配置弹窗 ========== */
+#cfm-config-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 10001;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding-top: 5vh;
+}
+#cfm-config-popup {
+    position: relative;
+    width: 92vw;
+    max-width: 700px;
+    max-height: 82vh;
+    background-color: var(--SmartThemeBlurTintColor, #1e1e2e);
+    color: var(--SmartThemeBodyColor, #cdd6f4);
+    border: 1px solid var(--SmartThemeBorderColor, #45475a);
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+#cfm-config-popup .cfm-config-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--SmartThemeBorderColor, #45475a);
+    flex-shrink: 0;
+}
+#cfm-config-popup .cfm-config-header h3 {
+    margin: 0;
+    font-size: 16px;
+}
+#cfm-config-popup .cfm-config-body {
+    flex-grow: 1;
+    overflow-y: auto;
+    padding: 14px 18px;
+    scrollbar-width: thin;
+}
+
+/* 配置区域 */
+.cfm-config-section {
+    margin-bottom: 16px;
+}
+.cfm-config-section label {
+    display: block;
+    font-size: 13px;
+    margin-bottom: 6px;
+    font-weight: 600;
+}
+
+/* 按钮模式切换 */
+.cfm-mode-section {
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--SmartThemeBorderColor, #45475a);
+}
+.cfm-mode-toggle {
+    display: flex;
+    gap: 8px;
+    margin-top: 6px;
+}
+.cfm-mode-btn {
+    flex: 1;
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--SmartThemeBorderColor, #45475a);
+    background-color: rgba(255, 255, 255, 0.04);
+    color: var(--SmartThemeBodyColor, #cdd6f4);
+    cursor: pointer;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    transition: all 0.15s;
+}
+.cfm-mode-btn:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+.cfm-mode-btn.cfm-mode-active {
+    background-color: rgba(137, 180, 250, 0.2);
+    border-color: #89b4fa;
+    color: #89b4fa;
+    font-weight: 600;
+}
+
+/* 标签选择器 */
+#cfm-config-popup select,
+#cfm-config-popup input[type="text"] {
+    width: 100%;
+    padding: 6px 10px;
+    border-radius: 4px;
+    border: 1px solid var(--SmartThemeBorderColor, #45475a);
+    background-color: #2b2d31;
+    color: #f2f3f5;
+    font-size: 13px;
+    box-sizing: border-box;
+}
+#cfm-config-popup select:focus,
+#cfm-config-popup input[type="text"]:focus {
+    outline: none;
+    border-color: #89b4fa;
+}
+
+/* 配置树形展示 */
+.cfm-tree {
+    margin-top: 12px;
+}
+.cfm-tree-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 4px;
+    margin-bottom: 2px;
+    font-size: 13px;
+}
+.cfm-tree-item:hover {
+    background: rgba(88, 101, 242, 0.15);
+}
+.cfm-tree-item.cfm-tree-selected {
+    background: rgba(88, 101, 242, 0.25) !important;
+    border-left: 3px solid #5865f2;
+}
+.cfm-tree-item.cfm-tree-selected .cfm-tree-name {
+    color: #7289da;
+    font-weight: 600;
+}
+.cfm-selected-hint {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    margin-bottom: 6px;
+    background: rgba(88, 101, 242, 0.12);
+    border-radius: 6px;
+    font-size: 13px;
+    color: #7289da;
+}
+.cfm-btn-deselect {
+    background: none;
+    border: none;
+    color: #ed4245;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-left: auto;
+}
+.cfm-btn-deselect:hover {
+    background: rgba(237, 66, 69, 0.2);
+}
+.cfm-tree-item .cfm-tree-icon {
+    color: #f9e2af;
+    flex-shrink: 0;
+}
+.cfm-tree-item .cfm-tree-name {
+    flex-grow: 1;
+}
+.cfm-tree-item .cfm-tree-actions {
+    display: flex;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+.cfm-tree-item:hover .cfm-tree-actions {
+    opacity: 1;
+}
+.cfm-tree-item .cfm-tree-actions button {
+    background: none;
+    border: none;
+    color: var(--SmartThemeBodyColor, #cdd6f4);
+    cursor: pointer;
+    font-size: 13px;
+    padding: 2px 6px;
+    border-radius: 3px;
+}
+.cfm-tree-item .cfm-tree-actions button:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+.cfm-tree-item .cfm-tree-actions button.cfm-btn-danger:hover {
+    background-color: rgba(243, 139, 168, 0.2);
+    color: #f38ba8;
+}
+
+/* 添加文件夹区域 & 创建标签区域 */
+.cfm-add-folder-row,
+.cfm-create-tag-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+    align-items: center;
+}
+.cfm-add-folder-row select,
+.cfm-create-tag-row input[type="text"] {
+    flex: 1;
+}
+.cfm-add-folder-row button,
+.cfm-create-tag-row button {
+    padding: 6px 14px;
+    border-radius: 4px;
+    border: 1px solid var(--SmartThemeBorderColor, #45475a);
+    background-color: rgba(137, 180, 250, 0.15);
+    color: #89b4fa;
+    cursor: pointer;
+    font-size: 13px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.cfm-add-folder-row button:hover,
+.cfm-create-tag-row button:hover {
+    background-color: rgba(137, 180, 250, 0.25);
+}
+.cfm-create-tag-hint {
+    font-size: 11px;
+    opacity: 0.45;
+    margin-top: 4px;
+    font-style: italic;
+}
+
+/* 拖拽相关 */
+.cfm-tree-item[draggable="true"] {
+    cursor: grab;
+    transition:
+        opacity 0.15s,
+        background-color 0.15s;
+}
+.cfm-tree-item[draggable="true"]:active {
+    cursor: grabbing;
+}
+.cfm-tree-item.cfm-dragging {
+    opacity: 0.4;
+}
+.cfm-tree-item.cfm-drag-over {
+    background-color: rgba(137, 180, 250, 0.2) !important;
+    border: 1px dashed #89b4fa !important;
+    border-radius: 4px;
+}
+.cfm-tree-item.cfm-drag-forbidden {
+    background-color: rgba(243, 139, 168, 0.1) !important;
+    border: 1px dashed #f38ba8 !important;
+    border-radius: 4px;
+}
+.cfm-root-dropzone {
+    margin-top: 10px;
+    padding: 14px;
+    border: 2px dashed rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    text-align: center;
+    font-size: 12px;
+    opacity: 0.5;
+    transition: all 0.15s;
+    color: var(--SmartThemeBodyColor, #cdd6f4);
+}
+.cfm-root-dropzone.cfm-drag-over {
+    border-color: #a6e3a1 !important;
+    background-color: rgba(166, 227, 161, 0.1) !important;
+    opacity: 1;
+}
+.cfm-drag-hint {
+    font-size: 11px;
+    opacity: 0.45;
+    margin-top: 4px;
+    padding-left: 10px;
+    font-style: italic;
+}
+
+/* 通用按钮 */
+.cfm-btn {
+    padding: 6px 14px;
+    border-radius: 4px;
+    border: 1px solid var(--SmartThemeBorderColor, #45475a);
+    background-color: rgba(255, 255, 255, 0.06);
+    color: var(--SmartThemeBodyColor, #cdd6f4);
+    cursor: pointer;
+    font-size: 13px;
+}
+.cfm-btn:hover {
+    background-color: rgba(255, 255, 255, 0.12);
+}
+.cfm-btn-close {
+    background: none;
+    border: none;
+    color: var(--SmartThemeBodyColor, #cdd6f4);
+    cursor: pointer;
+    font-size: 20px;
+    padding: 0 4px;
+    opacity: 0.7;
+}
+.cfm-btn-close:hover {
+    opacity: 1;
+}
+
+/* 批量删除 */
+.cfm-del-checkbox {
+    cursor: pointer;
+    font-size: 15px;
+    color: rgba(255, 255, 255, 0.4);
+    flex-shrink: 0;
+    transition: color 0.15s;
+    margin-right: 6px;
+}
+.cfm-del-checkbox.cfm-del-checked {
+    color: #ed4245;
+}
+.cfm-delete-bar {
+    padding: 10px 14px;
+    margin-top: 8px;
+    background: rgba(237, 66, 69, 0.1);
+    border: 1px solid rgba(237, 66, 69, 0.3);
+    border-radius: 6px;
+    font-size: 13px;
+    color: #ed4245;
+}
+.cfm-delete-bar-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.cfm-delete-bar-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+.cfm-delete-bar-left {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.cfm-delete-bar-hint {
+    font-size: 11px;
+    opacity: 0.6;
+    font-style: italic;
+}
+.cfm-delete-bar-bottom {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 8px;
+    border-top: 1px solid rgba(237, 66, 69, 0.2);
+}
+.cfm-btn-sm {
+    padding: 3px 10px !important;
+    font-size: 12px !important;
+}
+.cfm-cascade-btn {
+    transition: all 0.15s;
+}
+.cfm-cascade-active {
+    background-color: rgba(88, 101, 242, 0.3) !important;
+    border-color: #5865f2 !important;
+    color: #89b4fa !important;
+}
+.cfm-range-btn { transition: all 0.15s; }
+.cfm-range-active {
+    background-color: rgba(166, 227, 161, 0.3) !important;
+    border-color: #a6e3a1 !important;
+    color: #a6e3a1 !important;
+    animation: cfm-range-pulse 1.5s ease-in-out infinite;
+}
+@keyframes cfm-range-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(166, 227, 161, 0.3); }
+    50% { box-shadow: 0 0 0 3px rgba(166, 227, 161, 0.15); }
+}
+.cfm-delete-bar-row2 {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding-top: 4px;
+}
+.cfm-invert-scope-select {
+    width: auto !important; padding: 2px 6px !important;
+    font-size: 11px !important; border-radius: 3px !important;
+    background-color: rgba(255,255,255,0.08) !important;
+    color: var(--SmartThemeBodyColor, #cdd6f4) !important;
+    border: 1px solid rgba(237, 66, 69, 0.3) !important;
+    cursor: pointer;
+}
+.cfm-invert-scope-select:focus {
+    outline: none; border-color: #ed4245 !important;
+}
+.cfm-btn-danger {
+    background: none;
+    border: 1px solid rgba(237, 66, 69, 0.4);
+    color: #ed4245;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background-color 0.15s;
+}
+.cfm-btn-danger:hover {
+    background-color: rgba(237, 66, 69, 0.2);
+}
+
+/* 批量创建弹窗 */
+.cfm-batch-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.65);
+    z-index: 10002;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding-top: 6vh;
+}
+.cfm-batch-popup {
+    width: 92vw;
+    max-width: 600px;
+    max-height: 82vh;
+    background-color: var(--SmartThemeBlurTintColor, #1e1e2e);
+    color: var(--SmartThemeBodyColor, #cdd6f4);
+    border: 1px solid var(--SmartThemeBorderColor, #45475a);
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+.cfm-batch-popup .cfm-config-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--SmartThemeBorderColor, #45475a);
+    flex-shrink: 0;
+}
+.cfm-batch-popup textarea {
+    background-color: #23272a !important;
+    color: #f2f3f5 !important;
+    border: 1px solid #4e5058 !important;
+}
+.cfm-batch-popup textarea:focus {
+    outline: none;
+    border-color: #89b4fa !important;
+}
+
+/* 智能缩进按钮激活状态 */
+.cfm-smart-indent-active {
+    background-color: rgba(88, 101, 242, 0.3) !important;
+    border-color: #5865f2 !important;
+    color: #89b4fa !important;
+    box-shadow: 0 0 0 1px rgba(88, 101, 242, 0.4);
+}
+
+/* ========== 新导入标签高亮 ========== */
+.cfm-new-badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    color: #1e1e2e;
+    background: linear-gradient(135deg, #a6e3a1, #94e2d5);
+    border-radius: 3px;
+    padding: 0 4px;
+    line-height: 16px;
+    vertical-align: middle;
+    margin-left: 4px;
+    letter-spacing: 0.5px;
+    animation: cfm-new-fade 2s ease-in-out infinite;
+}
+@keyframes cfm-new-fade {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+.cfm-tnode.cfm-tnode-new {
+    background-color: rgba(166, 227, 161, 0.08);
+}
+.cfm-tnode.cfm-tnode-new:hover {
+    background-color: rgba(166, 227, 161, 0.15);
+}
+.cfm-tree-item.cfm-tree-new {
+    background-color: rgba(166, 227, 161, 0.08);
+}
+.cfm-tree-item.cfm-tree-new:hover {
+    background-color: rgba(166, 227, 161, 0.15);
+}
+
+/* ========== 删除确认弹窗 ========== */
+#cfm-delete-confirm-overlay {
+    z-index: 10003;
+}
+
+/* ========== 原生界面嵌套导航 ========== */
+.cfm-native-hidden {
+    display: none !important;
+}
+#cfm-native-breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 8px 12px;
+    margin-bottom: 6px;
+    font-size: 13px;
+    flex-wrap: wrap;
+    border-radius: 6px;
+    background-color: var(--SmartThemeBlurTintColor, rgba(0, 0, 0, 0.15));
+    border: 1px solid var(--SmartThemeBorderColor, #45475a);
+}
+#cfm-native-breadcrumb:empty {
+    display: none;
+}
+.cfm-nbc-item {
+    padding: 2px 6px;
+    border-radius: 3px;
+    transition: background-color 0.15s;
+}
+.cfm-nbc-link {
+    cursor: pointer;
+    opacity: 0.7;
+}
+.cfm-nbc-link:hover {
+    opacity: 1;
+    background-color: rgba(255, 255, 255, 0.1);
+    text-decoration: underline;
+}
+.cfm-nbc-current {
+    font-weight: 600;
+    opacity: 1;
+}
+.cfm-nbc-sep {
+    opacity: 0.4;
+    user-select: none;
+}
+
+/* ========== 移动端适配 ========== */
+@media (max-width: 600px) {
+    .cfm-dual-pane {
+        flex-direction: column;
+    }
+    .cfm-left-pane {
+        width: 100% !important;
+        max-width: 100% !important;
+        height: 200px;
+        min-height: 150px;
+        border-right: none;
+        border-bottom: 1px solid var(--SmartThemeBorderColor, #45475a);
+    }
+    .cfm-right-pane {
+        flex: 1;
+    }
+    #cfm-popup {
+        height: 92vh;
+    }
+}
