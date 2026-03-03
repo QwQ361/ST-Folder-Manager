@@ -627,7 +627,9 @@ jQuery(async () => {
 
     let isDragging = false,
       hasMoved = false,
-      offset = { x: 0, y: 0 };
+      offset = { x: 0, y: 0 },
+      startPos = { x: 0, y: 0 };
+
     btn.on("mousedown touchstart", (e) => {
       isDragging = true;
       hasMoved = false;
@@ -636,24 +638,35 @@ jQuery(async () => {
       const pos = btn.offset();
       offset.x = ev.pageX - pos.left;
       offset.y = ev.pageY - pos.top;
+      startPos.x = ev.pageX;
+      startPos.y = ev.pageY;
       e.preventDefault();
     });
+
     $(document).on("mousemove.cfmDrag touchmove.cfmDrag", (e) => {
       if (!isDragging) return;
-      hasMoved = true;
       const ev = e.type === "touchmove" ? e.originalEvent.touches[0] : e;
-      btn.css({
-        top: ev.pageY - offset.y + "px",
-        left: ev.pageX - offset.x + "px",
-        right: "auto",
-        bottom: "auto",
-      });
+      const deltaX = Math.abs(ev.pageX - startPos.x);
+      const deltaY = Math.abs(ev.pageY - startPos.y);
+      // 移动超过5px才算拖拽
+      if (deltaX > 5 || deltaY > 5) {
+        hasMoved = true;
+      }
+      if (hasMoved) {
+        btn.css({
+          top: ev.pageY - offset.y + "px",
+          left: ev.pageX - offset.x + "px",
+          right: "auto",
+          bottom: "auto",
+        });
+      }
     });
-    $(document).on("mouseup.cfmDrag touchend.cfmDrag", () => {
+
+    $(document).on("mouseup.cfmDrag touchend.cfmDrag", (e) => {
       if (!isDragging) return;
       isDragging = false;
       btn.css("cursor", "grab");
-      if (hasMoved)
+      if (hasMoved) {
         localStorage.setItem(
           STORAGE_KEY_BTN_POS,
           JSON.stringify({
@@ -661,13 +674,23 @@ jQuery(async () => {
             left: btn.css("left"),
           }),
         );
-    });
-    btn.on("click", (e) => {
-      if (hasMoved) {
-        e.stopPropagation();
-        return;
+      } else {
+        // 没有移动，触发点击
+        e.preventDefault();
+        showMainPopup();
       }
-      showMainPopup();
+      // 重置状态
+      setTimeout(() => {
+        hasMoved = false;
+      }, 100);
+    });
+
+    btn.on("click", (e) => {
+      // 阻止默认的click事件，因为我们在touchend/mouseup中处理
+      if (hasMoved) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
     });
 
     let resizeTimer;
