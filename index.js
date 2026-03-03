@@ -630,16 +630,33 @@ jQuery(async () => {
       offset = { x: 0, y: 0 },
       startPos = { x: 0, y: 0 };
 
+    let longPressTimer = null;
+    let longPressTriggered = false;
+
     btn.on("mousedown touchstart", (e) => {
-      isDragging = true;
       hasMoved = false;
-      btn.css("cursor", "grabbing");
+      longPressTriggered = false;
       const ev = e.type === "touchstart" ? e.originalEvent.touches[0] : e;
       const pos = btn.offset();
       offset.x = ev.pageX - pos.left;
       offset.y = ev.pageY - pos.top;
       startPos.x = ev.pageX;
       startPos.y = ev.pageY;
+
+      // 移动端：长按500ms后才能拖拽
+      if (e.type === "touchstart") {
+        longPressTimer = setTimeout(() => {
+          longPressTriggered = true;
+          isDragging = true;
+          btn.css("cursor", "grabbing");
+          // 震动反馈（如果支持）
+          if (navigator.vibrate) navigator.vibrate(50);
+        }, 500);
+      } else {
+        // PC端：立即可拖拽
+        isDragging = true;
+        btn.css("cursor", "grabbing");
+      }
       e.preventDefault();
     });
 
@@ -663,6 +680,19 @@ jQuery(async () => {
     });
 
     $(document).on("mouseup.cfmDrag touchend.cfmDrag", (e) => {
+      // 清除长按计时器
+      if (longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
+
+      if (!isDragging && !longPressTriggered) {
+        // 短按：触发点击
+        e.preventDefault();
+        showMainPopup();
+        return;
+      }
+
       if (!isDragging) return;
       isDragging = false;
       btn.css("cursor", "grab");
@@ -674,14 +704,11 @@ jQuery(async () => {
             left: btn.css("left"),
           }),
         );
-      } else {
-        // 没有移动，触发点击
-        e.preventDefault();
-        showMainPopup();
       }
       // 重置状态
       setTimeout(() => {
         hasMoved = false;
+        longPressTriggered = false;
       }, 100);
     });
 
@@ -1132,7 +1159,40 @@ jQuery(async () => {
       renderRightPane();
     });
 
-    // 左侧树拖拽：拖动文件夹
+    // 左侧树拖拽：拖动文件夹（支持长按）
+    let nodeLongPressTimer = null;
+    let nodeDraggable = false;
+
+    node.on("mousedown touchstart", (e) => {
+      if (e.type === "touchstart") {
+        nodeDraggable = false;
+        nodeLongPressTimer = setTimeout(() => {
+          nodeDraggable = true;
+          node.attr("draggable", "true");
+          if (navigator.vibrate) navigator.vibrate(50);
+          // 触发拖拽开始
+          const touch = e.originalEvent.touches[0];
+          const dragEvent = new DragEvent("dragstart", {
+            bubbles: true,
+            cancelable: true,
+            clientX: touch.clientX,
+            clientY: touch.clientY,
+          });
+          node[0].dispatchEvent(dragEvent);
+        }, 500);
+      }
+    });
+
+    node.on("touchend touchcancel", () => {
+      if (nodeLongPressTimer) {
+        clearTimeout(nodeLongPressTimer);
+        nodeLongPressTimer = null;
+      }
+      if (!nodeDraggable) {
+        node.attr("draggable", "false");
+      }
+    });
+
     node.on("dragstart", (e) => {
       e.originalEvent.dataTransfer.setData(
         "text/plain",
@@ -1143,6 +1203,8 @@ jQuery(async () => {
     });
     node.on("dragend", () => {
       node.removeClass("cfm-dragging");
+      node.attr("draggable", "false");
+      nodeDraggable = false;
       $(".cfm-tnode").removeClass(
         "cfm-drop-target cfm-drop-forbidden cfm-drop-before cfm-drop-after",
       );
@@ -1612,7 +1674,32 @@ jQuery(async () => {
         if (selectCharacterById) selectCharacterById(idx);
       }
     });
-    // 角色卡可拖拽
+    // 角色卡可拖拽（支持长按）
+    let charLongPressTimer = null;
+    let charDraggable = false;
+
+    row.on("mousedown touchstart", (e) => {
+      if ($(e.target).closest(".cfm-row-star").length) return; // 点击星标不触发
+      if (e.type === "touchstart") {
+        charDraggable = false;
+        charLongPressTimer = setTimeout(() => {
+          charDraggable = true;
+          row.attr("draggable", "true");
+          if (navigator.vibrate) navigator.vibrate(50);
+        }, 500);
+      }
+    });
+
+    row.on("touchend touchcancel", () => {
+      if (charLongPressTimer) {
+        clearTimeout(charLongPressTimer);
+        charLongPressTimer = null;
+      }
+      if (!charDraggable) {
+        row.attr("draggable", "false");
+      }
+    });
+
     row.on("dragstart", (e) => {
       e.originalEvent.dataTransfer.setData(
         "text/plain",
@@ -1627,6 +1714,8 @@ jQuery(async () => {
     });
     row.on("dragend", () => {
       row.removeClass("cfm-dragging");
+      row.attr("draggable", "false");
+      charDraggable = false;
     });
     container.append(row);
   }
