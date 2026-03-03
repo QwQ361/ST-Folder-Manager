@@ -2466,10 +2466,302 @@ jQuery(async () => {
     toastr.success(`批量创建完成，共新增 ${count} 个文件夹`);
   }
 
+  // ==================== 移动端长按菜单 ====================
+  let longPressTimer = null;
+  let longPressTarget = null;
+  let longPressData = null;
+  const LONG_PRESS_DURATION = 600; // 长按时间阈值（毫秒）
+
+  // 检测是否为移动设备
+  function isMobileDevice() {
+    return window.innerWidth <= 768 || ('ontouchstart' in window);
+  }
+
+  // 显示上下文菜单
+  function showContextMenu(x, y, data) {
+    // 移除已存在的菜单
+    $('.cfm-context-menu').remove();
+
+    const menu = $('<div class="cfm-context-menu"></div>');
+
+    if (data.type === 'folder') {
+      // 文件夹菜单
+      menu.append(`
+        <div class="cfm-context-menu-item" data-action="open">
+          <i class="fa-solid fa-folder-open"></i> 打开文件夹
+        </div>
+        <div class="cfm-context-menu-sep"></div>
+        <div class="cfm-context-menu-item cfm-menu-danger" data-action="delete">
+          <i class="fa-solid fa-trash-can"></i> 删除文件夹
+        </div>
+      `);
+    } else if (data.type === 'char') {
+      // 角色菜单
+      const isFav = isFavorite(data.avatar);
+      menu.append(`
+        <div class="cfm-context-menu-item" data-action="open-chat">
+          <i class="fa-solid fa-comments"></i> 打开聊天
+        </div>
+        <div class="cfm-context-menu-item" data-action="favorite">
+          <i class="fa-${isFav ? 'solid' : 'regular'} fa-star"></i> ${isFav ? '取消收藏' : '添加收藏'}
+        </div>
+        <div class="cfm-context-menu-sep"></div>
+        <div class="cfm-context-menu-item" data-action="move-to">
+          <i class="fa-solid fa-folder-tree"></i> 移动到...
+        </div>
+        <div class="cfm-context-menu-item" data-action="copy-to">
+          <i class="fa-solid fa-copy"></i> 复制到...
+        </div>
+        <div class="cfm-context-menu-sep"></div>
+        <div class="cfm-context-menu-item cfm-menu-danger" data-action="remove-from-folder">
+          <i class="fa-solid fa-folder-minus"></i> 移出所有文件夹
+        </div>
+      `);
+    }
+
+    // 定位菜单（确保不超出屏幕）
+    menu.css({
+      left: x + 'px',
+      top: y + 'px'
+    });
+
+    $('body').append(menu);
+
+    // 调整位置避免超出屏幕
+    const menuRect = menu[0].getBoundingClientRect();
+    if (menuRect.right > window.innerWidth) {
+      menu.css('left', (window.innerWidth - menuRect.width - 10) + 'px');
+    }
+    if (menuRect.bottom > window.innerHeight) {
+      menu.css('top', (window.innerHeight - menuRect.height - 10) + 'px');
+    }
+
+    // 绑定菜单项点击事件
+    menu.find('.cfm-context-menu-item').on('click touchend', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      const action = $(this).data('action');
+      handleContextMenuAction(action, data);
+      menu.remove();
+    });
+
+    // 点击外部关闭菜单
+    setTimeout(() => {
+      $(document).one('click.cfmContextMenu touchstart.cfmContextMenu', (e) => {
+        if (!$(e.target).closest('.cfm-context-menu').length) {
+          menu.remove();
+        }
+      });
+    }, 100);
+  }
+
+  // 处理上下文菜单操作
+  function handleContextMenuAction(action, data) {
+    if (data.type === 'folder') {
+      const folderId = data.id;
+
+      switch(action) {
+        case 'open':
+          // 打开文件夹
+          const fullPath = getFolderPath(folderId);
+          for (const pid of fullPath) expandedNodes.add(pid);
+          selectedTreeNode = folderId;
+          renderLeftTree();
+          renderRightPane();
+          break;
+
+        case 'delete':
+          // 删除文件夹
+          showDeleteConfirmDialog([folderId], (alsoDeleteTags) => {
+            const parentId = config.folders[folderId]?.parentId || null;
+            for (const childId of getChildFolders(folderId)) {
+              config.folders[childId].parentId = parentId;
+            }
+            if (alsoDeleteTags) deleteTagFromSystem(folderId);
+            delete config.folders[folderId];
+            saveConfig(config);
+            if (alsoDeleteTags) getContext().saveSettingsDebounced();
+            if (selectedTreeNode === folderId) selectedTreeNode = null;
+            toastr.success(`已删除文件夹「${getTagName(folderId)}」`);
+            renderLeftTree();
+            renderRightPane();
+          });
+          break;
+      }
+    } else if (data.type === 'char') {
+      const avatar = data.avatar;
+      const charName = data.name;
+
+      switch(action) {
+        case 'open-chat':
+          // 打开聊天
+          closeMainPopup();
+          const characters = getCharacters();
+          const idx = characters.findIndex(c => c.avatar === avatar);
+          if (idx >= 0) {
+            const selectCharacterById = getContext().selectCharacterById;
+            if (selectCharacterById) selectCharacterById(idx);
+          }
+          break;
+
+        case 'favorite':
+          // 切换收藏
+          toggleFavorite(avatar);
+          toastr.success(isFavorite(avatar) ? `已收藏「${charName}」` : `已取消收藏「${charName}」`);
+          renderLeftTree();
+          renderRightPane();
+          break;
+
+        case 'move-to':
+          // 移动到文件夹（显示文件夹选择器）
+          showFolderPicker('移动到文件夹', (targetFolderId) => {
+            moveCharToFolder(avatar, targetFolderId);
+            toastr.success(`已将「${charName}」移动到「${getTagName(targetFolderId)}」`);
+            renderLeftTree();
+            renderRightPane();
+          });
+          break;
+
+        case 'copy-to':
+          // 复制到文件夹
+          showFolderPicker('复制到文件夹', (targetFolderId) => {
+            copyCharToFolder(avatar, targetFolderId);
+            toastr.success(`已将「${charName}」复制到「${getTagName(targetFolderId)}」`);
+            renderLeftTree();
+            renderRightPane();
+          });
+          break;
+
+        case 'remove-from-folder':
+          // 移出所有文件夹
+          removeCharFromAllFolders(avatar);
+          toastr.success(`已将「${charName}」移出所有文件夹`);
+          renderLeftTree();
+          renderRightPane();
+          break;
+      }
+    }
+  }
+
+  // 显示文件夹选择器
+  function showFolderPicker(title, onSelect) {
+    const overlay = $('<div class="cfm-batch-overlay"></div>');
+    const popup = $(`
+      <div class="cfm-batch-popup" style="max-width:400px;max-height:70vh;">
+        <div class="cfm-config-header">
+          <h3>${escapeHtml(title)}</h3>
+          <button class="cfm-btn-close">&times;</button>
+        </div>
+        <div style="padding:16px;overflow-y:auto;flex:1;">
+          <div id="cfm-picker-tree"></div>
+        </div>
+      </div>
+    `);
+
+    overlay.append(popup);
+    $('body').append(overlay);
+
+    // 渲染文件夹树
+    const tree = popup.find('#cfm-picker-tree');
+    const topFolders = sortFolders(getTopLevelFolders());
+
+    function renderPickerNode(container, folderId, depth) {
+      const indent = depth * 20;
+      const item = $(`
+        <div class="cfm-tree-item" data-folder-id="${folderId}" style="padding-left:${10 + indent}px;cursor:pointer;">
+          <span class="cfm-tree-icon"><i class="fa-solid fa-folder"></i></span>
+          <span class="cfm-tree-name">${escapeHtml(getShortTagName(folderId))}</span>
+        </div>
+      `);
+
+      item.on('click touchend', (e) => {
+        e.preventDefault();
+        overlay.remove();
+        onSelect(folderId);
+      });
+
+      container.append(item);
+
+      const children = sortFolders(getChildFolders(folderId));
+      for (const childId of children) {
+        renderPickerNode(container, childId, depth + 1);
+      }
+    }
+
+    for (const folderId of topFolders) {
+      renderPickerNode(tree, folderId, 0);
+    }
+
+    // 关闭按钮
+    popup.find('.cfm-btn-close').on('click touchend', (e) => {
+      e.preventDefault();
+      overlay.remove();
+    });
+
+    overlay.on('click', (e) => {
+      if (e.target === overlay[0]) overlay.remove();
+    });
+  }
+
+  // 初始化长按事件监听（仅在移动端）
+  function initLongPressListeners() {
+    if (!isMobileDevice()) return;
+
+    // 使用事件委托监听主弹窗内的元素
+    $(document).on('touchstart', '#cfm-popup .cfm-tnode, #cfm-popup .cfm-row', function(e) {
+      const $target = $(this);
+      longPressTarget = $target;
+
+      // 获取数据
+      if ($target.hasClass('cfm-tnode')) {
+        const folderId = $target.data('id');
+        if (folderId === '__uncategorized__' || folderId === '__favorites__') return;
+        longPressData = { type: 'folder', id: folderId };
+      } else if ($target.hasClass('cfm-row-char')) {
+        const avatar = $target.data('avatar');
+        const name = $target.find('.cfm-row-name').text().trim();
+        longPressData = { type: 'char', avatar: avatar, name: name };
+      } else {
+        return;
+      }
+
+      // 添加高亮效果
+      $target.addClass('cfm-longpress-active');
+
+      // 启动长按计时器
+      longPressTimer = setTimeout(() => {
+        if (longPressTarget && longPressData) {
+          // 触发长按
+          const touch = e.originalEvent.touches[0];
+          showContextMenu(touch.pageX, touch.pageY, longPressData);
+
+          // 震动反馈（如果支持）
+          if (navigator.vibrate) {
+            navigator.vibrate(50);
+          }
+        }
+      }, LONG_PRESS_DURATION);
+    });
+
+    $(document).on('touchmove touchend touchcancel', '#cfm-popup .cfm-tnode, #cfm-popup .cfm-row', function(e) {
+      // 取消长按
+      if (longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
+      if (longPressTarget) {
+        longPressTarget.removeClass('cfm-longpress-active');
+        longPressTarget = null;
+      }
+      longPressData = null;
+    });
+  }
+
   // ==================== 初始化 ====================
   autoImportAllTags(); // 首次加载自动导入所有标签
   config = loadConfig(); // 刷新配置（autoImport可能改了settings）
   autoCleanRedundantTags(); // 自动清理多余的路径标签
   initButton();
+  initLongPressListeners(); // 初始化移动端长按菜单
   console.log(`[${extensionName}] 角色卡文件夹分类插件已加载`);
 });

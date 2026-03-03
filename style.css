@@ -1281,3 +1281,102 @@
         min-height: 56px;
     }
 }
+
+/* ========== 移动端长按菜单 ========== */
+.cfm-context-menu {
+    position: fixed;
+    background-color: var(--SmartThemeBlurTintColor, #1e1e2e);
+    border: 1px solid var(--SmartThemeBorderColor, #45475a);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    z-index: 10005;
+    min-width: 180px;
+    padding: 6px 0;
+    animation: cfm-menu-fadein 0.15s ease-out;
+}
+
+@keyframes cfm-menu-fadein {
+    from {
+        opacity: 0;
+        transform: scale(0.95);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+.cfm-context-menu-item {
+    padding: 12px 16px;
+    cursor: pointer;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--SmartThemeBodyColor, #cdd6f4);
+    transition: background-color 0.1s;
+    user-select: none;
+}
+
+.cfm-context-menu-item:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.cfm-context-menu-item.cfm-menu-danger {
+    color: #f38ba8;
+}
+
+.cfm-context-menu-item.cfm-menu-danger:hover {
+    background-color: rgba(243, 139, 168, 0.15);
+}
+
+.cfm-context-menu-item i {
+    width: 18px;
+    text-align: center;
+    font-size: 14px;
+    flex-shrink: 0;
+}
+
+.cfm-context-menu-sep {
+    height: 1px;
+    background-color: var(--SmartThemeBorderColor, rgba(255,255,255,0.1));
+    margin: 4px 8px;
+}
+
+/* 长按高亮效果 */
+.cfm-longpress-active {
+    background-color: rgba(137, 180, 250, 0.2) !important;
+    animation: cfm-longpress-pulse 0.6s ease-in-out;
+}
+
+@keyframes cfm-longpress-pulse {
+    0%, 100% {
+        box-shadow: 0 0 0 0 rgba(137, 180, 250, 0.4);
+    }
+    50% {
+        box-shadow: 0 0 0 4px rgba(137, 180, 250, 0.1);
+    }
+}
+
+/* 移动端长按提示 */
+@media (max-width: 768px) {
+    .cfm-tnode::after,
+    .cfm-row::after {
+        content: '';
+        position: absolute;
+        right: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 4px;
+        height: 4px;
+        background: rgba(255, 255, 255, 0.2);
+        border-radius: 50%;
+        opacity: 0;
+        transition: opacity 0.2s;
+    }
+
+    .cfm-tnode:active::after,
+    .cfm-row:active::after {
+        opacity: 1;
+    }
+}
