@@ -440,6 +440,18 @@ jQuery(async () => {
       }
 
       const d = this.data;
+
+      // 处理角色拖放到角色行（排序）
+      if (d.type === "char" && target && target.classList.contains("cfm-row-char")) {
+        const targetAvatar = target.dataset.avatar;
+        if (targetAvatar && targetAvatar !== d.avatar) {
+          handleCharReorder(d.avatar, targetAvatar, zone, d.name || d.avatar);
+          renderLeftTree();
+          renderRightPane();
+        }
+        return;
+      }
+
       if (d.type === "folder") {
         if (uncatNode) return;
         if (targetId && targetId !== d.id) {
@@ -765,6 +777,88 @@ jQuery(async () => {
       tagMap[avatar].splice(idx, 1);
       getContext().saveSettingsDebounced();
     }
+  }
+
+  // 角色排序：调整标签顺序实现角色之间的排序
+  function handleCharReorder(draggedAvatar, targetAvatar, dropZone, draggedName) {
+    // 获取当前文件夹
+    const currentFolder = selectedTreeNode;
+    if (!currentFolder || currentFolder === "__uncategorized__" || currentFolder === "__favorites__") {
+      return; // 未归类和收藏视图不支持排序
+    }
+
+    const tagMap = getTagMap();
+    const draggedTags = tagMap[draggedAvatar] || [];
+    const targetTags = tagMap[targetAvatar] || [];
+
+    // 确保两个角色都在当前文件夹中
+    if (!draggedTags.includes(currentFolder) || !targetTags.includes(currentFolder)) {
+      return;
+    }
+
+    // 获取当前文件夹中的所有角色
+    let chars = getCharactersInFolder(currentFolder);
+    if (rightCharSortMode) {
+      chars = sortCharacters(chars, rightCharSortMode);
+    }
+
+    // 找到两个角色的索引
+    const draggedIdx = chars.findIndex(c => c.avatar === draggedAvatar);
+    const targetIdx = chars.findIndex(c => c.avatar === targetAvatar);
+
+    if (draggedIdx < 0 || targetIdx < 0) return;
+
+    // 根据 dropZone 确定新位置
+    let newIdx;
+    if (dropZone === "before") {
+      newIdx = targetIdx;
+    } else if (dropZone === "after") {
+      newIdx = targetIdx + 1;
+    } else {
+      // "into" 模式：默认放在目标后面
+      newIdx = targetIdx + 1;
+    }
+
+    // 调整索引（如果拖拽的在目标前面，插入位置需要-1）
+    if (draggedIdx < newIdx) {
+      newIdx--;
+    }
+
+    // 重新排列角色数组
+    const reordered = [...chars];
+    const [removed] = reordered.splice(draggedIdx, 1);
+    reordered.splice(newIdx, 0, removed);
+
+    // 为每个角色分配排序权重（使用标签的 sort_order）
+    // 我们使用一个虚拟的 sortOrder 来控制角色在文件夹中的显示顺序
+    // 由于 SillyTavern 没有原生的角色排序功能，我们通过调整标签在角色标签数组中的位置来实现
+
+    // 策略：将当前文件夹标签移到标签数组的特定位置，位置越靠前，角色越靠前显示
+    // 但这种方法在有多个文件夹标签时可能不够精确
+
+    // 更好的策略：使用一个隐藏的排序标签系统
+    // 为每个角色在当前文件夹中创建一个排序值，存储在扩展设置中
+
+    // 简化方案：通过标签顺序来排序
+    // 将当前文件夹标签在角色的标签数组中的位置作为排序依据
+    for (let i = 0; i < reordered.length; i++) {
+      const char = reordered[i];
+      const charTags = tagMap[char.avatar] || [];
+      const folderIdx = charTags.indexOf(currentFolder);
+
+      if (folderIdx >= 0) {
+        // 移除当前文件夹标签
+        charTags.splice(folderIdx, 1);
+        // 重新插入到计算出的位置（位置越小，排序越靠前）
+        // 使用 i 作为权重，确保按新顺序排列
+        charTags.splice(i, 0, currentFolder);
+      }
+    }
+
+    getContext().saveSettingsDebounced();
+
+    const positionText = dropZone === "before" ? "前面" : "后面";
+    toastr.success(`已将「${draggedName}」排序到目标角色${positionText}`);
   }
 
   // ==================== 按钮管理 ====================
@@ -1855,7 +1949,88 @@ jQuery(async () => {
     });
     row.on("dragend", () => {
       row.removeClass("cfm-dragging");
+      $(".cfm-row").removeClass(
+        "cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden",
+      );
     });
+
+    // 角色卡行也是拖放目标（三区域：before/into/after，仅对角色有效）
+    row.on("dragover", (e) => {
+      e.preventDefault();
+      row.removeClass(
+        "cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden",
+      );
+
+      let data = {};
+      try {
+        data = JSON.parse(
+          e.originalEvent.dataTransfer.getData("text/plain") || "{}",
+        );
+      } catch {
+        /* ignore */
+      }
+
+      // 只接受角色拖放（角色之间排序）
+      if (data.type !== "char" || !data.avatar) {
+        return;
+      }
+
+      // 不能拖到自己身上
+      if (data.avatar === char.avatar) {
+        row.addClass("cfm-drop-forbidden");
+        return;
+      }
+
+      // 计算三区域
+      const rect = row[0].getBoundingClientRect();
+      const mouseY = e.originalEvent.clientY;
+      const relativeY = (mouseY - rect.top) / rect.height;
+      let dropZone;
+      if (relativeY < 0.33) dropZone = "before";
+      else if (relativeY > 0.67) dropZone = "after";
+      else dropZone = "into";
+
+      row.data("dropZone", dropZone);
+
+      if (dropZone === "before") row.addClass("cfm-drop-before");
+      else if (dropZone === "after") row.addClass("cfm-drop-after");
+      else row.addClass("cfm-drop-target");
+
+      e.originalEvent.dataTransfer.dropEffect = "move";
+    });
+
+    row.on("dragleave", () => {
+      row.removeClass(
+        "cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden",
+      );
+    });
+
+    row.on("drop", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const dropZone = row.data("dropZone") || "into";
+      row.removeClass(
+        "cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden",
+      );
+
+      let data;
+      try {
+        data = JSON.parse(e.originalEvent.dataTransfer.getData("text/plain"));
+      } catch {
+        return;
+      }
+
+      // 只处理角色拖放
+      if (data.type !== "char" || !data.avatar || data.avatar === char.avatar) {
+        return;
+      }
+
+      // 角色排序：调整标签顺序
+      handleCharReorder(data.avatar, char.avatar, dropZone, data.name || data.avatar);
+      renderLeftTree();
+      renderRightPane();
+    });
+
     container.append(row);
   }
 
