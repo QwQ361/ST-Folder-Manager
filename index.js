@@ -5,6 +5,106 @@ jQuery(async () => {
   const STORAGE_KEY_BTN_POS = "cfm-button-pos";
   const STORAGE_KEY = "cfm-folder-config"; // legacy
 
+  // ==================== 资源类型管理 ====================
+  let currentResourceType = "chars"; // 'chars' | 'presets' | 'worldinfo'
+
+  // 预设/世界书的简单分组存储
+  // 结构: { [itemName]: folderName | null }
+  function ensureResourceSettings() {
+    if (!extension_settings[extensionName].presetGroups)
+      extension_settings[extensionName].presetGroups = {};
+    if (!extension_settings[extensionName].worldInfoGroups)
+      extension_settings[extensionName].worldInfoGroups = {};
+    if (!extension_settings[extensionName].resourceFolders)
+      extension_settings[extensionName].resourceFolders = { presets: [], worldinfo: [] };
+  }
+
+  function getResourceFolders(type) {
+    ensureResourceSettings();
+    return extension_settings[extensionName].resourceFolders[type] || [];
+  }
+  function setResourceFolders(type, folders) {
+    ensureResourceSettings();
+    extension_settings[extensionName].resourceFolders[type] = folders;
+    getContext().saveSettingsDebounced();
+  }
+  function getResourceGroups(type) {
+    ensureResourceSettings();
+    return type === "presets"
+      ? extension_settings[extensionName].presetGroups
+      : extension_settings[extensionName].worldInfoGroups;
+  }
+  function setItemGroup(type, itemName, folderName) {
+    const groups = getResourceGroups(type);
+    if (folderName) groups[itemName] = folderName;
+    else delete groups[itemName];
+    getContext().saveSettingsDebounced();
+  }
+
+  // 获取当前API的预设列表
+  function getCurrentPresets() {
+    const pm = getContext().getPresetManager();
+    if (!pm || !pm.select) return [];
+    const presets = [];
+    pm.select.find("option").each(function () {
+      const v = $(this).val();
+      const t = $(this).text();
+      if (v !== "" && v !== undefined) presets.push({ value: v, name: t });
+    });
+    return presets;
+  }
+  function getCurrentPresetApiId() {
+    const pm = getContext().getPresetManager();
+    return pm ? pm.apiId : "unknown";
+  }
+  function applyPreset(value) {
+    const pm = getContext().getPresetManager();
+    if (pm && pm.select) {
+      pm.select.val(value).trigger("change");
+    }
+  }
+
+  // 获取世界书列表
+  async function getWorldInfoNames() {
+    try {
+      const resp = await fetch("/api/settings/get", {
+        method: "POST",
+        headers: getContext().getRequestHeaders(),
+        body: JSON.stringify({}),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        return data.world_names || [];
+      }
+    } catch (e) {}
+    // fallback: 从DOM读取
+    const names = [];
+    $("#world_editor_select option").each(function () {
+      const v = $(this).val();
+      const t = $(this).text();
+      if (v !== "" && t !== "--- 选择以编辑 ---") names.push(t);
+    });
+    return names;
+  }
+  function openWorldInfoEditor(name) {
+    // 找到对应的option index
+    let targetVal = null;
+    $("#world_editor_select option").each(function () {
+      if ($(this).text() === name) {
+        targetVal = $(this).val();
+        return false;
+      }
+    });
+    if (targetVal !== null) {
+      $("#world_editor_select").val(targetVal).trigger("change");
+      // 尝试打开世界书编辑面板
+      const wiPanel = $("#WorldInfo");
+      if (wiPanel.length && !wiPanel.is(":visible")) {
+        $("#WIDrawerIcon").trigger("click");
+      }
+    }
+  }
+
   // 会话级变量：仅在当前会话中记录新导入的标签ID，关闭弹窗后自动清除
   let sessionNewlyImportedIds = [];
   // 复制模式（默认关闭=移动模式）
@@ -256,7 +356,8 @@ jQuery(async () => {
     }
     const tags = getContext().tags;
     const conflict = tags.find(
-      (t) => t.id !== tagId && t.name.toLowerCase() === newTagName.toLowerCase(),
+      (t) =>
+        t.id !== tagId && t.name.toLowerCase() === newTagName.toLowerCase(),
     );
     if (conflict) {
       let counter = 2;
@@ -264,7 +365,10 @@ jQuery(async () => {
       do {
         finalName = `${newTagName}_${counter++}`;
       } while (
-        tags.find((t) => t.id !== tagId && t.name.toLowerCase() === finalName.toLowerCase())
+        tags.find(
+          (t) =>
+            t.id !== tagId && t.name.toLowerCase() === finalName.toLowerCase(),
+        )
       );
       newTagName = finalName;
     }
@@ -297,9 +401,15 @@ jQuery(async () => {
         } while (
           tags.find((t) => t.name.toLowerCase() === finalName.toLowerCase())
         );
-        return { tag: createNewTagInSystem(finalName), displayName: intendedName };
+        return {
+          tag: createNewTagInSystem(finalName),
+          displayName: intendedName,
+        };
       }
-      return { tag: createNewTagInSystem(prefixedName), displayName: intendedName };
+      return {
+        tag: createNewTagInSystem(prefixedName),
+        displayName: intendedName,
+      };
     }
     const existingTag = tags.find(
       (t) => t.name.toLowerCase() === intendedName.toLowerCase(),
@@ -316,7 +426,10 @@ jQuery(async () => {
         } while (
           tags.find((t) => t.name.toLowerCase() === finalName.toLowerCase())
         );
-        return { tag: createNewTagInSystem(finalName), displayName: intendedName };
+        return {
+          tag: createNewTagInSystem(finalName),
+          displayName: intendedName,
+        };
       }
       return { tag: existingTag, displayName: null };
     }
@@ -429,57 +542,74 @@ jQuery(async () => {
       const dom = el instanceof jQuery ? el[0] : el;
       let sx, sy;
 
-      dom.addEventListener("touchstart", (e) => {
-        if (mgr.active) return;
-        if (e.target.closest(".cfm-row-star, .cfm-tnode-arrow")) return;
-        const t = e.touches[0];
-        sx = t.clientX; sy = t.clientY;
-        mgr._startX = sx; mgr._startY = sy;
+      dom.addEventListener(
+        "touchstart",
+        (e) => {
+          if (mgr.active) return;
+          if (e.target.closest(".cfm-row-star, .cfm-tnode-arrow")) return;
+          const t = e.touches[0];
+          sx = t.clientX;
+          sy = t.clientY;
+          mgr._startX = sx;
+          mgr._startY = sy;
 
-        mgr._timer = setTimeout(() => {
-          const data = getDataFn();
-          if (!data) return;
-          mgr.active = true;
-          mgr.data = data;
-          mgr.sourceEl = dom;
-          dom.classList.add("cfm-touch-dragging");
-          // 创建幽灵
-          const g = document.createElement("div");
-          g.className = "cfm-touch-ghost";
-          g.textContent = (data.type === "folder" ? "📁 " : "👤 ") + (data.name || "");
-          g.style.left = sx + "px";
-          g.style.top = (sy - 50) + "px";
-          document.body.appendChild(g);
-          mgr.ghost = g;
-          if (navigator.vibrate) navigator.vibrate(50);
-        }, 500);
-      }, { passive: true });
+          mgr._timer = setTimeout(() => {
+            const data = getDataFn();
+            if (!data) return;
+            mgr.active = true;
+            mgr.data = data;
+            mgr.sourceEl = dom;
+            dom.classList.add("cfm-touch-dragging");
+            // 创建幽灵
+            const g = document.createElement("div");
+            g.className = "cfm-touch-ghost";
+            g.textContent =
+              (data.type === "folder" ? "📁 " : "👤 ") + (data.name || "");
+            g.style.left = sx + "px";
+            g.style.top = sy - 50 + "px";
+            document.body.appendChild(g);
+            mgr.ghost = g;
+            if (navigator.vibrate) navigator.vibrate(50);
+          }, 500);
+        },
+        { passive: true },
+      );
 
-      dom.addEventListener("touchmove", (e) => {
-        const t = e.touches[0];
-        const dx = Math.abs(t.clientX - sx);
-        const dy = Math.abs(t.clientY - sy);
-        // 未激活时，移动超过10px取消长按
-        if (!mgr.active) {
-          if (dx > 10 || dy > 10) { mgr._cancelTimer(); }
-          return;
-        }
-        e.preventDefault(); // 阻止滚动
-        if (mgr.ghost) {
-          mgr.ghost.style.left = t.clientX + "px";
-          mgr.ghost.style.top = (t.clientY - 50) + "px";
-        }
-        mgr._highlightTarget(t.clientX, t.clientY);
-      }, { passive: false });
+      dom.addEventListener(
+        "touchmove",
+        (e) => {
+          const t = e.touches[0];
+          const dx = Math.abs(t.clientX - sx);
+          const dy = Math.abs(t.clientY - sy);
+          // 未激活时，移动超过10px取消长按
+          if (!mgr.active) {
+            if (dx > 10 || dy > 10) {
+              mgr._cancelTimer();
+            }
+            return;
+          }
+          e.preventDefault(); // 阻止滚动
+          if (mgr.ghost) {
+            mgr.ghost.style.left = t.clientX + "px";
+            mgr.ghost.style.top = t.clientY - 50 + "px";
+          }
+          mgr._highlightTarget(t.clientX, t.clientY);
+        },
+        { passive: false },
+      );
 
-      dom.addEventListener("touchend", (e) => {
-        mgr._cancelTimer();
-        if (!mgr.active) return;
-        e.preventDefault();
-        const t = e.changedTouches[0];
-        mgr._executeDrop(t.clientX, t.clientY);
-        mgr._cleanup();
-      }, { passive: false });
+      dom.addEventListener(
+        "touchend",
+        (e) => {
+          mgr._cancelTimer();
+          if (!mgr.active) return;
+          e.preventDefault();
+          const t = e.changedTouches[0];
+          mgr._executeDrop(t.clientX, t.clientY);
+          mgr._cleanup();
+        },
+        { passive: false },
+      );
 
       dom.addEventListener("touchcancel", () => {
         mgr._cancelTimer();
@@ -488,14 +618,20 @@ jQuery(async () => {
     },
 
     _cancelTimer() {
-      if (this._timer) { clearTimeout(this._timer); this._timer = null; }
+      if (this._timer) {
+        clearTimeout(this._timer);
+        this._timer = null;
+      }
     },
 
     _clearHighlight() {
       if (this._lastTarget) {
         this._lastTarget.classList.remove(
-          "cfm-drop-target", "cfm-drop-before", "cfm-drop-after",
-          "cfm-drop-forbidden", "cfm-right-list-drop-target"
+          "cfm-drop-target",
+          "cfm-drop-before",
+          "cfm-drop-after",
+          "cfm-drop-forbidden",
+          "cfm-right-list-drop-target",
         );
         this._lastTarget = null;
       }
@@ -514,7 +650,9 @@ jQuery(async () => {
       const rightList = el.closest(".cfm-right-list");
 
       let target = tnode || row || uncatNode;
-      if (!target && rightList) { target = rightList; }
+      if (!target && rightList) {
+        target = rightList;
+      }
       if (!target) return;
 
       const targetId = target.dataset?.id || target.dataset?.folderId;
@@ -531,14 +669,22 @@ jQuery(async () => {
       // 禁止检测
       if (this.data.type === "folder" && this.data.id === targetId) {
         target.classList.add("cfm-drop-forbidden");
-        this._lastTarget = target; return;
+        this._lastTarget = target;
+        return;
       }
-      if (this.data.type === "folder" && zone === "into" && targetId && wouldCreateCycle(this.data.id, targetId)) {
+      if (
+        this.data.type === "folder" &&
+        zone === "into" &&
+        targetId &&
+        wouldCreateCycle(this.data.id, targetId)
+      ) {
         target.classList.add("cfm-drop-forbidden");
-        this._lastTarget = target; return;
+        this._lastTarget = target;
+        return;
       }
 
-      if (target === rightList) target.classList.add("cfm-right-list-drop-target");
+      if (target === rightList)
+        target.classList.add("cfm-right-list-drop-target");
       else if (zone === "before") target.classList.add("cfm-drop-before");
       else if (zone === "after") target.classList.add("cfm-drop-after");
       else target.classList.add("cfm-drop-target");
@@ -572,53 +718,97 @@ jQuery(async () => {
         if (uncatNode) return;
         if (targetId && targetId !== d.id) {
           if (zone === "into") {
-            if (wouldCreateCycle(d.id, targetId)) { toastr.error("此操作会产生循环嵌套，已阻止"); return; }
+            if (wouldCreateCycle(d.id, targetId)) {
+              toastr.error("此操作会产生循环嵌套，已阻止");
+              return;
+            }
             reorderFolder(d.id, targetId, null);
-            toastr.success(`「${getTagName(d.id)}」已移入「${getTagName(targetId)}」`);
+            toastr.success(
+              `「${getTagName(d.id)}」已移入「${getTagName(targetId)}」`,
+            );
           } else {
             const pId = config.folders[targetId]?.parentId || null;
-            if (wouldCreateCycle(d.id, pId)) { toastr.error("此操作会产生循环嵌套，已阻止"); return; }
+            if (wouldCreateCycle(d.id, pId)) {
+              toastr.error("此操作会产生循环嵌套，已阻止");
+              return;
+            }
             if (zone === "before") {
               reorderFolder(d.id, pId, targetId);
-              toastr.success(`「${getTagName(d.id)}」已排序到「${getTagName(targetId)}」前面`);
+              toastr.success(
+                `「${getTagName(d.id)}」已排序到「${getTagName(targetId)}」前面`,
+              );
             } else {
               const sibs = sortFolders(getChildFolders(pId));
               const ci = sibs.indexOf(targetId);
               const nxt = ci >= 0 && ci < sibs.length - 1 ? sibs[ci + 1] : null;
               reorderFolder(d.id, pId, nxt);
-              toastr.success(`「${getTagName(d.id)}」已排序到「${getTagName(targetId)}」后面`);
+              toastr.success(
+                `「${getTagName(d.id)}」已排序到「${getTagName(targetId)}」后面`,
+              );
             }
           }
-          renderLeftTree(); renderRightPane();
-        } else if (!target && rightList && selectedTreeNode && selectedTreeNode !== "__uncategorized__" && selectedTreeNode !== "__favorites__") {
-          if (d.id !== selectedTreeNode && !wouldCreateCycle(d.id, selectedTreeNode)) {
+          renderLeftTree();
+          renderRightPane();
+        } else if (
+          !target &&
+          rightList &&
+          selectedTreeNode &&
+          selectedTreeNode !== "__uncategorized__" &&
+          selectedTreeNode !== "__favorites__"
+        ) {
+          if (
+            d.id !== selectedTreeNode &&
+            !wouldCreateCycle(d.id, selectedTreeNode)
+          ) {
             reorderFolder(d.id, selectedTreeNode, null);
-            toastr.success(`「${getTagName(d.id)}」已移入「${getTagName(selectedTreeNode)}」`);
-            renderLeftTree(); renderRightPane();
+            toastr.success(
+              `「${getTagName(d.id)}」已移入「${getTagName(selectedTreeNode)}」`,
+            );
+            renderLeftTree();
+            renderRightPane();
           }
         }
       } else if (d.type === "char") {
         if (uncatNode) {
           removeCharFromAllFolders(d.avatar);
           toastr.success(`已将「${d.name || d.avatar}」移出所有文件夹`);
-          renderLeftTree(); renderRightPane();
+          renderLeftTree();
+          renderRightPane();
         } else if (targetId) {
           handleCharDropToFolder(d.avatar, targetId, d.name || d.avatar);
-          renderLeftTree(); renderRightPane();
-        } else if (!target && rightList && selectedTreeNode && selectedTreeNode !== "__uncategorized__" && selectedTreeNode !== "__favorites__") {
-          handleCharDropToFolder(d.avatar, selectedTreeNode, d.name || d.avatar);
-          renderLeftTree(); renderRightPane();
+          renderLeftTree();
+          renderRightPane();
+        } else if (
+          !target &&
+          rightList &&
+          selectedTreeNode &&
+          selectedTreeNode !== "__uncategorized__" &&
+          selectedTreeNode !== "__favorites__"
+        ) {
+          handleCharDropToFolder(
+            d.avatar,
+            selectedTreeNode,
+            d.name || d.avatar,
+          );
+          renderLeftTree();
+          renderRightPane();
         }
       }
     },
 
     _cleanup() {
-      if (this.ghost) { this.ghost.remove(); this.ghost = null; }
-      if (this.sourceEl) { this.sourceEl.classList.remove("cfm-touch-dragging"); this.sourceEl = null; }
+      if (this.ghost) {
+        this.ghost.remove();
+        this.ghost = null;
+      }
+      if (this.sourceEl) {
+        this.sourceEl.classList.remove("cfm-touch-dragging");
+        this.sourceEl = null;
+      }
       this._clearHighlight();
       this.active = false;
       this.data = null;
-    }
+    },
   };
 
   // ==================== 排序功能 ====================
@@ -992,63 +1182,131 @@ jQuery(async () => {
     });
     $(document).on("mousemove.cfmDrag", (e) => {
       if (!isDragging) return;
-      if (Math.abs(e.pageX - startPos.x) > 5 || Math.abs(e.pageY - startPos.y) > 5) hasMoved = true;
-      if (hasMoved) btn.css({ top: (e.pageY - offset.y) + "px", left: (e.pageX - offset.x) + "px", right: "auto", bottom: "auto" });
+      if (
+        Math.abs(e.pageX - startPos.x) > 5 ||
+        Math.abs(e.pageY - startPos.y) > 5
+      )
+        hasMoved = true;
+      if (hasMoved)
+        btn.css({
+          top: e.pageY - offset.y + "px",
+          left: e.pageX - offset.x + "px",
+          right: "auto",
+          bottom: "auto",
+        });
     });
     $(document).on("mouseup.cfmDrag", () => {
       if (!isDragging) return;
       isDragging = false;
       btn.css("cursor", "grab");
-      if (hasMoved) localStorage.setItem(STORAGE_KEY_BTN_POS, JSON.stringify({ top: btn.css("top"), left: btn.css("left") }));
-      setTimeout(() => { hasMoved = false; }, 50);
+      if (hasMoved)
+        localStorage.setItem(
+          STORAGE_KEY_BTN_POS,
+          JSON.stringify({ top: btn.css("top"), left: btn.css("left") }),
+        );
+      setTimeout(() => {
+        hasMoved = false;
+      }, 50);
     });
-    btn.on("click", (e) => { if (hasMoved) { e.preventDefault(); e.stopPropagation(); return; } showMainPopup(); });
+    btn.on("click", (e) => {
+      if (hasMoved) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      showMainPopup();
+    });
 
     // 移动端：触摸长按拖拽（使用原生事件 + passive:false）
     const btnEl = btn[0];
     let tSx, tSy;
-    btnEl.addEventListener("touchstart", (e) => {
-      hasMoved = false; longPressTriggered = false;
-      const t = e.touches[0];
-      tSx = t.clientX; tSy = t.clientY;
-      const pos = btn.offset();
-      offset.x = t.pageX - pos.left;
-      offset.y = t.pageY - pos.top;
-      longPressTimer = setTimeout(() => {
-        longPressTriggered = true; isDragging = true;
-        btn.addClass("cfm-long-press-ready");
-        if (navigator.vibrate) navigator.vibrate(50);
-      }, 500);
-    }, { passive: true });
+    btnEl.addEventListener(
+      "touchstart",
+      (e) => {
+        hasMoved = false;
+        longPressTriggered = false;
+        const t = e.touches[0];
+        tSx = t.clientX;
+        tSy = t.clientY;
+        const pos = btn.offset();
+        offset.x = t.pageX - pos.left;
+        offset.y = t.pageY - pos.top;
+        longPressTimer = setTimeout(() => {
+          longPressTriggered = true;
+          isDragging = true;
+          btn.addClass("cfm-long-press-ready");
+          if (navigator.vibrate) navigator.vibrate(50);
+        }, 500);
+      },
+      { passive: true },
+    );
 
-    btnEl.addEventListener("touchmove", (e) => {
-      const t = e.touches[0];
-      if (!isDragging) {
-        if (Math.abs(t.clientX - tSx) > 10 || Math.abs(t.clientY - tSy) > 10) {
-          if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+    btnEl.addEventListener(
+      "touchmove",
+      (e) => {
+        const t = e.touches[0];
+        if (!isDragging) {
+          if (
+            Math.abs(t.clientX - tSx) > 10 ||
+            Math.abs(t.clientY - tSy) > 10
+          ) {
+            if (longPressTimer) {
+              clearTimeout(longPressTimer);
+              longPressTimer = null;
+            }
+          }
+          return;
         }
-        return;
-      }
-      e.preventDefault();
-      hasMoved = true;
-      btn.css({ top: (t.pageY - offset.y) + "px", left: (t.pageX - offset.x) + "px", right: "auto", bottom: "auto" });
-    }, { passive: false });
+        e.preventDefault();
+        hasMoved = true;
+        btn.css({
+          top: t.pageY - offset.y + "px",
+          left: t.pageX - offset.x + "px",
+          right: "auto",
+          bottom: "auto",
+        });
+      },
+      { passive: false },
+    );
 
-    btnEl.addEventListener("touchend", (e) => {
-      if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
-      if (!isDragging && !longPressTriggered) { e.preventDefault(); showMainPopup(); return; }
+    btnEl.addEventListener(
+      "touchend",
+      (e) => {
+        if (longPressTimer) {
+          clearTimeout(longPressTimer);
+          longPressTimer = null;
+        }
+        if (!isDragging && !longPressTriggered) {
+          e.preventDefault();
+          showMainPopup();
+          return;
+        }
+        if (isDragging) {
+          isDragging = false;
+          btn.removeClass("cfm-long-press-ready");
+          if (hasMoved)
+            localStorage.setItem(
+              STORAGE_KEY_BTN_POS,
+              JSON.stringify({ top: btn.css("top"), left: btn.css("left") }),
+            );
+        }
+        hasMoved = false;
+        longPressTriggered = false;
+      },
+      { passive: false },
+    );
+
+    btnEl.addEventListener("touchcancel", () => {
+      if (longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
       if (isDragging) {
         isDragging = false;
         btn.removeClass("cfm-long-press-ready");
-        if (hasMoved) localStorage.setItem(STORAGE_KEY_BTN_POS, JSON.stringify({ top: btn.css("top"), left: btn.css("left") }));
       }
-      hasMoved = false; longPressTriggered = false;
-    }, { passive: false });
-
-    btnEl.addEventListener("touchcancel", () => {
-      if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
-      if (isDragging) { isDragging = false; btn.removeClass("cfm-long-press-ready"); }
-      hasMoved = false; longPressTriggered = false;
+      hasMoved = false;
+      longPressTriggered = false;
     });
 
     let resizeTimer;
@@ -1096,14 +1354,19 @@ jQuery(async () => {
     const popup = $(`
             <div id="cfm-popup">
                 <div class="cfm-header">
-                    <h3>📁 角色卡文件夹</h3>
+                    <h3>📁 资源管理器</h3>
                     <div class="cfm-header-actions">
                         <button id="cfm-btn-copymode" class="cfm-copymode-btn ${cfmCopyMode ? "cfm-copymode-active" : ""}" title="${cfmCopyMode ? "当前：复制模式（拖拽角色会保留原位置）" : "当前：移动模式（拖拽角色会从原位置移除）"}"><i class="fa-solid fa-${cfmCopyMode ? "copy" : "arrows-turn-to-dots"}"></i> ${cfmCopyMode ? "复制" : "移动"}</button>
                         <button id="cfm-btn-config" title="标签管理"><i class="fa-solid fa-gear"></i></button>
                         <button class="cfm-btn-close" id="cfm-btn-close-main">&times;</button>
                     </div>
                 </div>
-                <div class="cfm-dual-pane">
+                <div class="cfm-resource-tabs">
+                    <div class="cfm-tab cfm-tab-active" data-tab="chars"><i class="fa-solid fa-users"></i> 角色卡</div>
+                    <div class="cfm-tab" data-tab="presets"><i class="fa-solid fa-sliders"></i> 预设</div>
+                    <div class="cfm-tab" data-tab="worldinfo"><i class="fa-solid fa-book-atlas"></i> 世界书</div>
+                </div>
+                <div class="cfm-dual-pane" id="cfm-chars-view">
                     <div class="cfm-left-pane">
                         <div class="cfm-left-header">
                             <span>文件夹</span>
@@ -1130,10 +1393,31 @@ jQuery(async () => {
                         </div>
                     </div>
                 </div>
+                <div class="cfm-resource-view" id="cfm-presets-view" style="display:none;"></div>
+                <div class="cfm-resource-view" id="cfm-worldinfo-view" style="display:none;"></div>
             </div>
         `);
     overlay.append(popup);
     $("body").append(overlay);
+
+    // 资源类型标签切换
+    popup.find(".cfm-tab").on("click touchend", function (e) {
+      e.preventDefault();
+      const tab = $(this).data("tab");
+      if (tab === currentResourceType) return;
+      currentResourceType = tab;
+      popup.find(".cfm-tab").removeClass("cfm-tab-active");
+      $(this).addClass("cfm-tab-active");
+      // 切换视图
+      popup.find("#cfm-chars-view").toggle(tab === "chars");
+      popup.find("#cfm-presets-view").toggle(tab === "presets");
+      popup.find("#cfm-worldinfo-view").toggle(tab === "worldinfo");
+      // 切换header按钮可见性
+      popup.find("#cfm-btn-copymode").toggle(tab === "chars");
+      popup.find("#cfm-btn-config").toggle(tab === "chars");
+      if (tab === "presets") renderPresetsView();
+      else if (tab === "worldinfo") renderWorldInfoView();
+    });
 
     popup.find("#cfm-btn-close-main").on("click touchend", (e) => {
       e.preventDefault();
@@ -1361,7 +1645,6 @@ jQuery(async () => {
     clearNewlyImportedHighlight();
   }
 
-
   // ==================== 左侧树渲染 ====================
   function renderLeftTree() {
     const tree = $("#cfm-left-tree");
@@ -1480,7 +1763,11 @@ jQuery(async () => {
     });
 
     // 移动端触摸拖拽
-    touchDragMgr.bind(node, () => ({ type: "folder", id: folderId, name: getTagName(folderId) }));
+    touchDragMgr.bind(node, () => ({
+      type: "folder",
+      id: folderId,
+      name: getTagName(folderId),
+    }));
 
     // PC端拖拽
     node.on("dragstart", (e) => {
@@ -1963,7 +2250,11 @@ jQuery(async () => {
       }
     });
     // 移动端触摸拖拽
-    touchDragMgr.bind(row, () => ({ type: "char", avatar: char.avatar, name: char.name }));
+    touchDragMgr.bind(row, () => ({
+      type: "char",
+      avatar: char.avatar,
+      name: char.name,
+    }));
 
     // PC端拖拽
     row.on("dragstart", (e) => {
@@ -2282,7 +2573,6 @@ jQuery(async () => {
       for (const folderId of topFoldersConfig)
         renderConfigTreeItem(treeContainer, folderId, 0);
     }
-
   }
 
   function renderConfigTreeItem(container, folderId, depth) {
@@ -2316,7 +2606,8 @@ jQuery(async () => {
       e.preventDefault();
       e.stopPropagation();
       if (!hasChildren) return;
-      if (configExpandedNodes.has(folderId)) configExpandedNodes.delete(folderId);
+      if (configExpandedNodes.has(folderId))
+        configExpandedNodes.delete(folderId);
       else configExpandedNodes.add(folderId);
       renderConfigBody();
     });
@@ -2372,12 +2663,15 @@ jQuery(async () => {
       };
       item.find(".cfm-del-checkbox").on("click touchend", handleDeleteClick);
       item.on("click", (e) => {
-        if ($(e.target).closest(".cfm-del-checkbox, .cfm-config-arrow").length) return;
+        if ($(e.target).closest(".cfm-del-checkbox, .cfm-config-arrow").length)
+          return;
         handleDeleteClick(e);
       });
       container.append(item);
       if (hasChildren) {
-        const childContainer = $(`<div class="cfm-config-children ${isExpanded ? "cfm-children-expanded" : ""}"></div>`);
+        const childContainer = $(
+          `<div class="cfm-config-children ${isExpanded ? "cfm-children-expanded" : ""}"></div>`,
+        );
         const children = sortFolders(getChildFolders(folderId));
         for (const childId of children)
           renderConfigTreeItem(childContainer, childId, depth + 1);
@@ -2387,7 +2681,8 @@ jQuery(async () => {
     }
     // 点击选中/取消选中
     item.on("click", (e) => {
-      if ($(e.target).closest(".cfm-remove-folder, .cfm-config-arrow").length) return;
+      if ($(e.target).closest(".cfm-remove-folder, .cfm-config-arrow").length)
+        return;
       e.preventDefault();
       configSelectedFolderId =
         configSelectedFolderId === folderId ? null : folderId;
@@ -2420,7 +2715,9 @@ jQuery(async () => {
     });
     container.append(item);
     if (hasChildren) {
-      const childContainer = $(`<div class="cfm-config-children ${isExpanded ? "cfm-children-expanded" : ""}"></div>`);
+      const childContainer = $(
+        `<div class="cfm-config-children ${isExpanded ? "cfm-children-expanded" : ""}"></div>`,
+      );
       const children = sortFolders(getChildFolders(folderId));
       for (const childId of children)
         renderConfigTreeItem(childContainer, childId, depth + 1);
@@ -2583,7 +2880,10 @@ jQuery(async () => {
     const created = [];
     let prefixCount = 0;
     for (const name of names) {
-      const { tag, displayName } = findOrCreateTag(name, parentFolderId || null);
+      const { tag, displayName } = findOrCreateTag(
+        name,
+        parentFolderId || null,
+      );
       if (!config.folders[tag.id]) {
         config.folders[tag.id] = { parentId: parentFolderId || null };
         if (displayName) {
@@ -2599,7 +2899,8 @@ jQuery(async () => {
       ? `「${getTagName(parentFolderId)}」下`
       : "顶级";
     let msg = `已创建 ${created.length} 个${parentHint}文件夹: ${created.join(", ")}`;
-    if (prefixCount > 0) msg += `（${prefixCount} 个作为子文件夹自动添加了路径前缀）`;
+    if (prefixCount > 0)
+      msg += `（${prefixCount} 个作为子文件夹自动添加了路径前缀）`;
     toastr.success(msg);
   }
 
@@ -2762,8 +3063,228 @@ jQuery(async () => {
     saveConfig(config);
     getContext().saveSettingsDebounced();
     let msg = `批量创建完成，共新增 ${count} 个文件夹`;
-    if (prefixCount > 0) msg += `（其中 ${prefixCount} 个作为子文件夹自动添加了路径前缀）`;
+    if (prefixCount > 0)
+      msg += `（其中 ${prefixCount} 个作为子文件夹自动添加了路径前缀）`;
     toastr.success(msg);
+  }
+
+  // ==================== 预设视图渲染 ====================
+  function renderPresetsView() {
+    const container = $("#cfm-presets-view");
+    container.empty();
+    const apiId = getCurrentPresetApiId();
+    const presets = getCurrentPresets();
+    const groups = getResourceGroups("presets");
+    const folders = getResourceFolders("presets");
+
+    // 当前选中的预设值
+    const pm = getContext().getPresetManager();
+    const currentVal = pm && pm.select ? pm.select.val() : null;
+
+    const html = $(`
+      <div class="cfm-rv-header">
+        <span class="cfm-rv-title"><i class="fa-solid fa-sliders"></i> 当前API预设 (${escapeHtml(apiId)})</span>
+        <span class="cfm-rv-count">${presets.length} 个预设</span>
+      </div>
+      <div class="cfm-rv-toolbar">
+        <input type="text" class="cfm-rv-search" placeholder="搜索预设..." />
+        <button class="cfm-rv-add-folder cfm-btn cfm-btn-sm"><i class="fa-solid fa-folder-plus"></i> 新建分组</button>
+      </div>
+      <div class="cfm-rv-list"></div>
+    `);
+
+    const list = html.filter(".cfm-rv-list");
+
+    // 按分组渲染
+    const folderItems = {};
+    const ungrouped = [];
+    for (const p of presets) {
+      const grp = groups[p.name];
+      if (grp && folders.includes(grp)) {
+        if (!folderItems[grp]) folderItems[grp] = [];
+        folderItems[grp].push(p);
+      } else {
+        ungrouped.push(p);
+      }
+    }
+
+    // 渲染分组
+    for (const fname of folders) {
+      const items = folderItems[fname] || [];
+      const grpEl = $(`
+        <div class="cfm-rv-group">
+          <div class="cfm-rv-group-header" data-folder="${escapeHtml(fname)}">
+            <i class="fa-solid fa-folder"></i> ${escapeHtml(fname)}
+            <span class="cfm-rv-group-count">${items.length}</span>
+            <button class="cfm-rv-del-folder cfm-btn-icon" title="删除分组"><i class="fa-solid fa-xmark"></i></button>
+          </div>
+          <div class="cfm-rv-group-items"></div>
+        </div>
+      `);
+      const itemsEl = grpEl.find(".cfm-rv-group-items");
+      for (const p of items) {
+        const isActive = p.value === currentVal;
+        const item = $(`<div class="cfm-rv-item ${isActive ? "cfm-rv-item-active" : ""}" data-value="${escapeHtml(p.value)}" draggable="true"><i class="fa-solid fa-file-lines"></i> ${escapeHtml(p.name)}</div>`);
+        item.on("click", () => { applyPreset(p.value); container.find(".cfm-rv-item").removeClass("cfm-rv-item-active"); item.addClass("cfm-rv-item-active"); toastr.success(`已应用预设「${p.name}」`); });
+        item.on("dragstart", (e) => { e.originalEvent.dataTransfer.setData("text/plain", JSON.stringify({ type: "preset", name: p.name, value: p.value })); });
+        itemsEl.append(item);
+      }
+      // 分组拖放目标
+      grpEl.find(".cfm-rv-group-header").on("dragover", (e) => { e.preventDefault(); grpEl.addClass("cfm-rv-group-dragover"); });
+      grpEl.find(".cfm-rv-group-header").on("dragleave", () => grpEl.removeClass("cfm-rv-group-dragover"));
+      grpEl.find(".cfm-rv-group-header").on("drop", (e) => {
+        e.preventDefault(); grpEl.removeClass("cfm-rv-group-dragover");
+        try { const d = JSON.parse(e.originalEvent.dataTransfer.getData("text/plain")); if (d.type === "preset") { setItemGroup("presets", d.name, fname); renderPresetsView(); toastr.success(`已将「${d.name}」移入「${fname}」`); } } catch {}
+      });
+      grpEl.find(".cfm-rv-del-folder").on("click", (e) => {
+        e.stopPropagation();
+        const newFolders = folders.filter(f => f !== fname);
+        setResourceFolders("presets", newFolders);
+        // 移除该分组下所有项的分组
+        for (const p of (folderItems[fname] || [])) { setItemGroup("presets", p.name, null); }
+        renderPresetsView();
+        toastr.info(`已删除分组「${fname}」`);
+      });
+      list.append(grpEl);
+    }
+
+    // 未分组
+    if (ungrouped.length > 0) {
+      const ugEl = $(`<div class="cfm-rv-group"><div class="cfm-rv-group-header cfm-rv-ungrouped"><i class="fa-solid fa-box-open"></i> 未分组 <span class="cfm-rv-group-count">${ungrouped.length}</span></div><div class="cfm-rv-group-items"></div></div>`);
+      const itemsEl = ugEl.find(".cfm-rv-group-items");
+      for (const p of ungrouped) {
+        const isActive = p.value === currentVal;
+        const item = $(`<div class="cfm-rv-item ${isActive ? "cfm-rv-item-active" : ""}" data-value="${escapeHtml(p.value)}" draggable="true"><i class="fa-solid fa-file-lines"></i> ${escapeHtml(p.name)}</div>`);
+        item.on("click", () => { applyPreset(p.value); container.find(".cfm-rv-item").removeClass("cfm-rv-item-active"); item.addClass("cfm-rv-item-active"); toastr.success(`已应用预设「${p.name}」`); });
+        item.on("dragstart", (e) => { e.originalEvent.dataTransfer.setData("text/plain", JSON.stringify({ type: "preset", name: p.name, value: p.value })); });
+        itemsEl.append(item);
+      }
+      list.append(ugEl);
+    }
+
+    // 搜索
+    html.filter(".cfm-rv-toolbar").find(".cfm-rv-search").on("input", function () {
+      const q = $(this).val().toLowerCase();
+      container.find(".cfm-rv-item").each(function () {
+        $(this).toggle($(this).text().toLowerCase().includes(q));
+      });
+    });
+
+    // 新建分组
+    html.filter(".cfm-rv-toolbar").find(".cfm-rv-add-folder").on("click", () => {
+      const name = prompt("输入分组名称：");
+      if (!name || !name.trim()) return;
+      const f = getResourceFolders("presets");
+      if (f.includes(name.trim())) { toastr.warning("分组已存在"); return; }
+      f.push(name.trim());
+      setResourceFolders("presets", f);
+      renderPresetsView();
+      toastr.success(`已创建分组「${name.trim()}」`);
+    });
+
+    container.append(html);
+  }
+
+  // ==================== 世界书视图渲染 ====================
+  async function renderWorldInfoView() {
+    const container = $("#cfm-worldinfo-view");
+    container.empty();
+    container.html('<div class="cfm-rv-loading"><i class="fa-solid fa-spinner fa-spin"></i> 加载中...</div>');
+
+    const names = await getWorldInfoNames();
+    const groups = getResourceGroups("worldinfo");
+    const folders = getResourceFolders("worldinfo");
+
+    container.empty();
+    const html = $(`
+      <div class="cfm-rv-header">
+        <span class="cfm-rv-title"><i class="fa-solid fa-book-atlas"></i> 世界书</span>
+        <span class="cfm-rv-count">${names.length} 个世界书</span>
+      </div>
+      <div class="cfm-rv-toolbar">
+        <input type="text" class="cfm-rv-search" placeholder="搜索世界书..." />
+        <button class="cfm-rv-add-folder cfm-btn cfm-btn-sm"><i class="fa-solid fa-folder-plus"></i> 新建分组</button>
+      </div>
+      <div class="cfm-rv-list"></div>
+    `);
+
+    const list = html.filter(".cfm-rv-list");
+    const folderItems = {};
+    const ungrouped = [];
+    for (const name of names) {
+      const grp = groups[name];
+      if (grp && folders.includes(grp)) {
+        if (!folderItems[grp]) folderItems[grp] = [];
+        folderItems[grp].push(name);
+      } else {
+        ungrouped.push(name);
+      }
+    }
+
+    for (const fname of folders) {
+      const items = folderItems[fname] || [];
+      const grpEl = $(`
+        <div class="cfm-rv-group">
+          <div class="cfm-rv-group-header" data-folder="${escapeHtml(fname)}">
+            <i class="fa-solid fa-folder"></i> ${escapeHtml(fname)}
+            <span class="cfm-rv-group-count">${items.length}</span>
+            <button class="cfm-rv-del-folder cfm-btn-icon" title="删除分组"><i class="fa-solid fa-xmark"></i></button>
+          </div>
+          <div class="cfm-rv-group-items"></div>
+        </div>
+      `);
+      const itemsEl = grpEl.find(".cfm-rv-group-items");
+      for (const n of items) {
+        const item = $(`<div class="cfm-rv-item" draggable="true"><i class="fa-solid fa-book"></i> ${escapeHtml(n)}</div>`);
+        item.on("click", () => { openWorldInfoEditor(n); toastr.success(`已打开世界书「${n}」`); });
+        item.on("dragstart", (e) => { e.originalEvent.dataTransfer.setData("text/plain", JSON.stringify({ type: "worldinfo", name: n })); });
+        itemsEl.append(item);
+      }
+      grpEl.find(".cfm-rv-group-header").on("dragover", (e) => { e.preventDefault(); grpEl.addClass("cfm-rv-group-dragover"); });
+      grpEl.find(".cfm-rv-group-header").on("dragleave", () => grpEl.removeClass("cfm-rv-group-dragover"));
+      grpEl.find(".cfm-rv-group-header").on("drop", (e) => {
+        e.preventDefault(); grpEl.removeClass("cfm-rv-group-dragover");
+        try { const d = JSON.parse(e.originalEvent.dataTransfer.getData("text/plain")); if (d.type === "worldinfo") { setItemGroup("worldinfo", d.name, fname); renderWorldInfoView(); toastr.success(`已将「${d.name}」移入「${fname}」`); } } catch {}
+      });
+      grpEl.find(".cfm-rv-del-folder").on("click", (e) => {
+        e.stopPropagation();
+        const newFolders = folders.filter(f => f !== fname);
+        setResourceFolders("worldinfo", newFolders);
+        for (const n of (folderItems[fname] || [])) { setItemGroup("worldinfo", n, null); }
+        renderWorldInfoView();
+        toastr.info(`已删除分组「${fname}」`);
+      });
+      list.append(grpEl);
+    }
+
+    if (ungrouped.length > 0) {
+      const ugEl = $(`<div class="cfm-rv-group"><div class="cfm-rv-group-header cfm-rv-ungrouped"><i class="fa-solid fa-box-open"></i> 未分组 <span class="cfm-rv-group-count">${ungrouped.length}</span></div><div class="cfm-rv-group-items"></div></div>`);
+      const itemsEl = ugEl.find(".cfm-rv-group-items");
+      for (const n of ungrouped) {
+        const item = $(`<div class="cfm-rv-item" draggable="true"><i class="fa-solid fa-book"></i> ${escapeHtml(n)}</div>`);
+        item.on("click", () => { openWorldInfoEditor(n); toastr.success(`已打开世界书「${n}」`); });
+        item.on("dragstart", (e) => { e.originalEvent.dataTransfer.setData("text/plain", JSON.stringify({ type: "worldinfo", name: n })); });
+        itemsEl.append(item);
+      }
+      list.append(ugEl);
+    }
+
+    html.filter(".cfm-rv-toolbar").find(".cfm-rv-search").on("input", function () {
+      const q = $(this).val().toLowerCase();
+      container.find(".cfm-rv-item").each(function () { $(this).toggle($(this).text().toLowerCase().includes(q)); });
+    });
+    html.filter(".cfm-rv-toolbar").find(".cfm-rv-add-folder").on("click", () => {
+      const name = prompt("输入分组名称：");
+      if (!name || !name.trim()) return;
+      const f = getResourceFolders("worldinfo");
+      if (f.includes(name.trim())) { toastr.warning("分组已存在"); return; }
+      f.push(name.trim());
+      setResourceFolders("worldinfo", f);
+      renderWorldInfoView();
+      toastr.success(`已创建分组「${name.trim()}」`);
+    });
+
+    container.append(html);
   }
 
   // ==================== 初始化 ====================
