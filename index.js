@@ -1985,7 +1985,6 @@ jQuery(async () => {
   }
 
   // ==================== 标签管理配置弹窗 ====================
-  let draggedFolderId = null;
   let configSelectedFolderId = null;
   let cfmDeleteMode = false;
   let cfmDeleteSelected = new Set();
@@ -2239,7 +2238,7 @@ jQuery(async () => {
     // 2. 当前文件夹树形展示（支持拖拽 + 点击选中）
     const treeSection = $(`
             <div class="cfm-config-section">
-                <label>当前文件夹结构 <span class="cfm-drag-hint">拖拽调整层级 · 点击选中为目标父级</span></label>
+                <label>当前文件夹结构 <span class="cfm-drag-hint">点击选中为目标父级</span></label>
                 <div class="cfm-config-tree-actions">
                     <button id="cfm-config-expand-all" class="cfm-btn cfm-btn-sm" title="展开全部"><i class="fa-solid fa-angles-down"></i> 展开</button>
                     <button id="cfm-config-collapse-all" class="cfm-btn cfm-btn-sm" title="收起全部"><i class="fa-solid fa-angles-up"></i> 收起</button>
@@ -2284,42 +2283,6 @@ jQuery(async () => {
         renderConfigTreeItem(treeContainer, folderId, 0);
     }
 
-    // 删除模式下显示操作栏
-    // 根目录拖放区域
-    const rootDropzone = $(
-      '<div class="cfm-root-dropzone"><i class="fa-solid fa-arrow-up"></i> 拖拽到此处设为顶级文件夹</div>',
-    );
-    treeContainer.after(rootDropzone);
-    rootDropzone.on("dragover", (e) => {
-      e.preventDefault();
-      if (draggedFolderId && config.folders[draggedFolderId]?.parentId)
-        rootDropzone.addClass("cfm-drag-over");
-    });
-    rootDropzone.on("dragleave", () =>
-      rootDropzone.removeClass("cfm-drag-over"),
-    );
-    rootDropzone.on("drop", (e) => {
-      e.preventDefault();
-      rootDropzone.removeClass("cfm-drag-over");
-      if (!draggedFolderId || !config.folders[draggedFolderId]?.parentId)
-        return;
-      // 确保有 displayName
-      if (!config.folders[draggedFolderId].displayName) {
-        const fullName = getFullTagName(draggedFolderId);
-        const lastDash = fullName.lastIndexOf("-");
-        if (lastDash >= 0) {
-          config.folders[draggedFolderId].displayName = fullName.substring(lastDash + 1);
-        } else {
-          config.folders[draggedFolderId].displayName = fullName;
-        }
-      }
-      config.folders[draggedFolderId].parentId = null;
-      saveConfig(config);
-      recursiveRebuildTagNames(draggedFolderId);
-      toastr.success(`「${getTagName(draggedFolderId)}」已设为顶级文件夹`);
-      draggedFolderId = null;
-      renderConfigBody();
-    });
   }
 
   function renderConfigTreeItem(container, folderId, depth) {
@@ -2339,10 +2302,10 @@ jQuery(async () => {
 
     const isNewTag = isNewlyImported(folderId);
     const item = $(`
-            <div class="cfm-tree-item ${isSelected ? "cfm-tree-selected" : ""} ${isNewTag ? "cfm-tree-new" : ""}" draggable="${cfmDeleteMode ? "false" : "true"}" data-folder-id="${folderId}" style="padding-left:${10 + indent}px;">
+            <div class="cfm-tree-item ${isSelected ? "cfm-tree-selected" : ""} ${isNewTag ? "cfm-tree-new" : ""}" data-folder-id="${folderId}" style="padding-left:${10 + indent}px;">
                 ${checkboxHtml}
                 ${arrowHtml}
-                <span class="cfm-tree-icon"><i class="fa-solid fa-grip-vertical" style="margin-right:4px;opacity:0.4;font-size:11px;"></i><i class="fa-solid fa-folder${isSelected ? "-open" : ""}"></i></span>
+                <span class="cfm-tree-icon"><i class="fa-solid fa-folder${isSelected ? "-open" : ""}"></i></span>
                 <span class="cfm-tree-name">${escapeHtml(name)}${isNewTag ? ' <span class="cfm-new-badge">新</span>' : ""}</span>
                 ${cfmDeleteMode ? "" : '<span class="cfm-tree-actions"><button class="cfm-btn-danger cfm-remove-folder" data-id="' + folderId + '" title="移除此文件夹"><i class="fa-solid fa-trash-can"></i></button></span>'}
             </div>
@@ -2425,7 +2388,6 @@ jQuery(async () => {
     // 点击选中/取消选中
     item.on("click", (e) => {
       if ($(e.target).closest(".cfm-remove-folder, .cfm-config-arrow").length) return;
-      if (draggedFolderId) return;
       e.preventDefault();
       configSelectedFolderId =
         configSelectedFolderId === folderId ? null : folderId;
@@ -2455,58 +2417,6 @@ jQuery(async () => {
         toastr.info(`已移除文件夹「${name}」${suffix}`);
         renderConfigBody();
       });
-    });
-    // 拖拽
-    item.on("dragstart", (e) => {
-      draggedFolderId = folderId;
-      item.addClass("cfm-dragging");
-      e.originalEvent.dataTransfer.effectAllowed = "move";
-      e.originalEvent.dataTransfer.setData("text/plain", folderId);
-    });
-    item.on("dragend", () => {
-      draggedFolderId = null;
-      item.removeClass("cfm-dragging");
-      $(".cfm-tree-item").removeClass("cfm-drag-over cfm-drag-forbidden");
-      $(".cfm-root-dropzone").removeClass("cfm-drag-over");
-    });
-    item.on("dragover", (e) => {
-      e.preventDefault();
-      if (!draggedFolderId || draggedFolderId === folderId) return;
-      if (wouldCreateCycle(draggedFolderId, folderId)) {
-        item.removeClass("cfm-drag-over").addClass("cfm-drag-forbidden");
-        return;
-      }
-      item.removeClass("cfm-drag-forbidden").addClass("cfm-drag-over");
-    });
-    item.on("dragleave", () =>
-      item.removeClass("cfm-drag-over cfm-drag-forbidden"),
-    );
-    item.on("drop", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      item.removeClass("cfm-drag-over cfm-drag-forbidden");
-      if (!draggedFolderId || draggedFolderId === folderId) return;
-      if (wouldCreateCycle(draggedFolderId, folderId)) {
-        toastr.error("此操作会产生循环嵌套，已阻止");
-        return;
-      }
-      // 确保有 displayName
-      if (!config.folders[draggedFolderId].displayName) {
-        const fullName = getFullTagName(draggedFolderId);
-        const oldParent = config.folders[draggedFolderId].parentId;
-        const lastDash = fullName.lastIndexOf("-");
-        if (lastDash >= 0 && oldParent) {
-          config.folders[draggedFolderId].displayName = fullName.substring(lastDash + 1);
-        } else {
-          config.folders[draggedFolderId].displayName = fullName;
-        }
-      }
-      config.folders[draggedFolderId].parentId = folderId;
-      saveConfig(config);
-      recursiveRebuildTagNames(draggedFolderId);
-      toastr.success(`「${getTagName(draggedFolderId)}」已移入「${name}」`);
-      draggedFolderId = null;
-      renderConfigBody();
     });
     container.append(item);
     if (hasChildren) {
