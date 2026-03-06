@@ -190,9 +190,137 @@ jQuery(async () => {
   let config = loadConfig();
 
   // ==================== 辅助函数 ====================
+  // 获取显示名称（优先使用 displayName，用于UI展示）
   function getTagName(tagId) {
+    const folder = config.folders[tagId];
+    if (folder && folder.displayName) return folder.displayName;
     const tag = getTagList().find((t) => t.id === tagId);
     return tag ? tag.name : tagId;
+  }
+  // 获取真实标签名称（用于内部逻辑）
+  function getFullTagName(tagId) {
+    const tag = getTagList().find((t) => t.id === tagId);
+    return tag ? tag.name : tagId;
+  }
+  // 构建带路径前缀的标签名（用于解决重名冲突）
+  function buildPrefixedTagName(name, parentTagId) {
+    const pathNames = [];
+    let current = parentTagId;
+    const visited = new Set();
+    while (current) {
+      if (visited.has(current)) break;
+      visited.add(current);
+      pathNames.unshift(getTagName(current));
+      current = config.folders[current]?.parentId || null;
+    }
+    pathNames.push(name);
+    return pathNames.join("-");
+  }
+  // 创建新标签对象并加入系统
+  function createNewTagInSystem(name) {
+    const context = getContext();
+    const tags = context.tags;
+    const tag = {
+      id: context.uuidv4(),
+      name,
+      folder_type: "NONE",
+      filter_state: "UNDEFINED",
+      sort_order: Math.max(0, ...tags.map((t) => t.sort_order || 0)) + 1,
+      is_hidden_on_character_card: false,
+      color: "",
+      color2: "",
+      create_date: Date.now(),
+    };
+    tags.push(tag);
+    return tag;
+  }
+  // 重命名系统中的标签
+  function renameTagInSystem(tagId, newName) {
+    const tag = getTagList().find((t) => t.id === tagId);
+    if (tag) {
+      tag.name = newName;
+      getContext().saveSettingsDebounced();
+    }
+  }
+  // 根据当前父级重新构建标签名
+  function rebuildTagName(tagId) {
+    const folder = config.folders[tagId];
+    if (!folder) return;
+    const shortName = folder.displayName || getFullTagName(tagId);
+    const parentId = folder.parentId;
+    let newTagName;
+    if (parentId) {
+      newTagName = buildPrefixedTagName(shortName, parentId);
+    } else {
+      newTagName = shortName;
+    }
+    const tags = getContext().tags;
+    const conflict = tags.find(
+      (t) => t.id !== tagId && t.name.toLowerCase() === newTagName.toLowerCase(),
+    );
+    if (conflict) {
+      let counter = 2;
+      let finalName;
+      do {
+        finalName = `${newTagName}_${counter++}`;
+      } while (
+        tags.find((t) => t.id !== tagId && t.name.toLowerCase() === finalName.toLowerCase())
+      );
+      newTagName = finalName;
+    }
+    renameTagInSystem(tagId, newTagName);
+  }
+  // 递归重建标签名：先重命名自身，再处理所有子文件夹
+  function recursiveRebuildTagNames(tagId) {
+    rebuildTagName(tagId);
+    const children = getChildFolders(tagId);
+    for (const childId of children) {
+      recursiveRebuildTagNames(childId);
+    }
+  }
+  // 查找或创建标签，自动处理重名冲突（子文件夹始终带路径前缀）
+  function findOrCreateTag(intendedName, parentTagId) {
+    const tags = getContext().tags;
+    if (parentTagId) {
+      const prefixedName = buildPrefixedTagName(intendedName, parentTagId);
+      const prefixedTag = tags.find(
+        (t) => t.name.toLowerCase() === prefixedName.toLowerCase(),
+      );
+      if (prefixedTag) {
+        if (config.folders[prefixedTag.id]?.parentId === parentTagId) {
+          return { tag: prefixedTag, displayName: intendedName };
+        }
+        let counter = 2;
+        let finalName;
+        do {
+          finalName = `${prefixedName}_${counter++}`;
+        } while (
+          tags.find((t) => t.name.toLowerCase() === finalName.toLowerCase())
+        );
+        return { tag: createNewTagInSystem(finalName), displayName: intendedName };
+      }
+      return { tag: createNewTagInSystem(prefixedName), displayName: intendedName };
+    }
+    const existingTag = tags.find(
+      (t) => t.name.toLowerCase() === intendedName.toLowerCase(),
+    );
+    if (existingTag) {
+      if (config.folders[existingTag.id]) {
+        if (!config.folders[existingTag.id].parentId) {
+          return { tag: existingTag, displayName: null };
+        }
+        let counter = 2;
+        let finalName;
+        do {
+          finalName = `${intendedName}_${counter++}`;
+        } while (
+          tags.find((t) => t.name.toLowerCase() === finalName.toLowerCase())
+        );
+        return { tag: createNewTagInSystem(finalName), displayName: intendedName };
+      }
+      return { tag: existingTag, displayName: null };
+    }
+    return { tag: createNewTagInSystem(intendedName), displayName: null };
   }
   function getFolderTagIds() {
     return Object.keys(config.folders);
@@ -624,9 +752,20 @@ jQuery(async () => {
       onRevert();
     });
   }
-  // 移动文件夹到新父级并插入到指定位置
+  // 移动文件夹到新父级并插入到指定位置（自动重建标签名）
   function reorderFolder(folderId, newParentId, insertBeforeId) {
+    const oldParentId = config.folders[folderId]?.parentId || null;
     config.folders[folderId].parentId = newParentId;
+    // 确保子文件夹有 displayName（如果没有，从当前标签名中提取短名称）
+    if (!config.folders[folderId].displayName) {
+      const fullName = getFullTagName(folderId);
+      const lastDash = fullName.lastIndexOf("-");
+      if (lastDash >= 0 && oldParentId) {
+        config.folders[folderId].displayName = fullName.substring(lastDash + 1);
+      } else {
+        config.folders[folderId].displayName = fullName;
+      }
+    }
     const siblings = getChildFolders(newParentId);
     const others = sortFolders(siblings.filter((id) => id !== folderId));
     let insertIdx = others.length;
@@ -639,6 +778,10 @@ jQuery(async () => {
       config.folders[id].sortOrder = i + 1;
     });
     saveConfig(config);
+    // 父级变化时，递归重建标签名
+    if (oldParentId !== newParentId) {
+      recursiveRebuildTagNames(folderId);
+    }
   }
 
   // 移动角色到新文件夹（移除所有旧文件夹标签，只添加目标标签）
@@ -934,6 +1077,7 @@ jQuery(async () => {
   // ==================== 主弹窗：双栏布局 ====================
   let selectedTreeNode = null; // 当前左侧选中的文件夹ID或'__uncategorized__'
   let expandedNodes = new Set(); // 左侧树展开状态
+  let configExpandedNodes = new Set(); // 配置弹窗树展开状态
 
   // ==================== 排序状态管理 ====================
   let sortDirty = false; // 是否有未确认的排序操作
@@ -1217,15 +1361,6 @@ jQuery(async () => {
     clearNewlyImportedHighlight();
   }
 
-  // 获取文件夹的短名称（只显示最后一段，如 "1-1.1" → "1.1"）
-  function getShortTagName(tagId) {
-    const fullName = getTagName(tagId);
-    const lastDash = fullName.lastIndexOf("-");
-    if (lastDash >= 0 && config.folders[tagId]?.parentId) {
-      return fullName.substring(lastDash + 1);
-    }
-    return fullName;
-  }
 
   // ==================== 左侧树渲染 ====================
   function renderLeftTree() {
@@ -1318,7 +1453,7 @@ jQuery(async () => {
             <div class="cfm-tnode ${isSelected ? "cfm-tnode-selected" : ""} ${isNew ? "cfm-tnode-new" : ""}" data-id="${folderId}" style="padding-left:${indent}px;" draggable="true">
                 <span class="cfm-tnode-arrow ${hasChildren ? (isExpanded ? "cfm-arrow-expanded" : "") : "cfm-arrow-hidden"}"><i class="fa-solid fa-caret-right"></i></span>
                 <span class="cfm-tnode-icon"><i class="fa-solid fa-folder${isSelected ? "-open" : ""}"></i></span>
-                <span class="cfm-tnode-label">${escapeHtml(getShortTagName(folderId))}${isNew ? ' <span class="cfm-new-badge">新</span>' : ""}</span>
+                <span class="cfm-tnode-label">${escapeHtml(getTagName(folderId))}${isNew ? ' <span class="cfm-new-badge">新</span>' : ""}</span>
                 <span class="cfm-tnode-count">${count}</span>
             </div>
         `);
@@ -1568,7 +1703,7 @@ jQuery(async () => {
     // 正常文件夹
     const folderId = selectedTreeNode;
     const path = getFolderPath(folderId)
-      .map((id) => getShortTagName(id))
+      .map((id) => getTagName(id))
       .join(" › ");
     pathEl.text(path);
 
@@ -1591,7 +1726,7 @@ jQuery(async () => {
       const row = $(`
                 <div class="cfm-row cfm-row-folder" data-folder-id="${childId}" draggable="true">
                     <div class="cfm-row-icon"><i class="fa-solid fa-folder"></i></div>
-                    <div class="cfm-row-name">${escapeHtml(getShortTagName(childId))}</div>
+                    <div class="cfm-row-name">${escapeHtml(getTagName(childId))}</div>
                     <div class="cfm-row-meta">${childCount} 个角色</div>
                 </div>
             `);
@@ -2105,10 +2240,26 @@ jQuery(async () => {
     const treeSection = $(`
             <div class="cfm-config-section">
                 <label>当前文件夹结构 <span class="cfm-drag-hint">拖拽调整层级 · 点击选中为目标父级</span></label>
+                <div class="cfm-config-tree-actions">
+                    <button id="cfm-config-expand-all" class="cfm-btn cfm-btn-sm" title="展开全部"><i class="fa-solid fa-angles-down"></i> 展开</button>
+                    <button id="cfm-config-collapse-all" class="cfm-btn cfm-btn-sm" title="收起全部"><i class="fa-solid fa-angles-up"></i> 收起</button>
+                </div>
                 <div class="cfm-tree" id="cfm-folder-tree"></div>
             </div>
         `);
     body.append(treeSection);
+
+    treeSection.find("#cfm-config-expand-all").on("click touchend", (e) => {
+      e.preventDefault();
+      for (const id of getFolderTagIds()) configExpandedNodes.add(id);
+      renderConfigBody();
+    });
+    treeSection.find("#cfm-config-collapse-all").on("click touchend", (e) => {
+      e.preventDefault();
+      configExpandedNodes.clear();
+      renderConfigBody();
+    });
+
     const treeContainer = treeSection.find("#cfm-folder-tree");
 
     if (configSelectedFolderId) {
@@ -2152,8 +2303,19 @@ jQuery(async () => {
       rootDropzone.removeClass("cfm-drag-over");
       if (!draggedFolderId || !config.folders[draggedFolderId]?.parentId)
         return;
+      // 确保有 displayName
+      if (!config.folders[draggedFolderId].displayName) {
+        const fullName = getFullTagName(draggedFolderId);
+        const lastDash = fullName.lastIndexOf("-");
+        if (lastDash >= 0) {
+          config.folders[draggedFolderId].displayName = fullName.substring(lastDash + 1);
+        } else {
+          config.folders[draggedFolderId].displayName = fullName;
+        }
+      }
       config.folders[draggedFolderId].parentId = null;
       saveConfig(config);
+      recursiveRebuildTagNames(draggedFolderId);
       toastr.success(`「${getTagName(draggedFolderId)}」已设为顶级文件夹`);
       draggedFolderId = null;
       renderConfigBody();
@@ -2162,24 +2324,39 @@ jQuery(async () => {
 
   function renderConfigTreeItem(container, folderId, depth) {
     const indent = depth * 24;
-    const name = getShortTagName(folderId);
+    const name = getTagName(folderId);
     const isSelected = configSelectedFolderId === folderId;
     const isDelChecked = cfmDeleteSelected.has(folderId);
+    const hasChildren = getChildFolders(folderId).length > 0;
+    const isExpanded = configExpandedNodes.has(folderId);
 
     let checkboxHtml = "";
     if (cfmDeleteMode) {
       checkboxHtml = `<span class="cfm-del-checkbox ${isDelChecked ? "cfm-del-checked" : ""}" data-del-id="${folderId}"><i class="fa-${isDelChecked ? "solid" : "regular"} fa-square${isDelChecked ? "-check" : ""}"></i></span>`;
     }
 
+    const arrowHtml = `<span class="cfm-tnode-arrow cfm-config-arrow ${hasChildren ? (isExpanded ? "cfm-arrow-expanded" : "") : "cfm-arrow-hidden"}"><i class="fa-solid fa-caret-right"></i></span>`;
+
     const isNewTag = isNewlyImported(folderId);
     const item = $(`
             <div class="cfm-tree-item ${isSelected ? "cfm-tree-selected" : ""} ${isNewTag ? "cfm-tree-new" : ""}" draggable="${cfmDeleteMode ? "false" : "true"}" data-folder-id="${folderId}" style="padding-left:${10 + indent}px;">
                 ${checkboxHtml}
+                ${arrowHtml}
                 <span class="cfm-tree-icon"><i class="fa-solid fa-grip-vertical" style="margin-right:4px;opacity:0.4;font-size:11px;"></i><i class="fa-solid fa-folder${isSelected ? "-open" : ""}"></i></span>
                 <span class="cfm-tree-name">${escapeHtml(name)}${isNewTag ? ' <span class="cfm-new-badge">新</span>' : ""}</span>
                 ${cfmDeleteMode ? "" : '<span class="cfm-tree-actions"><button class="cfm-btn-danger cfm-remove-folder" data-id="' + folderId + '" title="移除此文件夹"><i class="fa-solid fa-trash-can"></i></button></span>'}
             </div>
         `);
+
+    // 点击箭头：展开/收起
+    item.find(".cfm-config-arrow").on("click touchend", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!hasChildren) return;
+      if (configExpandedNodes.has(folderId)) configExpandedNodes.delete(folderId);
+      else configExpandedNodes.add(folderId);
+      renderConfigBody();
+    });
 
     // 删除模式：点击复选框/行切换选中状态（支持Shift框选 + 级联）
     if (cfmDeleteMode) {
@@ -2232,18 +2409,22 @@ jQuery(async () => {
       };
       item.find(".cfm-del-checkbox").on("click touchend", handleDeleteClick);
       item.on("click", (e) => {
-        if ($(e.target).closest(".cfm-del-checkbox").length) return;
+        if ($(e.target).closest(".cfm-del-checkbox, .cfm-config-arrow").length) return;
         handleDeleteClick(e);
       });
       container.append(item);
-      const children = sortFolders(getChildFolders(folderId));
-      for (const childId of children)
-        renderConfigTreeItem(container, childId, depth + 1);
+      if (hasChildren) {
+        const childContainer = $(`<div class="cfm-config-children ${isExpanded ? "cfm-children-expanded" : ""}"></div>`);
+        const children = sortFolders(getChildFolders(folderId));
+        for (const childId of children)
+          renderConfigTreeItem(childContainer, childId, depth + 1);
+        container.append(childContainer);
+      }
       return;
     }
     // 点击选中/取消选中
     item.on("click", (e) => {
-      if ($(e.target).closest(".cfm-remove-folder").length) return;
+      if ($(e.target).closest(".cfm-remove-folder, .cfm-config-arrow").length) return;
       if (draggedFolderId) return;
       e.preventDefault();
       configSelectedFolderId =
@@ -2256,12 +2437,18 @@ jQuery(async () => {
       e.stopPropagation();
       showDeleteConfirmDialog([folderId], (alsoDeleteTags) => {
         const parentId = config.folders[folderId]?.parentId || null;
+        const reparentedChildren = [];
         for (const childId of getChildFolders(folderId)) {
           config.folders[childId].parentId = parentId;
+          reparentedChildren.push(childId);
         }
         if (alsoDeleteTags) deleteTagFromSystem(folderId);
         delete config.folders[folderId];
         saveConfig(config);
+        // 重建被提升的子文件夹的标签名
+        for (const childId of reparentedChildren) {
+          recursiveRebuildTagNames(childId);
+        }
         if (alsoDeleteTags) getContext().saveSettingsDebounced();
         if (configSelectedFolderId === folderId) configSelectedFolderId = null;
         const suffix = alsoDeleteTags ? "（标签已同步删除）" : "";
@@ -2303,16 +2490,32 @@ jQuery(async () => {
         toastr.error("此操作会产生循环嵌套，已阻止");
         return;
       }
+      // 确保有 displayName
+      if (!config.folders[draggedFolderId].displayName) {
+        const fullName = getFullTagName(draggedFolderId);
+        const oldParent = config.folders[draggedFolderId].parentId;
+        const lastDash = fullName.lastIndexOf("-");
+        if (lastDash >= 0 && oldParent) {
+          config.folders[draggedFolderId].displayName = fullName.substring(lastDash + 1);
+        } else {
+          config.folders[draggedFolderId].displayName = fullName;
+        }
+      }
       config.folders[draggedFolderId].parentId = folderId;
       saveConfig(config);
+      recursiveRebuildTagNames(draggedFolderId);
       toastr.success(`「${getTagName(draggedFolderId)}」已移入「${name}」`);
       draggedFolderId = null;
       renderConfigBody();
     });
     container.append(item);
-    const children = sortFolders(getChildFolders(folderId));
-    for (const childId of children)
-      renderConfigTreeItem(container, childId, depth + 1);
+    if (hasChildren) {
+      const childContainer = $(`<div class="cfm-config-children ${isExpanded ? "cfm-children-expanded" : ""}"></div>`);
+      const children = sortFolders(getChildFolders(folderId));
+      for (const childId of children)
+        renderConfigTreeItem(childContainer, childId, depth + 1);
+      container.append(childContainer);
+    }
   }
 
   // ==================== 反选功能 ====================
@@ -2426,25 +2629,26 @@ jQuery(async () => {
         .filter((id) => toDelete.has(id))
         .reverse();
 
+      const allReparented = [];
+
       for (const folderId of sortedToDelete) {
         if (!config.folders[folderId]) continue;
         const parentId = config.folders[folderId].parentId || null;
-        // 将子文件夹提升到被删除文件夹的父级
         for (const childId of getChildFolders(folderId)) {
-          // 只提升未被同时选中删除的子文件夹
           if (!toDelete.has(childId)) {
             config.folders[childId].parentId = parentId;
+            allReparented.push(childId);
           }
         }
         deletedNames.push(getTagName(folderId));
-        // 如果同时删除标签
-        if (alsoDeleteTags) {
-          deleteTagFromSystem(folderId);
-        }
+        if (alsoDeleteTags) deleteTagFromSystem(folderId);
         delete config.folders[folderId];
         if (configSelectedFolderId === folderId) configSelectedFolderId = null;
       }
       saveConfig(config);
+      for (const childId of allReparented) {
+        recursiveRebuildTagNames(childId);
+      }
       if (alsoDeleteTags) getContext().saveSettingsDebounced();
       cfmDeleteSelected.clear();
       cfmDeleteCascade = false;
@@ -2466,39 +2670,27 @@ jQuery(async () => {
       toastr.warning("标签名称不能为空");
       return;
     }
-    const context = getContext();
-    const tags = context.tags;
-    const uuidv4 = context.uuidv4;
     const created = [];
+    let prefixCount = 0;
     for (const name of names) {
-      let tag = tags.find((t) => t.name.toLowerCase() === name.toLowerCase());
-      if (!tag) {
-        tag = {
-          id: uuidv4(),
-          name,
-          folder_type: "NONE",
-          filter_state: "UNDEFINED",
-          sort_order: Math.max(0, ...tags.map((t) => t.sort_order || 0)) + 1,
-          is_hidden_on_character_card: false,
-          color: "",
-          color2: "",
-          create_date: Date.now(),
-        };
-        tags.push(tag);
-      }
+      const { tag, displayName } = findOrCreateTag(name, parentFolderId || null);
       if (!config.folders[tag.id]) {
         config.folders[tag.id] = { parentId: parentFolderId || null };
+        if (displayName) {
+          config.folders[tag.id].displayName = displayName;
+          prefixCount++;
+        }
       }
-      created.push(tag.name);
+      created.push(displayName || name);
     }
     saveConfig(config);
-    context.saveSettingsDebounced();
+    getContext().saveSettingsDebounced();
     const parentHint = parentFolderId
       ? `「${getTagName(parentFolderId)}」下`
       : "顶级";
-    toastr.success(
-      `已创建 ${created.length} 个${parentHint}文件夹: ${created.join(", ")}`,
-    );
+    let msg = `已创建 ${created.length} 个${parentHint}文件夹: ${created.join(", ")}`;
+    if (prefixCount > 0) msg += `（${prefixCount} 个作为子文件夹自动添加了路径前缀）`;
+    toastr.success(msg);
   }
 
   // ==================== 批量创建弹窗（多行缩进格式） ====================
@@ -2642,38 +2834,26 @@ jQuery(async () => {
   }
 
   function executeBatchCreate(nodes, parentId) {
-    const context = getContext();
-    const tags = context.tags;
-    const uuidv4 = context.uuidv4;
     let count = 0;
+    let prefixCount = 0;
     function processNode(node, parentTagId) {
-      let tag = tags.find(
-        (t) => t.name.toLowerCase() === node.name.toLowerCase(),
-      );
-      if (!tag) {
-        tag = {
-          id: uuidv4(),
-          name: node.name,
-          folder_type: "NONE",
-          filter_state: "UNDEFINED",
-          sort_order: Math.max(0, ...tags.map((t) => t.sort_order || 0)) + 1,
-          is_hidden_on_character_card: false,
-          color: "",
-          color2: "",
-          create_date: Date.now(),
-        };
-        tags.push(tag);
-      }
+      const { tag, displayName } = findOrCreateTag(node.name, parentTagId);
       if (!config.folders[tag.id]) {
         config.folders[tag.id] = { parentId: parentTagId };
+        if (displayName) {
+          config.folders[tag.id].displayName = displayName;
+          prefixCount++;
+        }
         count++;
       }
       for (const child of node.children) processNode(child, tag.id);
     }
     for (const node of nodes) processNode(node, parentId);
     saveConfig(config);
-    context.saveSettingsDebounced();
-    toastr.success(`批量创建完成，共新增 ${count} 个文件夹`);
+    getContext().saveSettingsDebounced();
+    let msg = `批量创建完成，共新增 ${count} 个文件夹`;
+    if (prefixCount > 0) msg += `（其中 ${prefixCount} 个作为子文件夹自动添加了路径前缀）`;
+    toastr.success(msg);
   }
 
   // ==================== 初始化 ====================

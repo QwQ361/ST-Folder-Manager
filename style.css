@@ -650,6 +650,36 @@
     font-style: italic;
 }
 
+/* 配置弹窗树展开/收起 */
+.cfm-config-tree-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 6px;
+    margin-bottom: 2px;
+}
+.cfm-config-children {
+    display: none;
+}
+.cfm-config-children.cfm-children-expanded {
+    display: block;
+}
+.cfm-config-arrow {
+    cursor: pointer;
+    flex-shrink: 0;
+    width: 18px;
+    text-align: center;
+    font-size: 10px;
+    opacity: 0.5;
+    transition: transform 0.15s;
+    margin-right: 2px;
+}
+.cfm-config-arrow.cfm-arrow-expanded {
+    transform: rotate(90deg);
+}
+.cfm-config-arrow.cfm-arrow-hidden {
+    visibility: hidden;
+}
+
 /* 通用按钮 */
 .cfm-btn {
     padding: 6px 14px;
