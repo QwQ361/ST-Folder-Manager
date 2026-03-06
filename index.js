@@ -678,13 +678,6 @@ jQuery(async () => {
       overlay.remove();
       onRevert();
     });
-    overlay.on("click", (e) => {
-      if (e.target === overlay[0]) {
-        // 点击遮罩等同于"否"
-        overlay.remove();
-        onRevert();
-      }
-    });
   }
   // 移动文件夹到新父级并插入到指定位置
   function reorderFolder(folderId, newParentId, insertBeforeId) {
@@ -1097,9 +1090,6 @@ jQuery(async () => {
     overlay.append(popup);
     $("body").append(overlay);
 
-    overlay.on("click", (e) => {
-      if (e.target === overlay[0]) closeMainPopup();
-    });
     popup.find("#cfm-btn-close-main").on("click touchend", (e) => {
       e.preventDefault();
       closeMainPopup();
@@ -1982,9 +1972,6 @@ jQuery(async () => {
         `);
     overlay.append(popup);
     $("body").append(overlay);
-    overlay.on("click", (e) => {
-      if (e.target === overlay[0]) closeConfigPopup();
-    });
     popup.find("#cfm-btn-close-config").on("click touchend", (e) => {
       e.preventDefault();
       closeConfigPopup();
@@ -2554,9 +2541,6 @@ jQuery(async () => {
     const dialog = $(dialogHtml);
     overlay.append(dialog);
     $("body").append(overlay);
-    overlay.on("click", (e) => {
-      if (e.target === overlay[0]) overlay.remove();
-    });
     dialog.find("#cfm-dc-close, #cfm-dc-cancel").on("click touchend", (e) => {
       e.preventDefault();
       overlay.remove();
@@ -2708,9 +2692,6 @@ jQuery(async () => {
         `);
     overlay.append(popup);
     $("body").append(overlay);
-    overlay.on("click", (e) => {
-      if (e.target === overlay[0]) overlay.remove();
-    });
     popup.find("#cfm-batch-close").on("click touchend", (e) => {
       e.preventDefault();
       overlay.remove();
