@@ -1441,9 +1441,6 @@ jQuery(async () => {
                     <div class="cfm-left-pane">
                         <div class="cfm-left-header">
                             <span>文件夹</span>
-                            <span class="cfm-left-header-actions">
-                                <button class="cfm-preset-add-folder" title="新建文件夹"><i class="fa-solid fa-folder-plus"></i></button>
-                            </span>
                         </div>
                         <div class="cfm-left-tree" id="cfm-preset-left-tree"></div>
                     </div>
@@ -1461,9 +1458,6 @@ jQuery(async () => {
                     <div class="cfm-left-pane">
                         <div class="cfm-left-header">
                             <span>文件夹</span>
-                            <span class="cfm-left-header-actions">
-                                <button class="cfm-worldinfo-add-folder" title="新建文件夹"><i class="fa-solid fa-folder-plus"></i></button>
-                            </span>
                         </div>
                         <div class="cfm-left-tree" id="cfm-worldinfo-left-tree"></div>
                     </div>
@@ -2716,6 +2710,10 @@ jQuery(async () => {
   let cfmDeleteRangeMode = false; // 框选模式（移动端友好）
   let cfmInvertScope = "all"; // 反选范围：'all' 全部 | 'parent' 当前父级下
 
+  // 预设/世界书配置面板状态
+  let resConfigDeleteMode = false;
+  let resConfigDeleteSelected = new Set();
+
   function showConfigPopup() {
     if ($("#cfm-config-overlay").length > 0) return;
     const overlay = $('<div id="cfm-config-overlay"></div>');
@@ -2748,6 +2746,14 @@ jQuery(async () => {
   function renderConfigBody() {
     const body = $("#cfm-config-body");
     body.empty();
+
+    // 根据当前资源类型分支渲染
+    if (currentResourceType === "presets" || currentResourceType === "worldinfo") {
+      renderResourceConfigBody(body, currentResourceType);
+      return;
+    }
+
+    // ===== 以下为角色卡（chars）配置 =====
 
     // 0. 按钮位置设置
     const currentMode = getButtonMode();
@@ -3005,6 +3011,305 @@ jQuery(async () => {
       for (const folderId of topFoldersConfig)
         renderConfigTreeItem(treeContainer, folderId, 0);
     }
+  }
+
+  // ==================== 预设/世界书配置面板渲染 ====================
+  function renderResourceConfigBody(body, type) {
+    const typeLabel = type === "presets" ? "预设" : "世界书";
+    const folders = getResourceFolders(type);
+
+    // 获取文件夹内项目数的辅助函数
+    function getResItemCount(fname) {
+      const groups = getResourceGroups(type);
+      let count = 0;
+      if (type === "presets") {
+        const presets = getCurrentPresets();
+        count = presets.filter(p => groups[p.name] === fname).length;
+      } else {
+        for (const key of Object.keys(groups)) {
+          if (groups[key] === fname) count++;
+        }
+      }
+      return count;
+    }
+
+    // 0. 按钮位置设置（共享）
+    const currentMode = getButtonMode();
+    const modeSection = $(`
+      <div class="cfm-config-section cfm-mode-section">
+        <label>按钮位置</label>
+        <div class="cfm-mode-toggle">
+          <button class="cfm-mode-btn ${currentMode === "topbar" ? "cfm-mode-active" : ""}" data-mode="topbar"><i class="fa-solid fa-bars"></i> 固定在顶栏</button>
+          <button class="cfm-mode-btn ${currentMode === "float" ? "cfm-mode-active" : ""}" data-mode="float"><i class="fa-solid fa-up-down-left-right"></i> 浮动按钮</button>
+        </div>
+      </div>
+    `);
+    modeSection.find(".cfm-mode-btn").on("click touchend", function (e) {
+      e.preventDefault();
+      const newMode = $(this).data("mode");
+      if (newMode === getButtonMode()) return;
+      switchButtonMode(newMode);
+      toastr.success(newMode === "topbar" ? "已切换为顶栏按钮" : "已切换为浮动按钮");
+      modeSection.find(".cfm-mode-btn").removeClass("cfm-mode-active");
+      $(this).addClass("cfm-mode-active");
+    });
+    body.append(modeSection);
+
+    // 1. 创建新文件夹（支持空格分隔批量创建）
+    const createSection = $(`
+      <div class="cfm-config-section">
+        <label>创建新文件夹</label>
+        <div class="cfm-create-tag-row">
+          <input type="text" id="cfm-res-create-input" placeholder="a b c（空格分隔，批量创建多个文件夹）" />
+          <button id="cfm-res-create-btn"><i class="fa-solid fa-plus"></i> 创建</button>
+        </div>
+        <div class="cfm-create-tag-hint">当前将添加为${typeLabel}文件夹。空格分隔可批量创建多个文件夹。</div>
+      </div>
+    `);
+    createSection.find("#cfm-res-create-btn").on("click touchend", (e) => {
+      e.preventDefault();
+      const input = createSection.find("#cfm-res-create-input").val().trim();
+      if (!input) { toastr.warning("请输入文件夹名称"); return; }
+      const names = input.split(/\s+/).filter(s => s.length > 0);
+      const f = getResourceFolders(type);
+      const created = [];
+      const skipped = [];
+      for (const name of names) {
+        if (f.includes(name)) { skipped.push(name); continue; }
+        f.push(name);
+        created.push(name);
+      }
+      setResourceFolders(type, f);
+      if (created.length > 0) {
+        toastr.success(`已创建 ${created.length} 个${typeLabel}文件夹: ${created.join(", ")}`);
+      }
+      if (skipped.length > 0) {
+        toastr.warning(`${skipped.length} 个文件夹已存在（跳过）: ${skipped.join(", ")}`);
+      }
+      createSection.find("#cfm-res-create-input").val("");
+      renderResourceConfigBody(body.empty(), type);
+    });
+    createSection.find("#cfm-res-create-input").on("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); createSection.find("#cfm-res-create-btn").trigger("click"); }
+    });
+    body.append(createSection);
+
+    // 2. 批量创建 & 批量删除
+    const batchSection = $(`
+      <div class="cfm-config-section">
+        <label>批量创建文件夹结构</label>
+        <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;">
+          <button id="cfm-res-batch-create-btn" class="cfm-btn"><i class="fa-solid fa-layer-group"></i> 打开批量创建</button>
+          <button id="cfm-res-batch-delete-btn" class="cfm-btn ${resConfigDeleteMode ? "cfm-btn-danger" : ""}" style="${resConfigDeleteMode ? "border-color:rgba(237,66,69,0.5);color:#ed4245;" : ""}"><i class="fa-solid fa-trash-can"></i> ${resConfigDeleteMode ? "退出删除模式" : "删除文件夹"}</button>
+        </div>
+        <div class="cfm-create-tag-hint">支持多行格式，一次性创建多个文件夹。</div>
+      </div>
+    `);
+    batchSection.find("#cfm-res-batch-create-btn").on("click touchend", (e) => {
+      e.preventDefault();
+      showResourceBatchCreatePopup(type);
+    });
+    batchSection.find("#cfm-res-batch-delete-btn").on("click touchend", (e) => {
+      e.preventDefault();
+      resConfigDeleteMode = !resConfigDeleteMode;
+      resConfigDeleteSelected.clear();
+      renderResourceConfigBody(body.empty(), type);
+    });
+    body.append(batchSection);
+
+    // 删除模式下显示操作栏
+    if (resConfigDeleteMode) {
+      const allSelected = folders.length > 0 && folders.every(f => resConfigDeleteSelected.has(f));
+      const deleteBar = $(`
+        <div class="cfm-delete-bar cfm-delete-bar-controls">
+          <div class="cfm-delete-bar-top">
+            <div class="cfm-delete-bar-left">
+              <button class="cfm-btn cfm-btn-sm" id="cfm-res-select-all" title="全选/全不选"><i class="fa-solid fa-${allSelected ? "square-minus" : "square-check"}"></i> ${allSelected ? "全不选" : "全选"}</button>
+              <button class="cfm-btn cfm-btn-sm" id="cfm-res-invert-select" title="反选"><i class="fa-solid fa-right-left"></i> 反选</button>
+            </div>
+          </div>
+          ${resConfigDeleteSelected.size > 0 ? `<div class="cfm-delete-bar-bottom"><span>已选中 ${resConfigDeleteSelected.size} 个文件夹</span><button class="cfm-btn cfm-btn-danger" id="cfm-res-confirm-delete" style="padding:4px 14px;"><i class="fa-solid fa-trash-can"></i> 确认删除</button></div>` : ""}
+        </div>
+      `);
+      deleteBar.find("#cfm-res-select-all").on("click touchend", (e) => {
+        e.preventDefault();
+        if (allSelected) { resConfigDeleteSelected.clear(); }
+        else { folders.forEach(f => resConfigDeleteSelected.add(f)); }
+        renderResourceConfigBody(body.empty(), type);
+      });
+      deleteBar.find("#cfm-res-invert-select").on("click touchend", (e) => {
+        e.preventDefault();
+        for (const f of folders) {
+          if (resConfigDeleteSelected.has(f)) resConfigDeleteSelected.delete(f);
+          else resConfigDeleteSelected.add(f);
+        }
+        renderResourceConfigBody(body.empty(), type);
+      });
+      deleteBar.find("#cfm-res-confirm-delete").on("click touchend", (e) => {
+        e.preventDefault();
+        executeResourceMultiDelete(type);
+        renderResourceConfigBody(body.empty(), type);
+      });
+      body.append(deleteBar);
+    }
+
+    // 3. 当前文件夹结构
+    const treeSection = $(`
+      <div class="cfm-config-section">
+        <label>当前文件夹结构 <span style="font-size:11px;opacity:0.5;">(${folders.length} 个)</span></label>
+        <div class="cfm-tree" id="cfm-res-folder-tree"></div>
+      </div>
+    `);
+    body.append(treeSection);
+
+    const treeContainer = treeSection.find("#cfm-res-folder-tree");
+    if (folders.length === 0) {
+      treeContainer.append('<div class="cfm-empty" style="padding:16px;">还没有创建任何文件夹</div>');
+    } else {
+      for (const fname of folders) {
+        const itemCount = getResItemCount(fname);
+        const isDelChecked = resConfigDeleteSelected.has(fname);
+
+        let checkboxHtml = "";
+        if (resConfigDeleteMode) {
+          checkboxHtml = `<span class="cfm-del-checkbox ${isDelChecked ? "cfm-del-checked" : ""}" data-del-fname="${escapeHtml(fname)}"><i class="fa-${isDelChecked ? "solid" : "regular"} fa-square${isDelChecked ? "-check" : ""}"></i></span>`;
+        }
+
+        const item = $(`
+          <div class="cfm-tree-item" data-folder-name="${escapeHtml(fname)}" style="padding-left:10px;">
+            ${checkboxHtml}
+            <span class="cfm-tree-icon"><i class="fa-solid fa-folder"></i></span>
+            <span class="cfm-tree-name">${escapeHtml(fname)}</span>
+            <span class="cfm-tnode-count" style="margin-left:auto;margin-right:8px;">${itemCount}</span>
+            ${resConfigDeleteMode ? "" : `<span class="cfm-tree-actions"><button class="cfm-btn-danger cfm-res-remove-folder" data-fname="${escapeHtml(fname)}" title="删除此文件夹"><i class="fa-solid fa-trash-can"></i></button></span>`}
+          </div>
+        `);
+
+        if (resConfigDeleteMode) {
+          // 删除模式：点击切换选中
+          item.on("click touchend", (e) => {
+            e.preventDefault();
+            if (resConfigDeleteSelected.has(fname)) resConfigDeleteSelected.delete(fname);
+            else resConfigDeleteSelected.add(fname);
+            renderResourceConfigBody(body.empty(), type);
+          });
+        } else {
+          // 正常模式：删除按钮
+          item.find(".cfm-res-remove-folder").on("click touchend", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!confirm(`确定删除文件夹「${fname}」吗？\n文件夹内的${typeLabel}将变为未归类。`)) return;
+            const f = getResourceFolders(type);
+            const idx = f.indexOf(fname);
+            if (idx >= 0) f.splice(idx, 1);
+            setResourceFolders(type, f);
+            const grps = getResourceGroups(type);
+            for (const key of Object.keys(grps)) {
+              if (grps[key] === fname) delete grps[key];
+            }
+            getContext().saveSettingsDebounced();
+            toastr.success(`已删除${typeLabel}文件夹「${fname}」`);
+            renderResourceConfigBody(body.empty(), type);
+          });
+        }
+        treeContainer.append(item);
+      }
+    }
+  }
+
+  // 预设/世界书批量删除执行
+  function executeResourceMultiDelete(type) {
+    if (resConfigDeleteSelected.size === 0) return;
+    const typeLabel = type === "presets" ? "预设" : "世界书";
+    const toDelete = Array.from(resConfigDeleteSelected);
+    const namesPreview = toDelete.length > 5
+      ? toDelete.slice(0, 5).join("、") + `…等 ${toDelete.length} 个`
+      : toDelete.join("、");
+    if (!confirm(`确定删除 ${toDelete.length} 个文件夹吗？\n${namesPreview}\n\n文件夹内的${typeLabel}将变为未归类。`)) return;
+    const f = getResourceFolders(type);
+    const grps = getResourceGroups(type);
+    for (const fname of toDelete) {
+      const idx = f.indexOf(fname);
+      if (idx >= 0) f.splice(idx, 1);
+      for (const key of Object.keys(grps)) {
+        if (grps[key] === fname) delete grps[key];
+      }
+    }
+    setResourceFolders(type, f);
+    getContext().saveSettingsDebounced();
+    resConfigDeleteSelected.clear();
+    resConfigDeleteMode = false;
+    toastr.success(`已删除 ${toDelete.length} 个${typeLabel}文件夹: ${toDelete.join(", ")}`);
+  }
+
+  // 预设/世界书批量创建弹窗
+  function showResourceBatchCreatePopup(type) {
+    if ($("#cfm-res-batch-overlay").length > 0) return;
+    const typeLabel = type === "presets" ? "预设" : "世界书";
+    const overlay = $('<div id="cfm-res-batch-overlay" class="cfm-batch-overlay"></div>');
+    const popup = $(`
+      <div class="cfm-batch-popup">
+        <div class="cfm-config-header"><h3>📋 批量创建${typeLabel}文件夹</h3><button class="cfm-btn-close" id="cfm-res-batch-close">&times;</button></div>
+        <div style="padding:16px;overflow-y:auto;flex:1;min-height:0;">
+          <div class="cfm-create-tag-hint" style="margin-bottom:10px;">每行一个文件夹名称。行首的 <code>-</code> 是可选装饰，会被忽略。示例：</div>
+          <pre style="background:#1a1a2e;color:#aaa;padding:10px;border-radius:6px;font-size:12px;margin-bottom:12px;">常用预设\n测试预设\n备份预设</pre>
+          <textarea id="cfm-res-batch-textarea" rows="10" style="width:100%;font-family:monospace;font-size:13px;background:#23272a;color:#f2f3f5;border:1px solid #4e5058;border-radius:6px;padding:10px;resize:vertical;" placeholder="在此输入文件夹名称，每行一个..."></textarea>
+          <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:12px;">
+            <button id="cfm-res-batch-preview" class="cfm-btn" style="background:#5865f2;">预览</button>
+            <button id="cfm-res-batch-confirm" class="cfm-btn" style="background:#57f287;color:#000;">确认创建</button>
+          </div>
+          <div id="cfm-res-batch-preview-area" style="margin-top:12px;"></div>
+        </div>
+      </div>
+    `);
+    overlay.append(popup);
+    $("body").append(overlay);
+
+    popup.find("#cfm-res-batch-close").on("click touchend", (e) => { e.preventDefault(); overlay.remove(); });
+
+    const parseNames = () => {
+      const text = popup.find("#cfm-res-batch-textarea").val();
+      return text.split("\n")
+        .map(line => line.trim().replace(/^-+\s*/, "").trim())
+        .filter(name => name.length > 0);
+    };
+
+    popup.find("#cfm-res-batch-preview").on("click touchend", (e) => {
+      e.preventDefault();
+      const names = parseNames();
+      const area = popup.find("#cfm-res-batch-preview-area");
+      area.empty();
+      if (names.length === 0) {
+        area.html('<div style="color:#ed4245;">无法解析，请检查格式。</div>');
+        return;
+      }
+      const f = getResourceFolders(type);
+      let html = '<div style="color:#57f287;margin-bottom:6px;">预览（共 ' + names.length + ' 个）：</div>';
+      for (const name of names) {
+        const exists = f.includes(name);
+        html += `<div style="font-size:13px;line-height:1.8;${exists ? "color:#ed4245;text-decoration:line-through;" : ""}">📁 ${escapeHtml(name)}${exists ? " (已存在，跳过)" : ""}</div>`;
+      }
+      area.html(html);
+    });
+
+    popup.find("#cfm-res-batch-confirm").on("click touchend", (e) => {
+      e.preventDefault();
+      const names = parseNames();
+      if (names.length === 0) { toastr.warning("无法解析，请检查格式"); return; }
+      const f = getResourceFolders(type);
+      let created = 0, skipped = 0;
+      for (const name of names) {
+        if (f.includes(name)) { skipped++; continue; }
+        f.push(name);
+        created++;
+      }
+      setResourceFolders(type, f);
+      overlay.remove();
+      let msg = `批量创建完成，共新增 ${created} 个${typeLabel}文件夹`;
+      if (skipped > 0) msg += `，${skipped} 个已存在（跳过）`;
+      toastr.success(msg);
+      renderConfigBody();
+    });
   }
 
   function renderConfigTreeItem(container, folderId, depth) {
