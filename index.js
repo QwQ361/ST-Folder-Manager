@@ -4307,7 +4307,7 @@ jQuery(async () => {
         <div class="cfm-config-header"><h3>📋 批量创建文件夹结构</h3><button class="cfm-btn-close" id="cfm-res-batch-close">&times;</button></div>
         <div style="padding:16px;overflow-y:auto;flex:1;min-height:0;">
           <div class="cfm-create-tag-hint" style="margin-bottom:10px;">每行一个标签名，用缩进表示层级（每2个空格深入一层）。<br>行首的 <code>-</code> 是可选装饰，会被忽略。示例：</div>
-          <pre style="background:#1a1a2e;color:#aaa;padding:10px;border-radius:6px;font-size:12px;margin-bottom:12px;">作者A\n  -奇幻\n    -长篇\n    -短篇\n  -科幻\n作者B\n  -日常</pre>
+          <pre style="background:#1a1a2e;color:#aaa;padding:10px;border-radius:6px;font-size:12px;margin-bottom:12px;">1\n  -1.1\n    -1.1.1\n    -1.1.2\n  -1.2\n2\n  -2.1</pre>
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
             <button id="cfm-res-smart-indent-child" class="cfm-btn" style="font-size:12px;padding:3px 10px;" title="开启后，回车将比当前行多缩进2格（创建子级）。关闭时，回车保持同级缩进。退格键始终回退2个空格。"><i class="fa-solid fa-indent"></i> 添加子级</button>
             <span style="font-size:11px;opacity:0.5;">Enter 智能缩进 · Backspace 回退层级</span>
@@ -4794,7 +4794,7 @@ jQuery(async () => {
                 <div class="cfm-config-header"><h3>📋 批量创建文件夹结构</h3><button class="cfm-btn-close" id="cfm-batch-close">&times;</button></div>
                 <div style="padding:16px;overflow-y:auto;flex:1;min-height:0;">
                     <div class="cfm-create-tag-hint" style="margin-bottom:10px;">每行一个标签名，用缩进表示层级（每2个空格深入一层）。<br>行首的 <code>-</code> 是可选装饰，会被忽略。示例：</div>
-                    <pre style="background:#1a1a2e;color:#aaa;padding:10px;border-radius:6px;font-size:12px;margin-bottom:12px;">作者A\n  -奇幻\n    -长篇\n    -短篇\n  -科幻\n作者B\n  -日常</pre>
+                    <pre style="background:#1a1a2e;color:#aaa;padding:10px;border-radius:6px;font-size:12px;margin-bottom:12px;">1\n  -1.1\n    -1.1.1\n    -1.1.2\n  -1.2\n2\n  -2.1</pre>
                     <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
                         <button id="cfm-smart-indent-child" class="cfm-btn" style="font-size:12px;padding:3px 10px;" title="开启后，回车将比当前行多缩进2格（创建子级）。关闭时，回车保持同级缩进。退格键始终回退2个空格。"><i class="fa-solid fa-indent"></i> 添加子级</button>
                         <span style="font-size:11px;opacity:0.5;">Enter 智能缩进 · Backspace 回退层级</span>
