@@ -1,4 +1,4 @@
-// 角色卡文件夹分类插件 - Edge收藏夹风格双栏布局
+// 酒馆资源管理器 - Edge收藏夹风格双栏布局
 jQuery(async () => {
   const extensionName = "ST-Char-Folder-Manager";
   const extensionFolderPath = `scripts/extensions/third-party/${extensionName}`;
@@ -360,7 +360,7 @@ jQuery(async () => {
       console.log(
         `[${extensionName}] 首次加载：自动导入 ${imported} 个标签为文件夹`,
       );
-      toastr.info(`已自动导入 ${imported} 个标签为文件夹`, "角色卡文件夹", {
+      toastr.info(`已自动导入 ${imported} 个标签为文件夹`, "酒馆资源管理器", {
         timeOut: 4000,
       });
     }
@@ -383,7 +383,7 @@ jQuery(async () => {
       sessionNewlyImportedIds = newIds;
       toastr.info(
         `检测到 ${newIds.length} 个新标签，已自动导入为顶级文件夹`,
-        "角色卡文件夹",
+        "酒馆资源管理器",
         { timeOut: 3000 },
       );
     } else {
@@ -721,7 +721,13 @@ jQuery(async () => {
             const g = document.createElement("div");
             g.className = "cfm-touch-ghost";
             g.textContent =
-              (data.type === "folder" || data.type === "res-folder" ? "📁 " : data.type === "preset" ? "📄 " : data.type === "worldinfo" ? "📖 " : "👤 ") + (data.name || "");
+              (data.type === "folder" || data.type === "res-folder"
+                ? "📁 "
+                : data.type === "preset"
+                  ? "📄 "
+                  : data.type === "worldinfo"
+                    ? "📖 "
+                    : "👤 ") + (data.name || "");
             g.style.left = sx + "px";
             g.style.top = sy - 50 + "px";
             document.body.appendChild(g);
@@ -824,7 +830,10 @@ jQuery(async () => {
       }
 
       // 禁止检测
-      if ((this.data.type === "folder" || this.data.type === "res-folder") && this.data.id === targetId) {
+      if (
+        (this.data.type === "folder" || this.data.type === "res-folder") &&
+        this.data.id === targetId
+      ) {
         target.classList.add("cfm-drop-forbidden");
         this._lastTarget = target;
         return;
@@ -901,13 +910,13 @@ jQuery(async () => {
             }
             if (zone === "before") {
               reorderFolder(d.id, pId, targetId);
-            toastr.success(`「${getTagName(d.id)}」已排序`);
+              toastr.success(`「${getTagName(d.id)}」已排序`);
             } else {
               const sibs = sortFolders(getChildFolders(pId));
               const ci = sibs.indexOf(targetId);
               const nxt = ci >= 0 && ci < sibs.length - 1 ? sibs[ci + 1] : null;
               reorderFolder(d.id, pId, nxt);
-            toastr.success(`「${getTagName(d.id)}」已排序`);
+              toastr.success(`「${getTagName(d.id)}」已排序`);
             }
           }
           renderLeftTree();
@@ -977,17 +986,33 @@ jQuery(async () => {
             if (zone === "before") {
               reorderResFolder(resType, d.id, pId, targetId);
             } else {
-              const sibs = sortResFolders(resType, getResChildFolders(resType, pId));
+              const sibs = sortResFolders(
+                resType,
+                getResChildFolders(resType, pId),
+              );
               const ci = sibs.indexOf(targetId);
-              reorderResFolder(resType, d.id, pId, ci < sibs.length - 1 ? sibs[ci + 1] : null);
+              reorderResFolder(
+                resType,
+                d.id,
+                pId,
+                ci < sibs.length - 1 ? sibs[ci + 1] : null,
+              );
             }
             toastr.success(`「${d.name}」已排序`);
           }
           if (resType === "presets") renderPresetsView();
           else renderWorldInfoView();
         } else if (!target && rightList) {
-          const selFolder = resType === "presets" ? selectedPresetFolder : selectedWorldInfoFolder;
-          if (selFolder && selFolder !== "__ungrouped__" && selFolder !== "__favorites__" && d.id !== selFolder) {
+          const selFolder =
+            resType === "presets"
+              ? selectedPresetFolder
+              : selectedWorldInfoFolder;
+          if (
+            selFolder &&
+            selFolder !== "__ungrouped__" &&
+            selFolder !== "__favorites__" &&
+            d.id !== selFolder
+          ) {
             if (!wouldCreateResCycle(resType, d.id, selFolder)) {
               reorderResFolder(resType, d.id, selFolder, null);
               toastr.success(`「${d.name}」已移入「${selFolder}」`);
@@ -1005,7 +1030,13 @@ jQuery(async () => {
           setItemGroup("presets", d.name, targetId);
           toastr.success(`已将「${d.name}」移入「${targetId}」`);
           renderPresetsView();
-        } else if (!target && rightList && selectedPresetFolder && selectedPresetFolder !== "__ungrouped__" && selectedPresetFolder !== "__favorites__") {
+        } else if (
+          !target &&
+          rightList &&
+          selectedPresetFolder &&
+          selectedPresetFolder !== "__ungrouped__" &&
+          selectedPresetFolder !== "__favorites__"
+        ) {
           setItemGroup("presets", d.name, selectedPresetFolder);
           toastr.success(`已将「${d.name}」移入「${selectedPresetFolder}」`);
           renderPresetsView();
@@ -1019,7 +1050,13 @@ jQuery(async () => {
           setItemGroup("worldinfo", d.name, targetId);
           toastr.success(`已将「${d.name}」移入「${targetId}」`);
           renderWorldInfoView();
-        } else if (!target && rightList && selectedWorldInfoFolder && selectedWorldInfoFolder !== "__ungrouped__" && selectedWorldInfoFolder !== "__favorites__") {
+        } else if (
+          !target &&
+          rightList &&
+          selectedWorldInfoFolder &&
+          selectedWorldInfoFolder !== "__ungrouped__" &&
+          selectedWorldInfoFolder !== "__favorites__"
+        ) {
           setItemGroup("worldinfo", d.name, selectedWorldInfoFolder);
           toastr.success(`已将「${d.name}」移入「${selectedWorldInfoFolder}」`);
           renderWorldInfoView();
@@ -1278,7 +1315,7 @@ jQuery(async () => {
       );
       toastr.info(
         `已自动清理 ${cleanedCount} 个多余的路径标签`,
-        "角色卡文件夹",
+        "酒馆资源管理器",
         { timeOut: 3000 },
       );
     }
@@ -1355,7 +1392,7 @@ jQuery(async () => {
   function createTopbarButton() {
     if ($("#cfm-topbar-button").length > 0) return;
     const btn = $(
-      `<div id="cfm-topbar-button" class="drawer"><div class="drawer-toggle drawer-header"><div class="drawer-icon fa-solid fa-folder fa-fw interactable" title="角色卡文件夹" tabindex="0" role="button"></div></div></div>`,
+      `<div id="cfm-topbar-button" class="drawer"><div class="drawer-toggle drawer-header"><div class="drawer-icon fa-solid fa-folder fa-fw interactable" title="酒馆资源管理器" tabindex="0" role="button"></div></div></div>`,
     );
     const rightNav = $("#rightNavHolder");
     if (rightNav.length > 0) rightNav.before(btn);
@@ -2159,25 +2196,74 @@ jQuery(async () => {
       e.stopPropagation();
       const wrapper = $("#cfm-preset-right-sort-wrapper");
       const currentFolder = selectedPresetFolder;
-      const childFolders = currentFolder && currentFolder !== "__ungrouped__" && currentFolder !== "__favorites__"
-        ? getResChildFolders("presets", currentFolder) : [];
+      const childFolders =
+        currentFolder &&
+        currentFolder !== "__ungrouped__" &&
+        currentFolder !== "__favorites__"
+          ? getResChildFolders("presets", currentFolder)
+          : [];
       $(".cfm-sort-dropdown").remove();
       const dropdown = $(`
         <div class="cfm-sort-dropdown cfm-sort-open">
           <div class="cfm-sort-dropdown-item ${presetRightSortMode === "az" ? "cfm-sort-item-active" : ""}" data-sort="item-az"><i class="fa-solid fa-arrow-down-a-z"></i> 预设 A → Z</div>
           <div class="cfm-sort-dropdown-item ${presetRightSortMode === "za" ? "cfm-sort-item-active" : ""}" data-sort="item-za"><i class="fa-solid fa-arrow-up-z-a"></i> 预设 Z → A</div>
-          ${childFolders.length > 0 ? `<div class="cfm-sort-dropdown-sep"></div>
+          ${
+            childFolders.length > 0
+              ? `<div class="cfm-sort-dropdown-sep"></div>
           <div class="cfm-sort-dropdown-item" data-sort="folder-az"><i class="fa-solid fa-folder"></i> 子文件夹 A → Z</div>
-          <div class="cfm-sort-dropdown-item" data-sort="folder-za"><i class="fa-solid fa-folder"></i> 子文件夹 Z → A</div>` : ""}
+          <div class="cfm-sort-dropdown-item" data-sort="folder-za"><i class="fa-solid fa-folder"></i> 子文件夹 Z → A</div>`
+              : ""
+          }
           <div class="cfm-sort-dropdown-sep"></div>
           <div class="cfm-sort-dropdown-item ${presetRightSortMode === null && !presetSortSnapshot ? "cfm-sort-item-disabled" : ""}" data-sort="revert"><i class="fa-solid fa-rotate-left"></i> 恢复默认</div>
         </div>
       `);
-      dropdown.find('[data-sort="item-az"]').on("click touchend", (ev) => { ev.preventDefault(); ev.stopPropagation(); presetRightSortMode = "az"; renderPresetsView(); dropdown.remove(); });
-      dropdown.find('[data-sort="item-za"]').on("click touchend", (ev) => { ev.preventDefault(); ev.stopPropagation(); presetRightSortMode = "za"; renderPresetsView(); dropdown.remove(); });
-      dropdown.find('[data-sort="folder-az"]').on("click touchend", (ev) => { ev.preventDefault(); ev.stopPropagation(); if (childFolders.length > 0) { applyResSortToFolders("presets", childFolders, "az"); toastr.info("子文件夹已按 A→Z 排序", "", { timeOut: 1500 }); renderPresetsView(); } dropdown.remove(); });
-      dropdown.find('[data-sort="folder-za"]').on("click touchend", (ev) => { ev.preventDefault(); ev.stopPropagation(); if (childFolders.length > 0) { applyResSortToFolders("presets", childFolders, "za"); toastr.info("子文件夹已按 Z→A 排序", "", { timeOut: 1500 }); renderPresetsView(); } dropdown.remove(); });
-      dropdown.find('[data-sort="revert"]').on("click touchend", (ev) => { ev.preventDefault(); ev.stopPropagation(); if (presetRightSortMode === null && !presetSortSnapshot) return; presetRightSortMode = null; if (presetSortSnapshot) { revertResSort("presets"); toastr.info("已恢复自定义排序", "", { timeOut: 1500 }); } renderPresetsView(); dropdown.remove(); });
+      dropdown.find('[data-sort="item-az"]').on("click touchend", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        presetRightSortMode = "az";
+        renderPresetsView();
+        dropdown.remove();
+      });
+      dropdown.find('[data-sort="item-za"]').on("click touchend", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        presetRightSortMode = "za";
+        renderPresetsView();
+        dropdown.remove();
+      });
+      dropdown.find('[data-sort="folder-az"]').on("click touchend", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (childFolders.length > 0) {
+          applyResSortToFolders("presets", childFolders, "az");
+          toastr.info("子文件夹已按 A→Z 排序", "", { timeOut: 1500 });
+          renderPresetsView();
+        }
+        dropdown.remove();
+      });
+      dropdown.find('[data-sort="folder-za"]').on("click touchend", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (childFolders.length > 0) {
+          applyResSortToFolders("presets", childFolders, "za");
+          toastr.info("子文件夹已按 Z→A 排序", "", { timeOut: 1500 });
+          renderPresetsView();
+        }
+        dropdown.remove();
+      });
+      dropdown.find('[data-sort="revert"]').on("click touchend", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (presetRightSortMode === null && !presetSortSnapshot) return;
+        presetRightSortMode = null;
+        if (presetSortSnapshot) {
+          revertResSort("presets");
+          toastr.info("已恢复自定义排序", "", { timeOut: 1500 });
+        }
+        renderPresetsView();
+        dropdown.remove();
+      });
       wrapper.append(dropdown);
       setTimeout(() => {
         $(document).one("click.cfmSortDropdown", (ev) => {
@@ -2223,25 +2309,74 @@ jQuery(async () => {
       e.stopPropagation();
       const wrapper = $("#cfm-worldinfo-right-sort-wrapper");
       const currentFolder = selectedWorldInfoFolder;
-      const childFolders = currentFolder && currentFolder !== "__ungrouped__" && currentFolder !== "__favorites__"
-        ? getResChildFolders("worldinfo", currentFolder) : [];
+      const childFolders =
+        currentFolder &&
+        currentFolder !== "__ungrouped__" &&
+        currentFolder !== "__favorites__"
+          ? getResChildFolders("worldinfo", currentFolder)
+          : [];
       $(".cfm-sort-dropdown").remove();
       const dropdown = $(`
         <div class="cfm-sort-dropdown cfm-sort-open">
           <div class="cfm-sort-dropdown-item ${worldInfoRightSortMode === "az" ? "cfm-sort-item-active" : ""}" data-sort="item-az"><i class="fa-solid fa-arrow-down-a-z"></i> 世界书 A → Z</div>
           <div class="cfm-sort-dropdown-item ${worldInfoRightSortMode === "za" ? "cfm-sort-item-active" : ""}" data-sort="item-za"><i class="fa-solid fa-arrow-up-z-a"></i> 世界书 Z → A</div>
-          ${childFolders.length > 0 ? `<div class="cfm-sort-dropdown-sep"></div>
+          ${
+            childFolders.length > 0
+              ? `<div class="cfm-sort-dropdown-sep"></div>
           <div class="cfm-sort-dropdown-item" data-sort="folder-az"><i class="fa-solid fa-folder"></i> 子文件夹 A → Z</div>
-          <div class="cfm-sort-dropdown-item" data-sort="folder-za"><i class="fa-solid fa-folder"></i> 子文件夹 Z → A</div>` : ""}
+          <div class="cfm-sort-dropdown-item" data-sort="folder-za"><i class="fa-solid fa-folder"></i> 子文件夹 Z → A</div>`
+              : ""
+          }
           <div class="cfm-sort-dropdown-sep"></div>
           <div class="cfm-sort-dropdown-item ${worldInfoRightSortMode === null && !worldInfoSortSnapshot ? "cfm-sort-item-disabled" : ""}" data-sort="revert"><i class="fa-solid fa-rotate-left"></i> 恢复默认</div>
         </div>
       `);
-      dropdown.find('[data-sort="item-az"]').on("click touchend", (ev) => { ev.preventDefault(); ev.stopPropagation(); worldInfoRightSortMode = "az"; renderWorldInfoView(); dropdown.remove(); });
-      dropdown.find('[data-sort="item-za"]').on("click touchend", (ev) => { ev.preventDefault(); ev.stopPropagation(); worldInfoRightSortMode = "za"; renderWorldInfoView(); dropdown.remove(); });
-      dropdown.find('[data-sort="folder-az"]').on("click touchend", (ev) => { ev.preventDefault(); ev.stopPropagation(); if (childFolders.length > 0) { applyResSortToFolders("worldinfo", childFolders, "az"); toastr.info("子文件夹已按 A→Z 排序", "", { timeOut: 1500 }); renderWorldInfoView(); } dropdown.remove(); });
-      dropdown.find('[data-sort="folder-za"]').on("click touchend", (ev) => { ev.preventDefault(); ev.stopPropagation(); if (childFolders.length > 0) { applyResSortToFolders("worldinfo", childFolders, "za"); toastr.info("子文件夹已按 Z→A 排序", "", { timeOut: 1500 }); renderWorldInfoView(); } dropdown.remove(); });
-      dropdown.find('[data-sort="revert"]').on("click touchend", (ev) => { ev.preventDefault(); ev.stopPropagation(); if (worldInfoRightSortMode === null && !worldInfoSortSnapshot) return; worldInfoRightSortMode = null; if (worldInfoSortSnapshot) { revertResSort("worldinfo"); toastr.info("已恢复自定义排序", "", { timeOut: 1500 }); } renderWorldInfoView(); dropdown.remove(); });
+      dropdown.find('[data-sort="item-az"]').on("click touchend", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        worldInfoRightSortMode = "az";
+        renderWorldInfoView();
+        dropdown.remove();
+      });
+      dropdown.find('[data-sort="item-za"]').on("click touchend", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        worldInfoRightSortMode = "za";
+        renderWorldInfoView();
+        dropdown.remove();
+      });
+      dropdown.find('[data-sort="folder-az"]').on("click touchend", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (childFolders.length > 0) {
+          applyResSortToFolders("worldinfo", childFolders, "az");
+          toastr.info("子文件夹已按 A→Z 排序", "", { timeOut: 1500 });
+          renderWorldInfoView();
+        }
+        dropdown.remove();
+      });
+      dropdown.find('[data-sort="folder-za"]').on("click touchend", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (childFolders.length > 0) {
+          applyResSortToFolders("worldinfo", childFolders, "za");
+          toastr.info("子文件夹已按 Z→A 排序", "", { timeOut: 1500 });
+          renderWorldInfoView();
+        }
+        dropdown.remove();
+      });
+      dropdown.find('[data-sort="revert"]').on("click touchend", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (worldInfoRightSortMode === null && !worldInfoSortSnapshot) return;
+        worldInfoRightSortMode = null;
+        if (worldInfoSortSnapshot) {
+          revertResSort("worldinfo");
+          toastr.info("已恢复自定义排序", "", { timeOut: 1500 });
+        }
+        renderWorldInfoView();
+        dropdown.remove();
+      });
       wrapper.append(dropdown);
       setTimeout(() => {
         $(document).one("click.cfmSortDropdown", (ev) => {
@@ -2455,12 +2590,27 @@ jQuery(async () => {
     if (type === "folder") {
       // 搜索文件夹名（支持当前文件夹范围）
       let matchedIds;
-      if (scope === "current" && selectedPresetFolder && selectedPresetFolder !== "__ungrouped__" && selectedPresetFolder !== "__favorites__" && getResFolderTree("presets")[selectedPresetFolder]) {
-        const collectDesc = (pid) => { let r = [pid]; for (const c of getResChildFolders("presets", pid)) r = r.concat(collectDesc(c)); return r; };
+      if (
+        scope === "current" &&
+        selectedPresetFolder &&
+        selectedPresetFolder !== "__ungrouped__" &&
+        selectedPresetFolder !== "__favorites__" &&
+        getResFolderTree("presets")[selectedPresetFolder]
+      ) {
+        const collectDesc = (pid) => {
+          let r = [pid];
+          for (const c of getResChildFolders("presets", pid))
+            r = r.concat(collectDesc(c));
+          return r;
+        };
         const descendants = collectDesc(selectedPresetFolder);
-        matchedIds = descendants.filter((f) => getResFolderDisplayName("presets", f).toLowerCase().includes(q));
+        matchedIds = descendants.filter((f) =>
+          getResFolderDisplayName("presets", f).toLowerCase().includes(q),
+        );
       } else {
-        matchedIds = folders.filter((f) => getResFolderDisplayName("presets", f).toLowerCase().includes(q));
+        matchedIds = folders.filter((f) =>
+          getResFolderDisplayName("presets", f).toLowerCase().includes(q),
+        );
       }
       rightList.empty();
       pathEl.text(`搜索文件夹: "${q}"`);
@@ -2470,7 +2620,9 @@ jQuery(async () => {
         return;
       }
       for (const fname of matchedIds) {
-        const folderPath = getResFolderPath("presets", fname).map((id) => getResFolderDisplayName("presets", id)).join(" › ");
+        const folderPath = getResFolderPath("presets", fname)
+          .map((id) => getResFolderDisplayName("presets", id))
+          .join(" › ");
         const childCount = countResItemsRecursive("presets", fname);
         const row = $(`
           <div class="cfm-row cfm-row-folder cfm-search-result">
@@ -2493,18 +2645,27 @@ jQuery(async () => {
       let searchPool = presets;
       if (scope === "current" && selectedPresetFolder) {
         if (selectedPresetFolder === "__ungrouped__") {
-          searchPool = presets.filter((p) => !groups[p.name] || !folders.includes(groups[p.name]));
+          searchPool = presets.filter(
+            (p) => !groups[p.name] || !folders.includes(groups[p.name]),
+          );
         } else if (selectedPresetFolder === "__favorites__") {
           const favs = getResFavorites("presets");
           searchPool = presets.filter((p) => favs.includes(p.name));
         } else if (folders.includes(selectedPresetFolder)) {
           // 递归收集当前文件夹及子文件夹中的预设
-          const collectFolderIds = (pid) => { let r = [pid]; for (const c of getResChildFolders("presets", pid)) r = r.concat(collectFolderIds(c)); return r; };
+          const collectFolderIds = (pid) => {
+            let r = [pid];
+            for (const c of getResChildFolders("presets", pid))
+              r = r.concat(collectFolderIds(c));
+            return r;
+          };
           const allFids = collectFolderIds(selectedPresetFolder);
           searchPool = presets.filter((p) => allFids.includes(groups[p.name]));
         }
       }
-      const matched = searchPool.filter((p) => p.name.toLowerCase().includes(q));
+      const matched = searchPool.filter((p) =>
+        p.name.toLowerCase().includes(q),
+      );
       rightList.empty();
       pathEl.text(`搜索预设: "${q}"`);
       countEl.text(`${matched.length} 个结果`);
@@ -2517,7 +2678,14 @@ jQuery(async () => {
       for (const p of matched) {
         const isActive = p.value === currentVal;
         const fav = isResFavorite("presets", p.name);
-        const pFolderPath = (() => { const grp = groups[p.name]; if (grp && getResFolderTree("presets")[grp]) return getResFolderPath("presets", grp).map((id) => getResFolderDisplayName("presets", id)).join(" › "); return null; })();
+        const pFolderPath = (() => {
+          const grp = groups[p.name];
+          if (grp && getResFolderTree("presets")[grp])
+            return getResFolderPath("presets", grp)
+              .map((id) => getResFolderDisplayName("presets", id))
+              .join(" › ");
+          return null;
+        })();
         const row = $(`
           <div class="cfm-row cfm-row-char ${isActive ? "cfm-rv-item-active" : ""}">
             <div class="cfm-row-icon"><i class="fa-solid fa-file-lines" style="font-size:20px;color:#8b9dfc;"></i></div>
@@ -2525,11 +2693,24 @@ jQuery(async () => {
             <div class="cfm-row-star ${fav ? "cfm-star-active" : ""}" title="${fav ? "取消收藏" : "添加收藏"}"><i class="fa-${fav ? "solid" : "regular"} fa-star"></i></div>
           </div>
         `);
-        row.find(".cfm-row-star").on("click touchend", (e) => { e.preventDefault(); e.stopPropagation(); const nowFav = toggleResFavorite("presets", p.name); const s = row.find(".cfm-row-star"); s.toggleClass("cfm-star-active", nowFav); s.attr("title", nowFav ? "取消收藏" : "添加收藏"); s.find("i").attr("class", `fa-${nowFav ? "solid" : "regular"} fa-star`); });
+        row.find(".cfm-row-star").on("click touchend", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const nowFav = toggleResFavorite("presets", p.name);
+          const s = row.find(".cfm-row-star");
+          s.toggleClass("cfm-star-active", nowFav);
+          s.attr("title", nowFav ? "取消收藏" : "添加收藏");
+          s.find("i").attr(
+            "class",
+            `fa-${nowFav ? "solid" : "regular"} fa-star`,
+          );
+        });
         row.on("click", (e) => {
           if ($(e.target).closest(".cfm-row-star").length) return;
           applyPreset(p.value);
-          rightList.find(".cfm-rv-item-active").removeClass("cfm-rv-item-active");
+          rightList
+            .find(".cfm-rv-item-active")
+            .removeClass("cfm-rv-item-active");
           row.addClass("cfm-rv-item-active");
           toastr.success(`已应用预设「${p.name}」`);
         });
@@ -2558,12 +2739,27 @@ jQuery(async () => {
 
     if (type === "folder") {
       let matchedIds;
-      if (scope === "current" && selectedWorldInfoFolder && selectedWorldInfoFolder !== "__ungrouped__" && selectedWorldInfoFolder !== "__favorites__" && getResFolderTree("worldinfo")[selectedWorldInfoFolder]) {
-        const collectDesc = (pid) => { let r = [pid]; for (const c of getResChildFolders("worldinfo", pid)) r = r.concat(collectDesc(c)); return r; };
+      if (
+        scope === "current" &&
+        selectedWorldInfoFolder &&
+        selectedWorldInfoFolder !== "__ungrouped__" &&
+        selectedWorldInfoFolder !== "__favorites__" &&
+        getResFolderTree("worldinfo")[selectedWorldInfoFolder]
+      ) {
+        const collectDesc = (pid) => {
+          let r = [pid];
+          for (const c of getResChildFolders("worldinfo", pid))
+            r = r.concat(collectDesc(c));
+          return r;
+        };
         const descendants = collectDesc(selectedWorldInfoFolder);
-        matchedIds = descendants.filter((f) => getResFolderDisplayName("worldinfo", f).toLowerCase().includes(q));
+        matchedIds = descendants.filter((f) =>
+          getResFolderDisplayName("worldinfo", f).toLowerCase().includes(q),
+        );
       } else {
-        matchedIds = folders.filter((f) => getResFolderDisplayName("worldinfo", f).toLowerCase().includes(q));
+        matchedIds = folders.filter((f) =>
+          getResFolderDisplayName("worldinfo", f).toLowerCase().includes(q),
+        );
       }
       rightList.empty();
       pathEl.text(`搜索文件夹: "${q}"`);
@@ -2573,7 +2769,9 @@ jQuery(async () => {
         return;
       }
       for (const fname of matchedIds) {
-        const folderPath = getResFolderPath("worldinfo", fname).map((id) => getResFolderDisplayName("worldinfo", id)).join(" › ");
+        const folderPath = getResFolderPath("worldinfo", fname)
+          .map((id) => getResFolderDisplayName("worldinfo", id))
+          .join(" › ");
         const childCount = countResItemsRecursive("worldinfo", fname);
         const row = $(`
           <div class="cfm-row cfm-row-folder cfm-search-result">
@@ -2597,12 +2795,19 @@ jQuery(async () => {
         let searchPool = names;
         if (scope === "current" && selectedWorldInfoFolder) {
           if (selectedWorldInfoFolder === "__ungrouped__") {
-            searchPool = names.filter((n) => !groups[n] || !folders.includes(groups[n]));
+            searchPool = names.filter(
+              (n) => !groups[n] || !folders.includes(groups[n]),
+            );
           } else if (selectedWorldInfoFolder === "__favorites__") {
             const favs = getResFavorites("worldinfo");
             searchPool = names.filter((n) => favs.includes(n));
           } else if (folders.includes(selectedWorldInfoFolder)) {
-            const collectFolderIds = (pid) => { let r = [pid]; for (const c of getResChildFolders("worldinfo", pid)) r = r.concat(collectFolderIds(c)); return r; };
+            const collectFolderIds = (pid) => {
+              let r = [pid];
+              for (const c of getResChildFolders("worldinfo", pid))
+                r = r.concat(collectFolderIds(c));
+              return r;
+            };
             const allFids = collectFolderIds(selectedWorldInfoFolder);
             searchPool = names.filter((n) => allFids.includes(groups[n]));
           }
@@ -2612,12 +2817,21 @@ jQuery(async () => {
         pathEl.text(`搜索世界书: "${q}"`);
         countEl.text(`${matched.length} 个结果`);
         if (matched.length === 0) {
-          rightList.html('<div class="cfm-right-empty">未找到匹配的世界书</div>');
+          rightList.html(
+            '<div class="cfm-right-empty">未找到匹配的世界书</div>',
+          );
           return;
         }
         for (const n of matched) {
           const fav = isResFavorite("worldinfo", n);
-          const wFolderPath = (() => { const grp = groups[n]; if (grp && getResFolderTree("worldinfo")[grp]) return getResFolderPath("worldinfo", grp).map((id) => getResFolderDisplayName("worldinfo", id)).join(" › "); return null; })();
+          const wFolderPath = (() => {
+            const grp = groups[n];
+            if (grp && getResFolderTree("worldinfo")[grp])
+              return getResFolderPath("worldinfo", grp)
+                .map((id) => getResFolderDisplayName("worldinfo", id))
+                .join(" › ");
+            return null;
+          })();
           const row = $(`
             <div class="cfm-row cfm-row-char">
               <div class="cfm-row-icon"><i class="fa-solid fa-book" style="font-size:20px;color:#a6e3a1;"></i></div>
@@ -2625,7 +2839,18 @@ jQuery(async () => {
               <div class="cfm-row-star ${fav ? "cfm-star-active" : ""}" title="${fav ? "取消收藏" : "添加收藏"}"><i class="fa-${fav ? "solid" : "regular"} fa-star"></i></div>
             </div>
           `);
-          row.find(".cfm-row-star").on("click touchend", (e) => { e.preventDefault(); e.stopPropagation(); const nowFav = toggleResFavorite("worldinfo", n); const s = row.find(".cfm-row-star"); s.toggleClass("cfm-star-active", nowFav); s.attr("title", nowFav ? "取消收藏" : "添加收藏"); s.find("i").attr("class", `fa-${nowFav ? "solid" : "regular"} fa-star`); });
+          row.find(".cfm-row-star").on("click touchend", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const nowFav = toggleResFavorite("worldinfo", n);
+            const s = row.find(".cfm-row-star");
+            s.toggleClass("cfm-star-active", nowFav);
+            s.attr("title", nowFav ? "取消收藏" : "添加收藏");
+            s.find("i").attr(
+              "class",
+              `fa-${nowFav ? "solid" : "regular"} fa-star`,
+            );
+          });
           row.on("click", (e) => {
             if ($(e.target).closest(".cfm-row-star").length) return;
             openWorldInfoEditor(n);
@@ -3665,7 +3890,9 @@ jQuery(async () => {
 
     // 1. 创建新文件夹（支持空格分隔批量创建）
     const resSelectedHintText = resConfigSelectedFolderId
-      ? "当前将添加到「" + escapeHtml(getResFolderDisplayName(type, resConfigSelectedFolderId)) + "」下。"
+      ? "当前将添加到「" +
+        escapeHtml(getResFolderDisplayName(type, resConfigSelectedFolderId)) +
+        "」下。"
       : "当前将添加为顶级文件夹。";
     const createSection = $(`
       <div class="cfm-config-section">
@@ -3691,7 +3918,8 @@ jQuery(async () => {
       for (const name of names) {
         let folderName = name;
         if (parentId) folderName = parentId + "-" + name;
-        if (addResFolder(type, folderName, parentId, parentId ? name : null)) created.push(name);
+        if (addResFolder(type, folderName, parentId, parentId ? name : null))
+          created.push(name);
         else skipped.push(name);
       }
       const parentHint = parentId
@@ -3788,15 +4016,22 @@ jQuery(async () => {
       deleteBar.find("#cfm-res-invert-select").on("click touchend", (e) => {
         e.preventDefault();
         // 反选逻辑
-        let targetIds = resConfigInvertScope === "parent"
-          ? getResTopLevelFolders(type)
-          : allFolderIds;
+        let targetIds =
+          resConfigInvertScope === "parent"
+            ? getResTopLevelFolders(type)
+            : allFolderIds;
         for (const id of targetIds) {
-          if (resConfigDeleteSelected.has(id)) resConfigDeleteSelected.delete(id);
+          if (resConfigDeleteSelected.has(id))
+            resConfigDeleteSelected.delete(id);
           else {
             resConfigDeleteSelected.add(id);
             if (resConfigDeleteCascade) {
-              const addDesc = (pid) => { for (const cid of getResChildFolders(type, pid)) { resConfigDeleteSelected.add(cid); addDesc(cid); } };
+              const addDesc = (pid) => {
+                for (const cid of getResChildFolders(type, pid)) {
+                  resConfigDeleteSelected.add(cid);
+                  addDesc(cid);
+                }
+              };
               addDesc(id);
             }
           }
@@ -3900,18 +4135,30 @@ jQuery(async () => {
 
         if (resConfigDeleteMode) {
           const toggleResFolder = (id, forceState) => {
-            const shouldSelect = forceState !== undefined ? forceState : !resConfigDeleteSelected.has(id);
+            const shouldSelect =
+              forceState !== undefined
+                ? forceState
+                : !resConfigDeleteSelected.has(id);
             if (shouldSelect) resConfigDeleteSelected.add(id);
             else resConfigDeleteSelected.delete(id);
             if (resConfigDeleteCascade) {
-              const toggleDesc = (pid) => { for (const cid of getResChildFolders(type, pid)) { if (shouldSelect) resConfigDeleteSelected.add(cid); else resConfigDeleteSelected.delete(cid); toggleDesc(cid); } };
+              const toggleDesc = (pid) => {
+                for (const cid of getResChildFolders(type, pid)) {
+                  if (shouldSelect) resConfigDeleteSelected.add(cid);
+                  else resConfigDeleteSelected.delete(cid);
+                  toggleDesc(cid);
+                }
+              };
               toggleDesc(id);
             }
           };
           const handleResDeleteClick = (e) => {
             if ($(e.target).closest(".cfm-config-arrow").length) return;
             e.preventDefault();
-            if ((e.shiftKey || resConfigDeleteRangeMode) && resConfigDeleteLastClickedId) {
+            if (
+              (e.shiftKey || resConfigDeleteRangeMode) &&
+              resConfigDeleteLastClickedId
+            ) {
               const flatList = getResFlatFolderList(type);
               const lastIdx = flatList.indexOf(resConfigDeleteLastClickedId);
               const curIdx = flatList.indexOf(folderId);
@@ -3921,7 +4168,12 @@ jQuery(async () => {
                 for (let i = start; i <= end; i++) {
                   resConfigDeleteSelected.add(flatList[i]);
                   if (resConfigDeleteCascade) {
-                    const addDesc = (pid) => { for (const cid of getResChildFolders(type, pid)) { resConfigDeleteSelected.add(cid); addDesc(cid); } };
+                    const addDesc = (pid) => {
+                      for (const cid of getResChildFolders(type, pid)) {
+                        resConfigDeleteSelected.add(cid);
+                        addDesc(cid);
+                      }
+                    };
                     addDesc(flatList[i]);
                   }
                 }
@@ -3936,9 +4188,14 @@ jQuery(async () => {
         } else {
           // 点击选中/取消选中（非删除模式）
           item.on("click", (e) => {
-            if ($(e.target).closest(".cfm-res-remove-folder, .cfm-config-arrow").length) return;
+            if (
+              $(e.target).closest(".cfm-res-remove-folder, .cfm-config-arrow")
+                .length
+            )
+              return;
             e.preventDefault();
-            resConfigSelectedFolderId = resConfigSelectedFolderId === folderId ? null : folderId;
+            resConfigSelectedFolderId =
+              resConfigSelectedFolderId === folderId ? null : folderId;
             renderResourceConfigBody(body.empty(), type);
           });
           item.find(".cfm-res-remove-folder").on("click touchend", (e) => {
@@ -3946,7 +4203,8 @@ jQuery(async () => {
             e.stopPropagation();
             showResDeleteConfirmDialog(type, [folderId], () => {
               removeResFolder(type, folderId);
-              if (resConfigSelectedFolderId === folderId) resConfigSelectedFolderId = null;
+              if (resConfigSelectedFolderId === folderId)
+                resConfigSelectedFolderId = null;
               toastr.success(`已删除${typeLabel}文件夹「${folderId}」`);
               renderResourceConfigBody(body.empty(), type);
             });
@@ -4030,9 +4288,7 @@ jQuery(async () => {
       }
       resConfigDeleteSelected.clear();
       resConfigDeleteMode = false;
-      toastr.success(
-        `已删除 ${toDelete.length} 个${typeLabel}文件夹`,
-      );
+      toastr.success(`已删除 ${toDelete.length} 个${typeLabel}文件夹`);
       const body = $("#cfm-config-body");
       renderResourceConfigBody(body.empty(), type);
     });
@@ -4159,10 +4415,12 @@ jQuery(async () => {
           folderName = parentId + "-" + node.name;
         }
         // 如果已存在且父级匹配，视为"已存在"，直接用它作为子级的父级
-        if (tree[folderName] && tree[folderName].parentId === (parentId || null)) {
+        if (
+          tree[folderName] &&
+          tree[folderName].parentId === (parentId || null)
+        ) {
           skipped++;
-          for (const child of node.children)
-            processResNode(child, folderName);
+          for (const child of node.children) processResNode(child, folderName);
           return;
         }
         // 如果名称冲突但父级不同，追加数字后缀
@@ -4176,13 +4434,14 @@ jQuery(async () => {
         const displayName = parentId ? node.name : null;
         if (addResFolder(type, folderName, parentId, displayName)) created++;
         else skipped++;
-        for (const child of node.children)
-          processResNode(child, folderName);
+        for (const child of node.children) processResNode(child, folderName);
       }
       const batchParentId = resConfigSelectedFolderId || null;
       for (const node of treeData) processResNode(node, batchParentId);
       overlay.remove();
-      toastr.success(`已创建 ${created} 个文件夹${skipped > 0 ? `，${skipped} 个跳过` : ""}`);
+      toastr.success(
+        `已创建 ${created} 个文件夹${skipped > 0 ? `，${skipped} 个跳过` : ""}`,
+      );
       renderConfigBody();
     });
   }
@@ -4487,9 +4746,7 @@ jQuery(async () => {
       cfmDeleteRangeMode = false;
       cfmDeleteMode = false;
       const suffix = alsoDeleteTags ? "（标签已同步删除）" : "";
-      toastr.success(
-        `已删除 ${deletedNames.length} 个文件夹${suffix}`,
-      );
+      toastr.success(`已删除 ${deletedNames.length} 个文件夹${suffix}`);
       renderConfigBody();
     });
   }
@@ -4979,9 +5236,9 @@ jQuery(async () => {
         "presets",
         getResChildFolders("presets", selectedPresetFolder),
       );
-      const path = getResFolderPath("presets", selectedPresetFolder).map(
-        (id) => getResFolderDisplayName("presets", id),
-      ).join(" › ");
+      const path = getResFolderPath("presets", selectedPresetFolder)
+        .map((id) => getResFolderDisplayName("presets", id))
+        .join(" › ");
       displayTitle = path;
     }
 
@@ -4994,7 +5251,10 @@ jQuery(async () => {
 
     pathEl.text(displayTitle);
     const totalItems = childFolders.length + displayItems.length;
-    if (selectedPresetFolder === "__favorites__" || selectedPresetFolder === "__ungrouped__") {
+    if (
+      selectedPresetFolder === "__favorites__" ||
+      selectedPresetFolder === "__ungrouped__"
+    ) {
       countEl.text(`${displayItems.length} 个预设`);
     } else {
       countEl.text(selectedPresetFolder ? `${totalItems} 项` : "");
@@ -5043,21 +5303,38 @@ jQuery(async () => {
         });
         row.on("dragend", () => {
           row.removeClass("cfm-dragging");
-          $(".cfm-row").removeClass("cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden");
+          $(".cfm-row").removeClass(
+            "cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden",
+          );
         });
         // 右侧子文件夹行也是拖放目标（三区域：before/into/after）
         row.on("dragover", (e) => {
           e.preventDefault();
-          row.removeClass("cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden");
+          row.removeClass(
+            "cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden",
+          );
           const rect = row[0].getBoundingClientRect();
           const relY = (e.originalEvent.clientY - rect.top) / rect.height;
           let zone = relY < 0.25 ? "before" : relY > 0.75 ? "after" : "into";
           row.data("dropZone", zone);
           let data = {};
-          try { data = JSON.parse(e.originalEvent.dataTransfer.getData("text/plain") || "{}"); } catch {}
+          try {
+            data = JSON.parse(
+              e.originalEvent.dataTransfer.getData("text/plain") || "{}",
+            );
+          } catch {}
           if (data.type === "res-folder" && data.resType === "presets") {
-            if (data.id === childId) { row.addClass("cfm-drop-forbidden"); return; }
-            if (zone === "into" && wouldCreateResCycle("presets", data.id, childId)) { row.addClass("cfm-drop-forbidden"); return; }
+            if (data.id === childId) {
+              row.addClass("cfm-drop-forbidden");
+              return;
+            }
+            if (
+              zone === "into" &&
+              wouldCreateResCycle("presets", data.id, childId)
+            ) {
+              row.addClass("cfm-drop-forbidden");
+              return;
+            }
           }
           if (zone === "before") row.addClass("cfm-drop-before");
           else if (zone === "after") row.addClass("cfm-drop-after");
@@ -5065,25 +5342,58 @@ jQuery(async () => {
           e.originalEvent.dataTransfer.dropEffect = "move";
         });
         row.on("dragleave", () => {
-          row.removeClass("cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden");
+          row.removeClass(
+            "cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden",
+          );
         });
         row.on("drop", (e) => {
           e.preventDefault();
           e.stopPropagation();
           const zone = row.data("dropZone") || "into";
-          row.removeClass("cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden");
+          row.removeClass(
+            "cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden",
+          );
           let data;
-          try { data = JSON.parse(e.originalEvent.dataTransfer.getData("text/plain")); } catch { return; }
-          if (data.type === "res-folder" && data.resType === "presets" && data.id !== childId) {
+          try {
+            data = JSON.parse(
+              e.originalEvent.dataTransfer.getData("text/plain"),
+            );
+          } catch {
+            return;
+          }
+          if (
+            data.type === "res-folder" &&
+            data.resType === "presets" &&
+            data.id !== childId
+          ) {
             if (zone === "into") {
-              if (wouldCreateResCycle("presets", data.id, childId)) { toastr.error("循环嵌套，已阻止"); return; }
+              if (wouldCreateResCycle("presets", data.id, childId)) {
+                toastr.error("循环嵌套，已阻止");
+                return;
+              }
               reorderResFolder("presets", data.id, childId, null);
               toastr.success(`「${data.id}」已移入「${childId}」`);
             } else {
               const pId = tree[childId]?.parentId || null;
-              if (wouldCreateResCycle("presets", data.id, pId)) { toastr.error("循环嵌套，已阻止"); return; }
-              if (zone === "before") { reorderResFolder("presets", data.id, pId, childId); }
-              else { const sibs = sortResFolders("presets", getResChildFolders("presets", pId)); const ci = sibs.indexOf(childId); reorderResFolder("presets", data.id, pId, ci < sibs.length - 1 ? sibs[ci + 1] : null); }
+              if (wouldCreateResCycle("presets", data.id, pId)) {
+                toastr.error("循环嵌套，已阻止");
+                return;
+              }
+              if (zone === "before") {
+                reorderResFolder("presets", data.id, pId, childId);
+              } else {
+                const sibs = sortResFolders(
+                  "presets",
+                  getResChildFolders("presets", pId),
+                );
+                const ci = sibs.indexOf(childId);
+                reorderResFolder(
+                  "presets",
+                  data.id,
+                  pId,
+                  ci < sibs.length - 1 ? sibs[ci + 1] : null,
+                );
+              }
               toastr.success(`「${data.id}」已排序`);
             }
             renderPresetsView();
@@ -5119,11 +5429,17 @@ jQuery(async () => {
           const starEl = row.find(".cfm-row-star");
           starEl.toggleClass("cfm-star-active", nowFav);
           starEl.attr("title", nowFav ? "取消收藏" : "添加收藏");
-          starEl.find("i").attr("class", `fa-${nowFav ? "solid" : "regular"} fa-star`);
+          starEl
+            .find("i")
+            .attr("class", `fa-${nowFav ? "solid" : "regular"} fa-star`);
           // 更新左侧收藏计数
-          const favCountEl = $("#cfm-preset-left-tree .cfm-tnode-favorites .cfm-tnode-count");
+          const favCountEl = $(
+            "#cfm-preset-left-tree .cfm-tnode-favorites .cfm-tnode-count",
+          );
           if (favCountEl.length) {
-            const newCount = presets.filter((pp) => getResFavorites("presets").includes(pp.name)).length;
+            const newCount = presets.filter((pp) =>
+              getResFavorites("presets").includes(pp.name),
+            ).length;
             favCountEl.text(newCount);
           }
           if (selectedPresetFolder === "__favorites__") renderPresetsView();
@@ -5131,7 +5447,9 @@ jQuery(async () => {
         row.on("click", (e) => {
           if ($(e.target).closest(".cfm-row-star").length) return;
           applyPreset(p.value);
-          rightList.find(".cfm-rv-item-active").removeClass("cfm-rv-item-active");
+          rightList
+            .find(".cfm-rv-item-active")
+            .removeClass("cfm-rv-item-active");
           row.addClass("cfm-rv-item-active");
           toastr.success(`已应用预设「${p.name}」`);
         });
@@ -5151,7 +5469,12 @@ jQuery(async () => {
     }
 
     // 右侧列表本身也是拖放目标（拖到空白区域 = 放入当前文件夹）
-    if (selectedPresetFolder && selectedPresetFolder !== "__ungrouped__" && selectedPresetFolder !== "__favorites__" && tree[selectedPresetFolder]) {
+    if (
+      selectedPresetFolder &&
+      selectedPresetFolder !== "__ungrouped__" &&
+      selectedPresetFolder !== "__favorites__" &&
+      tree[selectedPresetFolder]
+    ) {
       const currentFolder = selectedPresetFolder;
       rightList.on("dragover", (e) => {
         if ($(e.target).closest(".cfm-row").length > 0) return;
@@ -5170,8 +5493,16 @@ jQuery(async () => {
         e.stopPropagation();
         rightList.removeClass("cfm-right-list-drop-target");
         let data;
-        try { data = JSON.parse(e.originalEvent.dataTransfer.getData("text/plain")); } catch { return; }
-        if (data.type === "res-folder" && data.resType === "presets" && data.id !== currentFolder) {
+        try {
+          data = JSON.parse(e.originalEvent.dataTransfer.getData("text/plain"));
+        } catch {
+          return;
+        }
+        if (
+          data.type === "res-folder" &&
+          data.resType === "presets" &&
+          data.id !== currentFolder
+        ) {
           if (wouldCreateResCycle("presets", data.id, currentFolder)) {
             toastr.error("循环嵌套，已阻止");
             return;
@@ -5486,20 +5817,27 @@ jQuery(async () => {
         "worldinfo",
         getResChildFolders("worldinfo", selectedWorldInfoFolder),
       );
-      const path = getResFolderPath("worldinfo", selectedWorldInfoFolder).map(
-        (id) => getResFolderDisplayName("worldinfo", id),
-      ).join(" › ");
+      const path = getResFolderPath("worldinfo", selectedWorldInfoFolder)
+        .map((id) => getResFolderDisplayName("worldinfo", id))
+        .join(" › ");
       displayTitle = path;
     }
 
     // 应用右栏排序
     if (worldInfoRightSortMode && displayItems.length > 0) {
-      displayItems = sortResItems(displayItems, worldInfoRightSortMode, (n) => n);
+      displayItems = sortResItems(
+        displayItems,
+        worldInfoRightSortMode,
+        (n) => n,
+      );
     }
 
     pathEl.text(displayTitle);
     const totalItems = childFolders.length + displayItems.length;
-    if (selectedWorldInfoFolder === "__favorites__" || selectedWorldInfoFolder === "__ungrouped__") {
+    if (
+      selectedWorldInfoFolder === "__favorites__" ||
+      selectedWorldInfoFolder === "__ungrouped__"
+    ) {
       countEl.text(`${displayItems.length} 个世界书`);
     } else {
       countEl.text(selectedWorldInfoFolder ? `${totalItems} 项` : "");
@@ -5509,11 +5847,17 @@ jQuery(async () => {
       rightList.html(
         '<div class="cfm-right-empty">← 点击左侧文件夹查看内容</div>',
       );
-    } else if (selectedWorldInfoFolder === "__favorites__" && totalItems === 0) {
+    } else if (
+      selectedWorldInfoFolder === "__favorites__" &&
+      totalItems === 0
+    ) {
       rightList.html(
         '<div class="cfm-right-empty">还没有收藏任何世界书<br><span style="font-size:12px;opacity:0.5;">点击世界书行右侧的 ☆ 按钮添加收藏</span></div>',
       );
-    } else if (selectedWorldInfoFolder === "__ungrouped__" && totalItems === 0) {
+    } else if (
+      selectedWorldInfoFolder === "__ungrouped__" &&
+      totalItems === 0
+    ) {
       rightList.html('<div class="cfm-right-empty">没有未归类的世界书</div>');
     } else if (totalItems === 0) {
       rightList.html('<div class="cfm-right-empty">此文件夹为空</div>');
@@ -5548,21 +5892,38 @@ jQuery(async () => {
         });
         row.on("dragend", () => {
           row.removeClass("cfm-dragging");
-          $(".cfm-row").removeClass("cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden");
+          $(".cfm-row").removeClass(
+            "cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden",
+          );
         });
         // 右侧子文件夹行也是拖放目标（三区域：before/into/after）
         row.on("dragover", (e) => {
           e.preventDefault();
-          row.removeClass("cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden");
+          row.removeClass(
+            "cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden",
+          );
           const rect = row[0].getBoundingClientRect();
           const relY = (e.originalEvent.clientY - rect.top) / rect.height;
           let zone = relY < 0.25 ? "before" : relY > 0.75 ? "after" : "into";
           row.data("dropZone", zone);
           let data = {};
-          try { data = JSON.parse(e.originalEvent.dataTransfer.getData("text/plain") || "{}"); } catch {}
+          try {
+            data = JSON.parse(
+              e.originalEvent.dataTransfer.getData("text/plain") || "{}",
+            );
+          } catch {}
           if (data.type === "res-folder" && data.resType === "worldinfo") {
-            if (data.id === childId) { row.addClass("cfm-drop-forbidden"); return; }
-            if (zone === "into" && wouldCreateResCycle("worldinfo", data.id, childId)) { row.addClass("cfm-drop-forbidden"); return; }
+            if (data.id === childId) {
+              row.addClass("cfm-drop-forbidden");
+              return;
+            }
+            if (
+              zone === "into" &&
+              wouldCreateResCycle("worldinfo", data.id, childId)
+            ) {
+              row.addClass("cfm-drop-forbidden");
+              return;
+            }
           }
           if (zone === "before") row.addClass("cfm-drop-before");
           else if (zone === "after") row.addClass("cfm-drop-after");
@@ -5570,25 +5931,58 @@ jQuery(async () => {
           e.originalEvent.dataTransfer.dropEffect = "move";
         });
         row.on("dragleave", () => {
-          row.removeClass("cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden");
+          row.removeClass(
+            "cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden",
+          );
         });
         row.on("drop", (e) => {
           e.preventDefault();
           e.stopPropagation();
           const zone = row.data("dropZone") || "into";
-          row.removeClass("cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden");
+          row.removeClass(
+            "cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden",
+          );
           let data;
-          try { data = JSON.parse(e.originalEvent.dataTransfer.getData("text/plain")); } catch { return; }
-          if (data.type === "res-folder" && data.resType === "worldinfo" && data.id !== childId) {
+          try {
+            data = JSON.parse(
+              e.originalEvent.dataTransfer.getData("text/plain"),
+            );
+          } catch {
+            return;
+          }
+          if (
+            data.type === "res-folder" &&
+            data.resType === "worldinfo" &&
+            data.id !== childId
+          ) {
             if (zone === "into") {
-              if (wouldCreateResCycle("worldinfo", data.id, childId)) { toastr.error("循环嵌套，已阻止"); return; }
+              if (wouldCreateResCycle("worldinfo", data.id, childId)) {
+                toastr.error("循环嵌套，已阻止");
+                return;
+              }
               reorderResFolder("worldinfo", data.id, childId, null);
               toastr.success(`「${data.id}」已移入「${childId}」`);
             } else {
               const pId = tree[childId]?.parentId || null;
-              if (wouldCreateResCycle("worldinfo", data.id, pId)) { toastr.error("循环嵌套，已阻止"); return; }
-              if (zone === "before") { reorderResFolder("worldinfo", data.id, pId, childId); }
-              else { const sibs = sortResFolders("worldinfo", getResChildFolders("worldinfo", pId)); const ci = sibs.indexOf(childId); reorderResFolder("worldinfo", data.id, pId, ci < sibs.length - 1 ? sibs[ci + 1] : null); }
+              if (wouldCreateResCycle("worldinfo", data.id, pId)) {
+                toastr.error("循环嵌套，已阻止");
+                return;
+              }
+              if (zone === "before") {
+                reorderResFolder("worldinfo", data.id, pId, childId);
+              } else {
+                const sibs = sortResFolders(
+                  "worldinfo",
+                  getResChildFolders("worldinfo", pId),
+                );
+                const ci = sibs.indexOf(childId);
+                reorderResFolder(
+                  "worldinfo",
+                  data.id,
+                  pId,
+                  ci < sibs.length - 1 ? sibs[ci + 1] : null,
+                );
+              }
               toastr.success(`「${data.id}」已排序`);
             }
             renderWorldInfoView();
@@ -5623,13 +6017,20 @@ jQuery(async () => {
           const starEl = row.find(".cfm-row-star");
           starEl.toggleClass("cfm-star-active", nowFav);
           starEl.attr("title", nowFav ? "取消收藏" : "添加收藏");
-          starEl.find("i").attr("class", `fa-${nowFav ? "solid" : "regular"} fa-star`);
-          const favCountEl = $("#cfm-worldinfo-left-tree .cfm-tnode-favorites .cfm-tnode-count");
+          starEl
+            .find("i")
+            .attr("class", `fa-${nowFav ? "solid" : "regular"} fa-star`);
+          const favCountEl = $(
+            "#cfm-worldinfo-left-tree .cfm-tnode-favorites .cfm-tnode-count",
+          );
           if (favCountEl.length) {
-            const newCount = names.filter((nn) => getResFavorites("worldinfo").includes(nn)).length;
+            const newCount = names.filter((nn) =>
+              getResFavorites("worldinfo").includes(nn),
+            ).length;
             favCountEl.text(newCount);
           }
-          if (selectedWorldInfoFolder === "__favorites__") renderWorldInfoView();
+          if (selectedWorldInfoFolder === "__favorites__")
+            renderWorldInfoView();
         });
         row.on("click", (e) => {
           if ($(e.target).closest(".cfm-row-star").length) return;
@@ -5650,7 +6051,12 @@ jQuery(async () => {
     }
 
     // 右侧列表本身也是拖放目标（拖到空白区域 = 放入当前文件夹）
-    if (selectedWorldInfoFolder && selectedWorldInfoFolder !== "__ungrouped__" && selectedWorldInfoFolder !== "__favorites__" && tree[selectedWorldInfoFolder]) {
+    if (
+      selectedWorldInfoFolder &&
+      selectedWorldInfoFolder !== "__ungrouped__" &&
+      selectedWorldInfoFolder !== "__favorites__" &&
+      tree[selectedWorldInfoFolder]
+    ) {
       const currentFolder = selectedWorldInfoFolder;
       rightList.on("dragover", (e) => {
         if ($(e.target).closest(".cfm-row").length > 0) return;
@@ -5659,7 +6065,9 @@ jQuery(async () => {
         e.originalEvent.dataTransfer.dropEffect = "move";
       });
       rightList.on("dragleave", (e) => {
-        if ($(e.relatedTarget).closest("#cfm-worldinfo-right-list").length === 0) {
+        if (
+          $(e.relatedTarget).closest("#cfm-worldinfo-right-list").length === 0
+        ) {
           rightList.removeClass("cfm-right-list-drop-target");
         }
       });
@@ -5669,8 +6077,16 @@ jQuery(async () => {
         e.stopPropagation();
         rightList.removeClass("cfm-right-list-drop-target");
         let data;
-        try { data = JSON.parse(e.originalEvent.dataTransfer.getData("text/plain")); } catch { return; }
-        if (data.type === "res-folder" && data.resType === "worldinfo" && data.id !== currentFolder) {
+        try {
+          data = JSON.parse(e.originalEvent.dataTransfer.getData("text/plain"));
+        } catch {
+          return;
+        }
+        if (
+          data.type === "res-folder" &&
+          data.resType === "worldinfo" &&
+          data.id !== currentFolder
+        ) {
           if (wouldCreateResCycle("worldinfo", data.id, currentFolder)) {
             toastr.error("循环嵌套，已阻止");
             return;
@@ -5758,12 +6174,8 @@ jQuery(async () => {
     if (scope === "all" || scope === "presets") {
       ensureResourceSettings();
       data.presets = {
-        folderTree: JSON.parse(
-          JSON.stringify(getResFolderTree("presets")),
-        ),
-        groups: JSON.parse(
-          JSON.stringify(getResourceGroups("presets")),
-        ),
+        folderTree: JSON.parse(JSON.stringify(getResFolderTree("presets"))),
+        groups: JSON.parse(JSON.stringify(getResourceGroups("presets"))),
         favorites: [...getResFavorites("presets")],
       };
     }
@@ -5771,12 +6183,8 @@ jQuery(async () => {
     if (scope === "all" || scope === "worldinfo") {
       ensureResourceSettings();
       data.worldinfo = {
-        folderTree: JSON.parse(
-          JSON.stringify(getResFolderTree("worldinfo")),
-        ),
-        groups: JSON.parse(
-          JSON.stringify(getResourceGroups("worldinfo")),
-        ),
+        folderTree: JSON.parse(JSON.stringify(getResFolderTree("worldinfo"))),
+        groups: JSON.parse(JSON.stringify(getResourceGroups("worldinfo"))),
         favorites: [...getResFavorites("worldinfo")],
       };
     }
@@ -5838,7 +6246,9 @@ jQuery(async () => {
 
           let existingTagId = null;
           for (const tagId of getFolderTagIds()) {
-            const existingPath = getFolderPath(tagId).map((id) => getTagName(id));
+            const existingPath = getFolderPath(tagId).map((id) =>
+              getTagName(id),
+            );
             if (existingPath.join("/") === pathKey) {
               existingTagId = tagId;
               break;
@@ -5851,7 +6261,10 @@ jQuery(async () => {
               config.folders[existingTagId].sortOrder = folderDef.sortOrder;
             }
           } else {
-            const { tag, displayName: dn } = findOrCreateTag(displayName, parentTagId);
+            const { tag, displayName: dn } = findOrCreateTag(
+              displayName,
+              parentTagId,
+            );
             config.folders[tag.id] = {
               parentId: parentTagId,
               sortOrder: folderDef.sortOrder ?? 0,
@@ -5917,7 +6330,10 @@ jQuery(async () => {
         const existingFolderIds = new Set(getResFolderIds("presets"));
 
         for (const [presetName, folderName] of Object.entries(groups)) {
-          if (presetNames.has(presetName) && existingFolderIds.has(folderName)) {
+          if (
+            presetNames.has(presetName) &&
+            existingFolderIds.has(folderName)
+          ) {
             setItemGroup("presets", presetName, folderName);
             report.presets.matched++;
           } else {
@@ -5985,8 +6401,15 @@ jQuery(async () => {
 
   function showImportExportPopup() {
     if ($("#cfm-backup-overlay").length > 0) return;
-    const overlay = $('<div id="cfm-backup-overlay" class="cfm-batch-overlay"></div>');
-    const currentTab = currentResourceType === "chars" ? "角色卡" : currentResourceType === "presets" ? "预设" : "世界书";
+    const overlay = $(
+      '<div id="cfm-backup-overlay" class="cfm-batch-overlay"></div>',
+    );
+    const currentTab =
+      currentResourceType === "chars"
+        ? "角色卡"
+        : currentResourceType === "presets"
+          ? "预设"
+          : "世界书";
     const popup = $(`
       <div class="cfm-batch-popup" style="max-width:480px;">
         <div class="cfm-config-header">
@@ -6045,18 +6468,25 @@ jQuery(async () => {
             return;
           }
           const resultArea = popup.find("#cfm-backup-import-result");
-          resultArea.html('<div style="color:#8b9dfc;"><i class="fa-solid fa-spinner fa-spin"></i> 正在导入...</div>');
+          resultArea.html(
+            '<div style="color:#8b9dfc;"><i class="fa-solid fa-spinner fa-spin"></i> 正在导入...</div>',
+          );
 
           const report = await executeImport(jsonData);
           config = loadConfig();
 
-          let html = '<div style="color:#57f287;margin-bottom:6px;">✅ 导入完成</div>';
+          let html =
+            '<div style="color:#57f287;margin-bottom:6px;">✅ 导入完成</div>';
           html += `<div style="font-size:12px;line-height:1.8;color:#a6adc8;">`;
           html += `创建了 ${report.foldersCreated} 个新文件夹<br>`;
-          if (jsonData.chars) html += `角色卡：匹配 ${report.chars.matched} 个，跳过 ${report.chars.skipped} 个<br>`;
-          if (jsonData.presets) html += `预设：匹配 ${report.presets.matched} 个，跳过 ${report.presets.skipped} 个<br>`;
-          if (jsonData.worldinfo) html += `世界书：匹配 ${report.worldinfo.matched} 个，跳过 ${report.worldinfo.skipped} 个<br>`;
-          if (report.favoritesRestored > 0) html += `恢复了 ${report.favoritesRestored} 个收藏<br>`;
+          if (jsonData.chars)
+            html += `角色卡：匹配 ${report.chars.matched} 个，跳过 ${report.chars.skipped} 个<br>`;
+          if (jsonData.presets)
+            html += `预设：匹配 ${report.presets.matched} 个，跳过 ${report.presets.skipped} 个<br>`;
+          if (jsonData.worldinfo)
+            html += `世界书：匹配 ${report.worldinfo.matched} 个，跳过 ${report.worldinfo.skipped} 个<br>`;
+          if (report.favoritesRestored > 0)
+            html += `恢复了 ${report.favoritesRestored} 个收藏<br>`;
           html += `</div>`;
           resultArea.html(html);
 
@@ -6078,5 +6508,5 @@ jQuery(async () => {
   config = loadConfig(); // 刷新配置（autoImport可能改了settings）
   autoCleanRedundantTags(); // 自动清理多余的路径标签
   initButton();
-  console.log(`[${extensionName}] 角色卡文件夹分类插件已加载`);
+  console.log(`[${extensionName}] 酒馆资源管理器已加载`);
 });
