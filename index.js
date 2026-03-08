@@ -3193,6 +3193,7 @@ jQuery(async () => {
   let resConfigDeleteLastClickedId = null;
   let resConfigDeleteRangeMode = false;
   let resConfigInvertScope = "all";
+  let resConfigSelectedFolderId = null;
 
   function showConfigPopup() {
     if ($("#cfm-config-overlay").length > 0) return;
@@ -3531,14 +3532,17 @@ jQuery(async () => {
     body.append(modeSection);
 
     // 1. 创建新文件夹（支持空格分隔批量创建）
+    const resSelectedHintText = resConfigSelectedFolderId
+      ? "当前将添加到「" + escapeHtml(getResFolderDisplayName(type, resConfigSelectedFolderId)) + "」下。"
+      : "当前将添加为顶级文件夹。";
     const createSection = $(`
       <div class="cfm-config-section">
         <label>创建新文件夹</label>
         <div class="cfm-create-tag-row">
-          <input type="text" id="cfm-res-create-input" placeholder="a b c（空格分隔，批量创建多个文件夹）" />
+          <input type="text" id="cfm-res-create-input" placeholder="a b c（空格分隔，添加到选中文件夹下）" />
           <button id="cfm-res-create-btn"><i class="fa-solid fa-plus"></i> 创建</button>
         </div>
-        <div class="cfm-create-tag-hint">当前将添加为${typeLabel}文件夹。空格分隔可批量创建多个文件夹。</div>
+        <div class="cfm-create-tag-hint">${resSelectedHintText} 空格分隔可批量创建同级文件夹。点击下方树形视图中的文件夹可选中/取消选中目标父级。</div>
       </div>
     `);
     createSection.find("#cfm-res-create-btn").on("click touchend", (e) => {
@@ -3548,16 +3552,22 @@ jQuery(async () => {
         toastr.warning("请输入文件夹名称");
         return;
       }
+      const parentId = resConfigSelectedFolderId || null;
       const names = input.split(/\s+/).filter((s) => s.length > 0);
       const created = [];
       const skipped = [];
       for (const name of names) {
-        if (addResFolder(type, name, null)) created.push(name);
+        let folderName = name;
+        if (parentId) folderName = parentId + "-" + name;
+        if (addResFolder(type, folderName, parentId, parentId ? name : null)) created.push(name);
         else skipped.push(name);
       }
+      const parentHint = parentId
+        ? `「${getResFolderDisplayName(type, parentId)}」下`
+        : "顶级";
       if (created.length > 0)
         toastr.success(
-          `已创建 ${created.length} 个${typeLabel}文件夹: ${created.join(", ")}`,
+          `已创建 ${created.length} 个${parentHint}${typeLabel}文件夹: ${created.join(", ")}`,
         );
       if (skipped.length > 0)
         toastr.warning(
@@ -3703,6 +3713,19 @@ jQuery(async () => {
       });
 
     const treeContainer = treeSection.find("#cfm-res-folder-tree");
+
+    if (resConfigSelectedFolderId) {
+      const selectedHint = $(
+        `<div class="cfm-selected-hint"><i class="fa-solid fa-crosshairs"></i> 已选中：<strong>${escapeHtml(getResFolderDisplayName(type, resConfigSelectedFolderId))}</strong><button class="cfm-btn-deselect" title="取消选中"><i class="fa-solid fa-xmark"></i></button></div>`,
+      );
+      selectedHint.find(".cfm-btn-deselect").on("click touchend", (e) => {
+        e.preventDefault();
+        resConfigSelectedFolderId = null;
+        renderResourceConfigBody(body.empty(), type);
+      });
+      treeContainer.append(selectedHint);
+    }
+
     const topFolders = sortResFolders(type, getResTopLevelFolders(type));
     if (topFolders.length === 0) {
       treeContainer.append(
@@ -3726,11 +3749,12 @@ jQuery(async () => {
         }
         const arrowHtml = `<span class="cfm-tnode-arrow cfm-config-arrow ${hasChildren ? (isExpanded ? "cfm-arrow-expanded" : "") : "cfm-arrow-hidden"}"><i class="fa-solid fa-caret-right"></i></span>`;
 
+        const isResSelected = resConfigSelectedFolderId === folderId;
         const item = $(`
-          <div class="cfm-tree-item" data-folder-name="${escapeHtml(folderId)}" style="padding-left:${indent}px;">
+          <div class="cfm-tree-item ${isResSelected ? "cfm-tree-selected" : ""}" data-folder-name="${escapeHtml(folderId)}" style="padding-left:${indent}px;">
             ${checkboxHtml}
             ${arrowHtml}
-            <span class="cfm-tree-icon"><i class="fa-solid fa-folder"></i></span>
+            <span class="cfm-tree-icon"><i class="fa-solid fa-folder${isResSelected ? "-open" : ""}"></i></span>
             <span class="cfm-tree-name">${escapeHtml(getResFolderDisplayName(type, folderId))}</span>
             <span class="cfm-tnode-count" style="margin-left:auto;margin-right:8px;">${count}</span>
             ${resConfigDeleteMode ? "" : `<span class="cfm-tree-actions"><button class="cfm-btn-danger cfm-res-remove-folder" data-fname="${escapeHtml(folderId)}" title="删除此文件夹"><i class="fa-solid fa-trash-can"></i></button></span>`}
@@ -3782,6 +3806,13 @@ jQuery(async () => {
           };
           item.on("click touchend", handleResDeleteClick);
         } else {
+          // 点击选中/取消选中（非删除模式）
+          item.on("click", (e) => {
+            if ($(e.target).closest(".cfm-res-remove-folder, .cfm-config-arrow").length) return;
+            e.preventDefault();
+            resConfigSelectedFolderId = resConfigSelectedFolderId === folderId ? null : folderId;
+            renderResourceConfigBody(body.empty(), type);
+          });
           item.find(".cfm-res-remove-folder").on("click touchend", (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -3792,6 +3823,7 @@ jQuery(async () => {
             )
               return;
             removeResFolder(type, folderId);
+            if (resConfigSelectedFolderId === folderId) resConfigSelectedFolderId = null;
             toastr.success(`已删除${typeLabel}文件夹「${folderId}」`);
             renderResourceConfigBody(body.empty(), type);
           });
@@ -3989,7 +4021,8 @@ jQuery(async () => {
         for (const child of node.children)
           processResNode(child, folderName);
       }
-      for (const node of treeData) processResNode(node, null);
+      const batchParentId = resConfigSelectedFolderId || null;
+      for (const node of treeData) processResNode(node, batchParentId);
       overlay.remove();
       let msg = `批量创建完成，共新增 ${created} 个${typeLabel}文件夹`;
       if (skipped > 0) msg += `，${skipped} 个已存在（跳过）`;
