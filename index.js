@@ -412,9 +412,7 @@ jQuery(async () => {
       imported++;
     }
     if (imported > 0) saveConfig(config);
-    toastr.success(
-      `共有 ${tags.length} 个标签，成功导入 ${imported} 个，已存在 ${skipped} 个（跳过）`,
-    );
+    toastr.success(`已导入 ${imported} 个标签`);
     return imported;
   }
 
@@ -899,17 +897,13 @@ jQuery(async () => {
             }
             if (zone === "before") {
               reorderFolder(d.id, pId, targetId);
-              toastr.success(
-                `「${getTagName(d.id)}」已排序到「${getTagName(targetId)}」前面`,
-              );
+            toastr.success(`「${getTagName(d.id)}」已排序`);
             } else {
               const sibs = sortFolders(getChildFolders(pId));
               const ci = sibs.indexOf(targetId);
               const nxt = ci >= 0 && ci < sibs.length - 1 ? sibs[ci + 1] : null;
               reorderFolder(d.id, pId, nxt);
-              toastr.success(
-                `「${getTagName(d.id)}」已排序到「${getTagName(targetId)}」后面`,
-              );
+            toastr.success(`「${getTagName(d.id)}」已排序`);
             }
           }
           renderLeftTree();
@@ -2895,9 +2889,7 @@ jQuery(async () => {
           }
           if (dropZone === "before") {
             reorderFolder(data.id, targetParentId, folderId);
-            toastr.success(
-              `「${getTagName(data.id)}」已排序到「${getTagName(folderId)}」前面`,
-            );
+            toastr.success(`「${getTagName(data.id)}」已排序`);
           } else {
             // 'after': 找到当前节点的下一个兄弟节点作为 insertBefore
             const siblings = sortFolders(getChildFolders(targetParentId));
@@ -2907,9 +2899,7 @@ jQuery(async () => {
                 ? siblings[curIdx + 1]
                 : null;
             reorderFolder(data.id, targetParentId, nextSiblingId);
-            toastr.success(
-              `「${getTagName(data.id)}」已排序到「${getTagName(folderId)}」后面`,
-            );
+            toastr.success(`「${getTagName(data.id)}」已排序`);
           }
         }
         renderLeftTree();
@@ -3140,9 +3130,7 @@ jQuery(async () => {
             }
             if (dropZone === "before") {
               reorderFolder(data.id, targetParentId, childId);
-              toastr.success(
-                `「${getTagName(data.id)}」已排序到「${getTagName(childId)}」前面`,
-              );
+              toastr.success(`「${getTagName(data.id)}」已排序`);
             } else {
               const siblings = sortFolders(getChildFolders(targetParentId));
               const curIdx = siblings.indexOf(childId);
@@ -3151,9 +3139,7 @@ jQuery(async () => {
                   ? siblings[curIdx + 1]
                   : null;
               reorderFolder(data.id, targetParentId, nextSiblingId);
-              toastr.success(
-                `「${getTagName(data.id)}」已排序到「${getTagName(childId)}」后面`,
-              );
+              toastr.success(`「${getTagName(data.id)}」已排序`);
             }
           }
           renderLeftTree();
@@ -3683,13 +3669,9 @@ jQuery(async () => {
         ? `「${getResFolderDisplayName(type, parentId)}」下`
         : "顶级";
       if (created.length > 0)
-        toastr.success(
-          `已创建 ${created.length} 个${parentHint}${typeLabel}文件夹: ${created.join(", ")}`,
-        );
+        toastr.success(`已创建 ${created.length} 个文件夹`);
       if (skipped.length > 0)
-        toastr.warning(
-          `${skipped.length} 个文件夹已存在（跳过）: ${skipped.join(", ")}`,
-        );
+        toastr.warning(`${skipped.length} 个文件夹已存在（跳过）`);
       createSection.find("#cfm-res-create-input").val("");
       renderResourceConfigBody(body.empty(), type);
     });
@@ -4020,7 +4002,7 @@ jQuery(async () => {
       resConfigDeleteSelected.clear();
       resConfigDeleteMode = false;
       toastr.success(
-        `已删除 ${toDelete.length} 个${typeLabel}文件夹: ${toDelete.join(", ")}`,
+        `已删除 ${toDelete.length} 个${typeLabel}文件夹`,
       );
       const body = $("#cfm-config-body");
       renderResourceConfigBody(body.empty(), type);
@@ -4171,9 +4153,7 @@ jQuery(async () => {
       const batchParentId = resConfigSelectedFolderId || null;
       for (const node of treeData) processResNode(node, batchParentId);
       overlay.remove();
-      let msg = `批量创建完成，共新增 ${created} 个${typeLabel}文件夹`;
-      if (skipped > 0) msg += `，${skipped} 个已存在（跳过）`;
-      toastr.success(msg);
+      toastr.success(`已创建 ${created} 个文件夹${skipped > 0 ? `，${skipped} 个跳过` : ""}`);
       renderConfigBody();
     });
   }
@@ -4479,7 +4459,7 @@ jQuery(async () => {
       cfmDeleteMode = false;
       const suffix = alsoDeleteTags ? "（标签已同步删除）" : "";
       toastr.success(
-        `已删除 ${deletedNames.length} 个文件夹${suffix}: ${deletedNames.join(", ")}`,
+        `已删除 ${deletedNames.length} 个文件夹${suffix}`,
       );
       renderConfigBody();
     });
@@ -4513,10 +4493,7 @@ jQuery(async () => {
     const parentHint = parentFolderId
       ? `「${getTagName(parentFolderId)}」下`
       : "顶级";
-    let msg = `已创建 ${created.length} 个${parentHint}文件夹: ${created.join(", ")}`;
-    if (prefixCount > 0)
-      msg += `（${prefixCount} 个作为子文件夹自动添加了路径前缀）`;
-    toastr.success(msg);
+    toastr.success(`已创建 ${created.length} 个文件夹`);
   }
 
   // ==================== 批量创建弹窗（多行缩进格式） ====================
@@ -4677,10 +4654,7 @@ jQuery(async () => {
     for (const node of nodes) processNode(node, parentId);
     saveConfig(config);
     getContext().saveSettingsDebounced();
-    let msg = `批量创建完成，共新增 ${count} 个文件夹`;
-    if (prefixCount > 0)
-      msg += `（其中 ${prefixCount} 个作为子文件夹自动添加了路径前缀）`;
-    toastr.success(msg);
+    toastr.success(`已创建 ${count} 个文件夹`);
   }
 
   // ==================== 预设视图渲染（双栏 + 树形嵌套） ====================
