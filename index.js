@@ -3894,16 +3894,12 @@ jQuery(async () => {
           item.find(".cfm-res-remove-folder").on("click touchend", (e) => {
             e.preventDefault();
             e.stopPropagation();
-            if (
-              !confirm(
-                `确定删除文件夹「${folderId}」吗？\n子文件夹将提升到上级，文件夹内的${typeLabel}将变为未归类。`,
-              )
-            )
-              return;
-            removeResFolder(type, folderId);
-            if (resConfigSelectedFolderId === folderId) resConfigSelectedFolderId = null;
-            toastr.success(`已删除${typeLabel}文件夹「${folderId}」`);
-            renderResourceConfigBody(body.empty(), type);
+            showResDeleteConfirmDialog(type, [folderId], () => {
+              removeResFolder(type, folderId);
+              if (resConfigSelectedFolderId === folderId) resConfigSelectedFolderId = null;
+              toastr.success(`已删除${typeLabel}文件夹「${folderId}」`);
+              renderResourceConfigBody(body.empty(), type);
+            });
           });
         }
         container.append(item);
@@ -3922,40 +3918,74 @@ jQuery(async () => {
     }
   }
 
+  // ==================== 资源删除确认弹窗（与角色卡风格一致） ====================
+  function showResDeleteConfirmDialog(type, folderIds, onConfirm) {
+    const typeLabel = type === "presets" ? "预设" : "世界书";
+    const names = folderIds.map((id) => getResFolderDisplayName(type, id));
+    const namesPreview =
+      names.length > 5
+        ? names.slice(0, 5).join("、") + `…等 ${names.length} 个`
+        : names.join("、");
+
+    const overlay = $(
+      '<div id="cfm-delete-confirm-overlay" class="cfm-batch-overlay"></div>',
+    );
+    const dialog = $(`
+      <div class="cfm-batch-popup" style="max-width:480px;max-height:320px;">
+        <div class="cfm-config-header"><h3>⚠️ 确认删除</h3><button class="cfm-btn-close" id="cfm-rdc-close">&times;</button></div>
+        <div style="padding:16px;">
+          <div style="margin-bottom:12px;font-size:13px;line-height:1.6;">
+            即将删除 <strong>${folderIds.length}</strong> 个文件夹：<br>
+            <span style="color:#f9e2af;">${escapeHtml(namesPreview)}</span>
+          </div>
+          <div style="margin-bottom:16px;font-size:13px;color:#a6adc8;">
+            子文件夹将提升到上级，文件夹内的${typeLabel}将变为未归类。
+          </div>
+          <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;">
+            <button id="cfm-rdc-cancel" class="cfm-btn" style="opacity:0.7;">取消</button>
+            <button id="cfm-rdc-confirm" class="cfm-btn cfm-btn-danger" style="background:rgba(237,66,69,0.2);border-color:rgba(237,66,69,0.5);">确认删除</button>
+          </div>
+        </div>
+      </div>
+    `);
+    overlay.append(dialog);
+    $("body").append(overlay);
+    dialog.find("#cfm-rdc-close, #cfm-rdc-cancel").on("click touchend", (e) => {
+      e.preventDefault();
+      overlay.remove();
+    });
+    dialog.find("#cfm-rdc-confirm").on("click touchend", (e) => {
+      e.preventDefault();
+      overlay.remove();
+      onConfirm();
+    });
+  }
+
   // 预设/世界书批量删除执行
   function executeResourceMultiDelete(type) {
     if (resConfigDeleteSelected.size === 0) return;
-    const typeLabel = type === "presets" ? "预设" : "世界书";
     const toDelete = Array.from(resConfigDeleteSelected);
-    const namesPreview =
-      toDelete.length > 5
-        ? toDelete.slice(0, 5).join("、") + `…等 ${toDelete.length} 个`
-        : toDelete.join("、");
-    if (
-      !confirm(
-        `确定删除 ${toDelete.length} 个文件夹吗？\n${namesPreview}\n\n子文件夹将提升到上级，文件夹内的${typeLabel}将变为未归类。`,
-      )
-    )
-      return;
-    // 从叶子到根的顺序删除
-    const allIds = getResFolderIds(type);
-    const tree = getResFolderTree(type);
-    const toDeleteSet = new Set(toDelete);
-    // 按深度排序（深的先删）
-    const sorted = [...toDelete].sort((a, b) => {
-      return (
-        getResFolderPath(type, b).length - getResFolderPath(type, a).length
+    const typeLabel = type === "presets" ? "预设" : "世界书";
+
+    showResDeleteConfirmDialog(type, toDelete, () => {
+      const tree = getResFolderTree(type);
+      const sorted = [...toDelete].sort((a, b) => {
+        return (
+          getResFolderPath(type, b).length - getResFolderPath(type, a).length
+        );
+      });
+      for (const fid of sorted) {
+        if (!tree[fid]) continue;
+        removeResFolder(type, fid);
+      }
+      resConfigDeleteSelected.clear();
+      resConfigDeleteMode = false;
+      toastr.success(
+        `已删除 ${toDelete.length} 个${typeLabel}文件夹: ${toDelete.join(", ")}`,
       );
+      const body = $("#cfm-config-body");
+      renderResourceConfigBody(body.empty(), type);
     });
-    for (const fid of sorted) {
-      if (!tree[fid]) continue;
-      removeResFolder(type, fid);
-    }
-    resConfigDeleteSelected.clear();
-    resConfigDeleteMode = false;
-    toastr.success(
-      `已删除 ${toDelete.length} 个${typeLabel}文件夹: ${toDelete.join(", ")}`,
-    );
   }
 
   // 预设/世界书批量创建弹窗（支持缩进嵌套，与角色卡批量创建一致）
