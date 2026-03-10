@@ -720,14 +720,19 @@ jQuery(async () => {
             // 创建幽灵
             const g = document.createElement("div");
             g.className = "cfm-touch-ghost";
-            g.textContent =
-              (data.type === "folder" || data.type === "res-folder"
-                ? "📁 "
-                : data.type === "preset"
-                  ? "📄 "
-                  : data.type === "worldinfo"
-                    ? "📖 "
-                    : "👤 ") + (data.name || "");
+            // 多选模式：显示"共X项"
+            if (data.multiSelect && data.count > 1) {
+              g.textContent = `📦 共 ${data.count} 项`;
+            } else {
+              g.textContent =
+                (data.type === "folder" || data.type === "res-folder"
+                  ? "📁 "
+                  : data.type === "preset"
+                    ? "📄 "
+                    : data.type === "worldinfo"
+                      ? "📖 "
+                      : "👤 ") + (data.name || "");
+            }
             g.style.left = sx + "px";
             g.style.top = sy - 50 + "px";
             document.body.appendChild(g);
@@ -941,13 +946,31 @@ jQuery(async () => {
           }
         }
       } else if (d.type === "char") {
+        // 多选批量移动
+        const avatars =
+          d.multiSelect && d.selectedIds ? d.selectedIds : [d.avatar];
+        const count = avatars.length;
         if (uncatNode) {
-          removeCharFromAllFolders(d.avatar);
-          toastr.success(`已将「${d.name || d.avatar}」移出所有文件夹`);
+          avatars.forEach((av) => removeCharFromAllFolders(av));
+          toastr.success(
+            count > 1
+              ? `已将 ${count} 个角色移出所有文件夹`
+              : `已将「${d.name || d.avatar}」移出所有文件夹`,
+          );
+          if (d.multiSelect) clearMultiSelect();
           renderLeftTree();
           renderRightPane();
         } else if (targetId) {
-          handleCharDropToFolder(d.avatar, targetId, d.name || d.avatar);
+          avatars.forEach((av) => {
+            const ch = getCharacters().find((c) => c.avatar === av);
+            handleCharDropToFolder(av, targetId, ch?.name || av);
+          });
+          toastr.success(
+            count > 1
+              ? `已将 ${count} 个角色移动到「${getTagName(targetId)}」`
+              : `已将「${d.name || d.avatar}」移动到「${getTagName(targetId)}」`,
+          );
+          if (d.multiSelect) clearMultiSelect();
           renderLeftTree();
           renderRightPane();
         } else if (
@@ -957,11 +980,16 @@ jQuery(async () => {
           selectedTreeNode !== "__uncategorized__" &&
           selectedTreeNode !== "__favorites__"
         ) {
-          handleCharDropToFolder(
-            d.avatar,
-            selectedTreeNode,
-            d.name || d.avatar,
+          avatars.forEach((av) => {
+            const ch = getCharacters().find((c) => c.avatar === av);
+            handleCharDropToFolder(av, selectedTreeNode, ch?.name || av);
+          });
+          toastr.success(
+            count > 1
+              ? `已将 ${count} 个角色移动到「${getTagName(selectedTreeNode)}」`
+              : `已将「${d.name || d.avatar}」移动到「${getTagName(selectedTreeNode)}」`,
           );
+          if (d.multiSelect) clearMultiSelect();
           renderLeftTree();
           renderRightPane();
         }
@@ -1022,13 +1050,26 @@ jQuery(async () => {
           }
         }
       } else if (d.type === "preset") {
+        const presetNames =
+          d.multiSelect && d.selectedIds ? d.selectedIds : [d.name];
+        const pCount = presetNames.length;
         if (uncatNode) {
-          setItemGroup("presets", d.name, null);
-          toastr.success(`已将「${d.name}」移出文件夹`);
+          presetNames.forEach((n) => setItemGroup("presets", n, null));
+          toastr.success(
+            pCount > 1
+              ? `已将 ${pCount} 个预设移出文件夹`
+              : `已将「${d.name}」移出文件夹`,
+          );
+          if (d.multiSelect) clearMultiSelect();
           renderPresetsView();
         } else if (targetId) {
-          setItemGroup("presets", d.name, targetId);
-          toastr.success(`已将「${d.name}」移入「${targetId}」`);
+          presetNames.forEach((n) => setItemGroup("presets", n, targetId));
+          toastr.success(
+            pCount > 1
+              ? `已将 ${pCount} 个预设移入「${targetId}」`
+              : `已将「${d.name}」移入「${targetId}」`,
+          );
+          if (d.multiSelect) clearMultiSelect();
           renderPresetsView();
         } else if (
           !target &&
@@ -1037,18 +1078,38 @@ jQuery(async () => {
           selectedPresetFolder !== "__ungrouped__" &&
           selectedPresetFolder !== "__favorites__"
         ) {
-          setItemGroup("presets", d.name, selectedPresetFolder);
-          toastr.success(`已将「${d.name}」移入「${selectedPresetFolder}」`);
+          presetNames.forEach((n) =>
+            setItemGroup("presets", n, selectedPresetFolder),
+          );
+          toastr.success(
+            pCount > 1
+              ? `已将 ${pCount} 个预设移入「${selectedPresetFolder}」`
+              : `已将「${d.name}」移入「${selectedPresetFolder}」`,
+          );
+          if (d.multiSelect) clearMultiSelect();
           renderPresetsView();
         }
       } else if (d.type === "worldinfo") {
+        const wiNames =
+          d.multiSelect && d.selectedIds ? d.selectedIds : [d.name];
+        const wCount = wiNames.length;
         if (uncatNode) {
-          setItemGroup("worldinfo", d.name, null);
-          toastr.success(`已将「${d.name}」移出文件夹`);
+          wiNames.forEach((n) => setItemGroup("worldinfo", n, null));
+          toastr.success(
+            wCount > 1
+              ? `已将 ${wCount} 个世界书移出文件夹`
+              : `已将「${d.name}」移出文件夹`,
+          );
+          if (d.multiSelect) clearMultiSelect();
           renderWorldInfoView();
         } else if (targetId) {
-          setItemGroup("worldinfo", d.name, targetId);
-          toastr.success(`已将「${d.name}」移入「${targetId}」`);
+          wiNames.forEach((n) => setItemGroup("worldinfo", n, targetId));
+          toastr.success(
+            wCount > 1
+              ? `已将 ${wCount} 个世界书移入「${targetId}」`
+              : `已将「${d.name}」移入「${targetId}」`,
+          );
+          if (d.multiSelect) clearMultiSelect();
           renderWorldInfoView();
         } else if (
           !target &&
@@ -1057,8 +1118,15 @@ jQuery(async () => {
           selectedWorldInfoFolder !== "__ungrouped__" &&
           selectedWorldInfoFolder !== "__favorites__"
         ) {
-          setItemGroup("worldinfo", d.name, selectedWorldInfoFolder);
-          toastr.success(`已将「${d.name}」移入「${selectedWorldInfoFolder}」`);
+          wiNames.forEach((n) =>
+            setItemGroup("worldinfo", n, selectedWorldInfoFolder),
+          );
+          toastr.success(
+            wCount > 1
+              ? `已将 ${wCount} 个世界书移入「${selectedWorldInfoFolder}」`
+              : `已将「${d.name}」移入「${selectedWorldInfoFolder}」`,
+          );
+          if (d.multiSelect) clearMultiSelect();
           renderWorldInfoView();
         }
       }
@@ -1752,6 +1820,78 @@ jQuery(async () => {
   let sortSnapshot = null; // 排序前的快照 { folderId: sortOrder, ... }
   let rightCharSortMode = null; // 右栏角色排序模式: null | 'az' | 'za'
 
+  // ==================== 多选模式状态 ====================
+  let cfmMultiSelectMode = false;
+  let cfmMultiSelected = new Set(); // 当前选中的资源标识符集合（avatar/name）
+  let cfmMultiSelectLastClicked = null; // 框选：上次点击的标识符
+  let cfmMultiSelectRangeMode = false; // 框选模式开关
+
+  // 获取当前右栏可见的资源列表（仅资源，不含文件夹），用于框选
+  function getVisibleResourceIds() {
+    const list = [];
+    const container =
+      currentResourceType === "chars"
+        ? "#cfm-right-list"
+        : currentResourceType === "presets"
+          ? "#cfm-preset-right-list"
+          : "#cfm-worldinfo-right-list";
+    $(container)
+      .find(".cfm-row-char[data-res-id]")
+      .each(function () {
+        list.push($(this).attr("data-res-id"));
+      });
+    return list;
+  }
+
+  function clearMultiSelect() {
+    cfmMultiSelected.clear();
+    cfmMultiSelectLastClicked = null;
+  }
+
+  function toggleMultiSelectItem(id, shiftKey) {
+    if ((shiftKey || cfmMultiSelectRangeMode) && cfmMultiSelectLastClicked) {
+      const visible = getVisibleResourceIds();
+      const lastIdx = visible.indexOf(cfmMultiSelectLastClicked);
+      const curIdx = visible.indexOf(id);
+      if (lastIdx >= 0 && curIdx >= 0) {
+        const start = Math.min(lastIdx, curIdx);
+        const end = Math.max(lastIdx, curIdx);
+        for (let i = start; i <= end; i++) {
+          cfmMultiSelected.add(visible[i]);
+        }
+      }
+    } else {
+      if (cfmMultiSelected.has(id)) cfmMultiSelected.delete(id);
+      else cfmMultiSelected.add(id);
+    }
+    cfmMultiSelectLastClicked = id;
+  }
+
+  function selectAllVisible() {
+    const visible = getVisibleResourceIds();
+    const allSelected =
+      visible.length > 0 && visible.every((id) => cfmMultiSelected.has(id));
+    if (allSelected) {
+      visible.forEach((id) => cfmMultiSelected.delete(id));
+    } else {
+      visible.forEach((id) => cfmMultiSelected.add(id));
+    }
+  }
+
+  // 多选拖拽数据：返回包含所有选中项的拖拽数据
+  function getMultiDragData(singleData) {
+    if (!cfmMultiSelectMode || cfmMultiSelected.size <= 1) return singleData;
+    // 如果当前拖拽的项在选中集合中，拖拽整个集合
+    const idKey = singleData.avatar || singleData.name;
+    if (!cfmMultiSelected.has(idKey)) return singleData;
+    return {
+      ...singleData,
+      multiSelect: true,
+      selectedIds: Array.from(cfmMultiSelected),
+      count: cfmMultiSelected.size,
+    };
+  }
+
   function showMainPopup() {
     if ($("#cfm-overlay").length > 0) return;
     // 每次打开主弹窗时检测新标签
@@ -1782,7 +1922,10 @@ jQuery(async () => {
                     <div class="cfm-tab" data-tab="presets"><i class="fa-solid fa-sliders"></i> 预设</div>
                 </div>
                 <div class="cfm-global-search-bar" id="cfm-global-search-bar">
-                    <input type="text" class="cfm-global-search-input" id="cfm-global-search" placeholder="搜索..." />
+                    <div class="cfm-search-input-wrapper">
+                        <input type="text" class="cfm-global-search-input" id="cfm-global-search" placeholder="搜索..." />
+                        <button class="cfm-search-clear-btn" id="cfm-global-search-clear" title="清空搜索"><i class="fa-solid fa-xmark"></i></button>
+                    </div>
                     <select id="cfm-search-scope" class="cfm-search-select" title="搜索范围">
                         <option value="current">当前文件夹</option>
                         <option value="all">全部文件夹</option>
@@ -1793,7 +1936,10 @@ jQuery(async () => {
                     </select>
                 </div>
                 <div class="cfm-global-search-bar" id="cfm-preset-search-bar" style="display:none;">
-                    <input type="text" class="cfm-global-search-input" id="cfm-preset-global-search" placeholder="搜索..." />
+                    <div class="cfm-search-input-wrapper">
+                        <input type="text" class="cfm-global-search-input" id="cfm-preset-global-search" placeholder="搜索..." />
+                        <button class="cfm-search-clear-btn" id="cfm-preset-search-clear" title="清空搜索"><i class="fa-solid fa-xmark"></i></button>
+                    </div>
                     <select id="cfm-preset-search-scope" class="cfm-search-select" title="搜索范围">
                         <option value="current">当前文件夹</option>
                         <option value="all">全部文件夹</option>
@@ -1804,7 +1950,10 @@ jQuery(async () => {
                     </select>
                 </div>
                 <div class="cfm-global-search-bar" id="cfm-worldinfo-search-bar" style="display:none;">
-                    <input type="text" class="cfm-global-search-input" id="cfm-worldinfo-global-search" placeholder="搜索..." />
+                    <div class="cfm-search-input-wrapper">
+                        <input type="text" class="cfm-global-search-input" id="cfm-worldinfo-global-search" placeholder="搜索..." />
+                        <button class="cfm-search-clear-btn" id="cfm-worldinfo-search-clear" title="清空搜索"><i class="fa-solid fa-xmark"></i></button>
+                    </div>
                     <select id="cfm-worldinfo-search-scope" class="cfm-search-select" title="搜索范围">
                         <option value="current">当前文件夹</option>
                         <option value="all">全部文件夹</option>
@@ -1835,6 +1984,7 @@ jQuery(async () => {
                             <div class="cfm-sort-wrapper" id="cfm-right-sort-wrapper">
                                 <button class="cfm-sort-trigger" id="cfm-right-sort-btn" title="角色排序"><i class="fa-solid fa-arrow-down-short-wide"></i></button>
                             </div>
+                            <button class="cfm-multisel-toggle" id="cfm-multisel-toggle" title="多选模式"><i class="fa-solid fa-list-check"></i></button>
                         </div>
                         <div class="cfm-right-list" id="cfm-right-list">
                             <div class="cfm-right-empty">← 点击左侧文件夹查看内容</div>
@@ -1862,6 +2012,7 @@ jQuery(async () => {
                             <div class="cfm-sort-wrapper" id="cfm-preset-right-sort-wrapper">
                                 <button class="cfm-sort-trigger" id="cfm-preset-right-sort-btn" title="预设排序"><i class="fa-solid fa-arrow-down-short-wide"></i></button>
                             </div>
+                            <button class="cfm-multisel-toggle cfm-multisel-toggle-preset" title="多选模式"><i class="fa-solid fa-list-check"></i></button>
                         </div>
                         <div class="cfm-right-list" id="cfm-preset-right-list">
                             <div class="cfm-right-empty">← 点击左侧文件夹查看内容</div>
@@ -1889,6 +2040,7 @@ jQuery(async () => {
                             <div class="cfm-sort-wrapper" id="cfm-worldinfo-right-sort-wrapper">
                                 <button class="cfm-sort-trigger" id="cfm-worldinfo-right-sort-btn" title="世界书排序"><i class="fa-solid fa-arrow-down-short-wide"></i></button>
                             </div>
+                            <button class="cfm-multisel-toggle cfm-multisel-toggle-worldinfo" title="多选模式"><i class="fa-solid fa-list-check"></i></button>
                         </div>
                         <div class="cfm-right-list" id="cfm-worldinfo-right-list">
                             <div class="cfm-right-empty">← 点击左侧文件夹查看内容</div>
@@ -1908,6 +2060,11 @@ jQuery(async () => {
       currentResourceType = tab;
       popup.find(".cfm-tab").removeClass("cfm-tab-active");
       $(this).addClass("cfm-tab-active");
+      // 切换标签时清空多选状态并关闭多选模式
+      cfmMultiSelectMode = false;
+      clearMultiSelect();
+      cfmMultiSelectRangeMode = false;
+      $(".cfm-multisel-toggle").removeClass("cfm-multisel-active");
       // 切换视图
       popup.find("#cfm-chars-view").toggle(tab === "chars");
       popup.find("#cfm-presets-view").toggle(tab === "presets");
@@ -2386,10 +2543,32 @@ jQuery(async () => {
       }, 0);
     });
 
+    // 多选模式切换
+    popup.find(".cfm-multisel-toggle").on("click touchend", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      cfmMultiSelectMode = !cfmMultiSelectMode;
+      clearMultiSelect();
+      cfmMultiSelectRangeMode = false;
+      // 更新所有多选按钮的视觉状态
+      $(".cfm-multisel-toggle").toggleClass(
+        "cfm-multisel-active",
+        cfmMultiSelectMode,
+      );
+      // 重新渲染当前视图
+      if (currentResourceType === "chars") renderRightPane();
+      else if (currentResourceType === "presets") renderPresetsView();
+      else renderWorldInfoView();
+    });
+
     // 重置排序状态
     sortDirty = false;
     sortSnapshot = null;
     rightCharSortMode = null;
+    // 重置多选状态
+    cfmMultiSelectMode = false;
+    clearMultiSelect();
+    cfmMultiSelectRangeMode = false;
 
     renderLeftTree();
 
@@ -2398,7 +2577,18 @@ jQuery(async () => {
 
     // 全局搜索框事件绑定
     popup.find("#cfm-global-search").on("input", function () {
+      const hasText = $(this).val().trim().length > 0;
+      $(this)
+        .closest(".cfm-search-input-wrapper")
+        .toggleClass("cfm-has-text", hasText);
       executeGlobalSearch();
+    });
+    popup.find("#cfm-global-search-clear").on("click touchend", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      $("#cfm-global-search").val("").focus();
+      $(this).closest(".cfm-search-input-wrapper").removeClass("cfm-has-text");
+      renderRightPane();
     });
     popup.find("#cfm-search-scope").on("change", function () {
       executeGlobalSearch();
@@ -2414,7 +2604,18 @@ jQuery(async () => {
 
     // 预设搜索框事件绑定
     popup.find("#cfm-preset-global-search").on("input", function () {
+      const hasText = $(this).val().trim().length > 0;
+      $(this)
+        .closest(".cfm-search-input-wrapper")
+        .toggleClass("cfm-has-text", hasText);
       executePresetSearch();
+    });
+    popup.find("#cfm-preset-search-clear").on("click touchend", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      $("#cfm-preset-global-search").val("").focus();
+      $(this).closest(".cfm-search-input-wrapper").removeClass("cfm-has-text");
+      renderPresetsView();
     });
     popup.find("#cfm-preset-search-scope").on("change", function () {
       executePresetSearch();
@@ -2430,8 +2631,23 @@ jQuery(async () => {
 
     // 世界书搜索框事件绑定
     popup.find("#cfm-worldinfo-global-search").on("input", function () {
+      const hasText = $(this).val().trim().length > 0;
+      $(this)
+        .closest(".cfm-search-input-wrapper")
+        .toggleClass("cfm-has-text", hasText);
       executeWorldInfoSearch();
     });
+    popup
+      .find("#cfm-worldinfo-search-clear")
+      .on("click touchend", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        $("#cfm-worldinfo-global-search").val("").focus();
+        $(this)
+          .closest(".cfm-search-input-wrapper")
+          .removeClass("cfm-has-text");
+        renderWorldInfoView();
+      });
     popup.find("#cfm-worldinfo-search-scope").on("change", function () {
       executeWorldInfoSearch();
     });
@@ -2565,6 +2781,31 @@ jQuery(async () => {
         seen.add(char.avatar);
         appendCharRow(list, char, true);
       }
+
+      // 多选工具栏（搜索模式下也可用）
+      if (cfmMultiSelectMode) {
+        const visible = getVisibleResourceIds();
+        const allSel = visible.length > 0 && visible.every(id => cfmMultiSelected.has(id));
+        const toolbar = $(`
+          <div class="cfm-multisel-toolbar">
+            <button class="cfm-btn cfm-btn-sm cfm-multisel-selectall"><i class="fa-solid fa-${allSel ? "square-minus" : "square-check"}"></i> ${allSel ? "全不选" : "全选"}</button>
+            <button class="cfm-btn cfm-btn-sm cfm-multisel-range ${cfmMultiSelectRangeMode ? "cfm-range-active" : ""}"><i class="fa-solid fa-arrow-down-short-wide"></i> 框选${cfmMultiSelectRangeMode ? "(开)" : ""}</button>
+            <span class="cfm-multisel-count">${cfmMultiSelected.size > 0 ? `已选 ${cfmMultiSelected.size} 项` : ""}</span>
+          </div>
+        `);
+        toolbar.find(".cfm-multisel-selectall").on("click touchend", (e) => {
+          e.preventDefault(); e.stopPropagation();
+          selectAllVisible();
+          executeGlobalSearch();
+        });
+        toolbar.find(".cfm-multisel-range").on("click touchend", (e) => {
+          e.preventDefault(); e.stopPropagation();
+          cfmMultiSelectRangeMode = !cfmMultiSelectRangeMode;
+          if (cfmMultiSelectRangeMode) cfmMultiSelectLastClicked = null;
+          executeGlobalSearch();
+        });
+        list.prepend(toolbar);
+      }
     }
   }
 
@@ -2678,6 +2919,10 @@ jQuery(async () => {
       for (const p of matched) {
         const isActive = p.value === currentVal;
         const fav = isResFavorite("presets", p.name);
+        const isMSel = cfmMultiSelectMode && cfmMultiSelected.has(p.name);
+        const msCheckHtml = cfmMultiSelectMode
+          ? `<div class="cfm-multisel-checkbox ${isMSel ? "cfm-multisel-checked" : ""}"><i class="fa-${isMSel ? "solid" : "regular"} fa-square${isMSel ? "-check" : ""}"></i></div>`
+          : "";
         const pFolderPath = (() => {
           const grp = groups[p.name];
           if (grp && getResFolderTree("presets")[grp])
@@ -2687,7 +2932,8 @@ jQuery(async () => {
           return null;
         })();
         const row = $(`
-          <div class="cfm-row cfm-row-char ${isActive ? "cfm-rv-item-active" : ""}">
+          <div class="cfm-row cfm-row-char ${isActive ? "cfm-rv-item-active" : ""} ${isMSel ? "cfm-multisel-row-selected" : ""}" data-res-id="${escapeHtml(p.name)}">
+            ${msCheckHtml}
             <div class="cfm-row-icon"><i class="fa-solid fa-file-lines" style="font-size:20px;color:#8b9dfc;"></i></div>
             <div class="cfm-row-name">${escapeHtml(p.name)}${pFolderPath ? `<div class="cfm-row-folder-path">${escapeHtml(pFolderPath)}</div>` : ""}</div>
             <div class="cfm-row-star ${fav ? "cfm-star-active" : ""}" title="${fav ? "取消收藏" : "添加收藏"}"><i class="fa-${fav ? "solid" : "regular"} fa-star"></i></div>
@@ -2707,6 +2953,11 @@ jQuery(async () => {
         });
         row.on("click", (e) => {
           if ($(e.target).closest(".cfm-row-star").length) return;
+          if (cfmMultiSelectMode) {
+            toggleMultiSelectItem(p.name, e.shiftKey);
+            executePresetSearch();
+            return;
+          }
           applyPreset(p.value);
           rightList
             .find(".cfm-rv-item-active")
@@ -2714,7 +2965,43 @@ jQuery(async () => {
           row.addClass("cfm-rv-item-active");
           toastr.success(`已应用预设「${p.name}」`);
         });
+        // 拖拽支持（搜索模式下也可拖拽）
+        row.attr("draggable", "true");
+        row.on("dragstart", (e) => {
+          const singleData = { type: "preset", name: p.name, value: p.value };
+          const dragData = getMultiDragData(singleData);
+          e.originalEvent.dataTransfer.setData("text/plain", JSON.stringify(dragData));
+        });
+        touchDragMgr.bind(row, () => {
+          const singleData = { type: "preset", name: p.name, value: p.value };
+          return getMultiDragData(singleData);
+        });
         rightList.append(row);
+      }
+
+      // 多选工具栏（搜索模式下也可用）
+      if (cfmMultiSelectMode) {
+        const visible = getVisibleResourceIds();
+        const allSel = visible.length > 0 && visible.every(id => cfmMultiSelected.has(id));
+        const toolbar = $(`
+          <div class="cfm-multisel-toolbar">
+            <button class="cfm-btn cfm-btn-sm cfm-multisel-selectall"><i class="fa-solid fa-${allSel ? "square-minus" : "square-check"}"></i> ${allSel ? "全不选" : "全选"}</button>
+            <button class="cfm-btn cfm-btn-sm cfm-multisel-range ${cfmMultiSelectRangeMode ? "cfm-range-active" : ""}"><i class="fa-solid fa-arrow-down-short-wide"></i> 框选${cfmMultiSelectRangeMode ? "(开)" : ""}</button>
+            <span class="cfm-multisel-count">${cfmMultiSelected.size > 0 ? `已选 ${cfmMultiSelected.size} 项` : ""}</span>
+          </div>
+        `);
+        toolbar.find(".cfm-multisel-selectall").on("click touchend", (e) => {
+          e.preventDefault(); e.stopPropagation();
+          selectAllVisible();
+          executePresetSearch();
+        });
+        toolbar.find(".cfm-multisel-range").on("click touchend", (e) => {
+          e.preventDefault(); e.stopPropagation();
+          cfmMultiSelectRangeMode = !cfmMultiSelectRangeMode;
+          if (cfmMultiSelectRangeMode) cfmMultiSelectLastClicked = null;
+          executePresetSearch();
+        });
+        rightList.prepend(toolbar);
       }
     }
   }
@@ -2824,6 +3111,10 @@ jQuery(async () => {
         }
         for (const n of matched) {
           const fav = isResFavorite("worldinfo", n);
+          const isMSel = cfmMultiSelectMode && cfmMultiSelected.has(n);
+          const msCheckHtml = cfmMultiSelectMode
+            ? `<div class="cfm-multisel-checkbox ${isMSel ? "cfm-multisel-checked" : ""}"><i class="fa-${isMSel ? "solid" : "regular"} fa-square${isMSel ? "-check" : ""}"></i></div>`
+            : "";
           const wFolderPath = (() => {
             const grp = groups[n];
             if (grp && getResFolderTree("worldinfo")[grp])
@@ -2833,7 +3124,8 @@ jQuery(async () => {
             return null;
           })();
           const row = $(`
-            <div class="cfm-row cfm-row-char">
+            <div class="cfm-row cfm-row-char ${isMSel ? "cfm-multisel-row-selected" : ""}" data-res-id="${escapeHtml(n)}">
+              ${msCheckHtml}
               <div class="cfm-row-icon"><i class="fa-solid fa-book" style="font-size:20px;color:#a6e3a1;"></i></div>
               <div class="cfm-row-name">${escapeHtml(n)}${wFolderPath ? `<div class="cfm-row-folder-path">${escapeHtml(wFolderPath)}</div>` : ""}</div>
               <div class="cfm-row-star ${fav ? "cfm-star-active" : ""}" title="${fav ? "取消收藏" : "添加收藏"}"><i class="fa-${fav ? "solid" : "regular"} fa-star"></i></div>
@@ -2853,9 +3145,50 @@ jQuery(async () => {
           });
           row.on("click", (e) => {
             if ($(e.target).closest(".cfm-row-star").length) return;
+            if (cfmMultiSelectMode) {
+              toggleMultiSelectItem(n, e.shiftKey);
+              executeWorldInfoSearch();
+              return;
+            }
             openWorldInfoEditor(n);
           });
+          // 拖拽支持（搜索模式下也可拖拽）
+          row.attr("draggable", "true");
+          row.on("dragstart", (e) => {
+            const singleData = { type: "worldinfo", name: n };
+            const dragData = getMultiDragData(singleData);
+            e.originalEvent.dataTransfer.setData("text/plain", JSON.stringify(dragData));
+          });
+          touchDragMgr.bind(row, () => {
+            const singleData = { type: "worldinfo", name: n };
+            return getMultiDragData(singleData);
+          });
           rightList.append(row);
+        }
+
+        // 多选工具栏（搜索模式下也可用）
+        if (cfmMultiSelectMode) {
+          const visible = getVisibleResourceIds();
+          const allSel = visible.length > 0 && visible.every(id => cfmMultiSelected.has(id));
+          const toolbar = $(`
+            <div class="cfm-multisel-toolbar">
+              <button class="cfm-btn cfm-btn-sm cfm-multisel-selectall"><i class="fa-solid fa-${allSel ? "square-minus" : "square-check"}"></i> ${allSel ? "全不选" : "全选"}</button>
+              <button class="cfm-btn cfm-btn-sm cfm-multisel-range ${cfmMultiSelectRangeMode ? "cfm-range-active" : ""}"><i class="fa-solid fa-arrow-down-short-wide"></i> 框选${cfmMultiSelectRangeMode ? "(开)" : ""}</button>
+              <span class="cfm-multisel-count">${cfmMultiSelected.size > 0 ? `已选 ${cfmMultiSelected.size} 项` : ""}</span>
+            </div>
+          `);
+          toolbar.find(".cfm-multisel-selectall").on("click touchend", (e) => {
+            e.preventDefault(); e.stopPropagation();
+            selectAllVisible();
+            executeWorldInfoSearch();
+          });
+          toolbar.find(".cfm-multisel-range").on("click touchend", (e) => {
+            e.preventDefault(); e.stopPropagation();
+            cfmMultiSelectRangeMode = !cfmMultiSelectRangeMode;
+            if (cfmMultiSelectRangeMode) cfmMultiSelectLastClicked = null;
+            executeWorldInfoSearch();
+          });
+          rightList.prepend(toolbar);
         }
       });
     }
@@ -3007,11 +3340,14 @@ jQuery(async () => {
     node.on("click", (e) => {
       e.preventDefault();
       selectedTreeNode = folderId;
-      // 自动展开
-      if (hasChildren && !expandedNodes.has(folderId))
-        expandedNodes.add(folderId);
       refreshSelection();
-      renderRightPane();
+      // 如果搜索栏有内容，保持搜索模式
+      const searchQuery = $("#cfm-global-search").val();
+      if (searchQuery && searchQuery.trim()) {
+        executeGlobalSearch();
+      } else {
+        renderRightPane();
+      }
     });
 
     // 移动端触摸拖拽
@@ -3146,8 +3482,21 @@ jQuery(async () => {
         renderLeftTree();
         renderRightPane();
       } else if (data.type === "char" && data.avatar) {
-        // 将角色拖入文件夹（无论哪个区域都是加入该文件夹）
-        handleCharDropToFolder(data.avatar, folderId, data.name || data.avatar);
+        // 多选批量移动
+        const avatars =
+          data.multiSelect && data.selectedIds
+            ? data.selectedIds
+            : [data.avatar];
+        const count = avatars.length;
+        avatars.forEach((av) => {
+          const ch = getCharacters().find((c) => c.avatar === av);
+          handleCharDropToFolder(av, folderId, ch?.name || av);
+        });
+        if (count > 1)
+          toastr.success(
+            `已将 ${count} 个角色移动到「${getTagName(folderId)}」`,
+          );
+        if (data.multiSelect) clearMultiSelect();
         renderLeftTree();
         renderRightPane();
       }
@@ -3194,9 +3543,15 @@ jQuery(async () => {
     const list = $("#cfm-right-list");
     const pathEl = $("#cfm-rh-path");
     const countEl = $("#cfm-rh-count");
+
+    // 如果搜索栏有内容，保持搜索模式（必须在 list.empty() 之前检查）
+    const searchQuery = $("#cfm-global-search").val();
+    if (searchQuery && searchQuery.trim()) {
+      executeGlobalSearch();
+      return;
+    }
+
     list.empty();
-    // 切换文件夹时清空搜索框
-    $("#cfm-char-search").val("");
 
     if (!selectedTreeNode) {
       pathEl.text("选择左侧文件夹查看内容");
@@ -3217,6 +3572,30 @@ jQuery(async () => {
         return;
       }
       for (const char of chars) appendCharRow(list, char);
+      // 多选工具栏（未归类视图）
+      if (cfmMultiSelectMode) {
+        const visible = getVisibleResourceIds();
+        const allSel = visible.length > 0 && visible.every(id => cfmMultiSelected.has(id));
+        const toolbar = $(`
+          <div class="cfm-multisel-toolbar">
+            <button class="cfm-btn cfm-btn-sm cfm-multisel-selectall"><i class="fa-solid fa-${allSel ? "square-minus" : "square-check"}"></i> ${allSel ? "全不选" : "全选"}</button>
+            <button class="cfm-btn cfm-btn-sm cfm-multisel-range ${cfmMultiSelectRangeMode ? "cfm-range-active" : ""}"><i class="fa-solid fa-arrow-down-short-wide"></i> 框选${cfmMultiSelectRangeMode ? "(开)" : ""}</button>
+            <span class="cfm-multisel-count">${cfmMultiSelected.size > 0 ? `已选 ${cfmMultiSelected.size} 项` : ""}</span>
+          </div>
+        `);
+        toolbar.find(".cfm-multisel-selectall").on("click touchend", (e) => {
+          e.preventDefault(); e.stopPropagation();
+          selectAllVisible();
+          renderRightPane();
+        });
+        toolbar.find(".cfm-multisel-range").on("click touchend", (e) => {
+          e.preventDefault(); e.stopPropagation();
+          cfmMultiSelectRangeMode = !cfmMultiSelectRangeMode;
+          if (cfmMultiSelectRangeMode) cfmMultiSelectLastClicked = null;
+          renderRightPane();
+        });
+        list.prepend(toolbar);
+      }
       return;
     }
 
@@ -3234,6 +3613,30 @@ jQuery(async () => {
         return;
       }
       for (const char of chars) appendCharRow(list, char, true);
+      // 多选工具栏（收藏视图）
+      if (cfmMultiSelectMode) {
+        const visible = getVisibleResourceIds();
+        const allSel = visible.length > 0 && visible.every(id => cfmMultiSelected.has(id));
+        const toolbar = $(`
+          <div class="cfm-multisel-toolbar">
+            <button class="cfm-btn cfm-btn-sm cfm-multisel-selectall"><i class="fa-solid fa-${allSel ? "square-minus" : "square-check"}"></i> ${allSel ? "全不选" : "全选"}</button>
+            <button class="cfm-btn cfm-btn-sm cfm-multisel-range ${cfmMultiSelectRangeMode ? "cfm-range-active" : ""}"><i class="fa-solid fa-arrow-down-short-wide"></i> 框选${cfmMultiSelectRangeMode ? "(开)" : ""}</button>
+            <span class="cfm-multisel-count">${cfmMultiSelected.size > 0 ? `已选 ${cfmMultiSelected.size} 项` : ""}</span>
+          </div>
+        `);
+        toolbar.find(".cfm-multisel-selectall").on("click touchend", (e) => {
+          e.preventDefault(); e.stopPropagation();
+          selectAllVisible();
+          renderRightPane();
+        });
+        toolbar.find(".cfm-multisel-range").on("click touchend", (e) => {
+          e.preventDefault(); e.stopPropagation();
+          cfmMultiSelectRangeMode = !cfmMultiSelectRangeMode;
+          if (cfmMultiSelectRangeMode) cfmMultiSelectLastClicked = null;
+          renderRightPane();
+        });
+        list.prepend(toolbar);
+      }
       return;
     }
 
@@ -3402,6 +3805,34 @@ jQuery(async () => {
     // 角色卡行
     for (const char of chars) appendCharRow(list, char);
 
+    // 多选工具栏（在行渲染后添加，确保getVisibleResourceIds可用）
+    if (cfmMultiSelectMode) {
+      const visible = getVisibleResourceIds();
+      const allSel =
+        visible.length > 0 && visible.every((id) => cfmMultiSelected.has(id));
+      const toolbar = $(`
+        <div class="cfm-multisel-toolbar">
+          <button class="cfm-btn cfm-btn-sm cfm-multisel-selectall" title="全选/全不选"><i class="fa-solid fa-${allSel ? "square-minus" : "square-check"}"></i> ${allSel ? "全不选" : "全选"}</button>
+          <button class="cfm-btn cfm-btn-sm cfm-multisel-range ${cfmMultiSelectRangeMode ? "cfm-range-active" : ""}" title="框选模式"><i class="fa-solid fa-arrow-down-short-wide"></i> 框选${cfmMultiSelectRangeMode ? "(开)" : ""}</button>
+          <span class="cfm-multisel-count">${cfmMultiSelected.size > 0 ? `已选 ${cfmMultiSelected.size} 项` : ""}</span>
+        </div>
+      `);
+      toolbar.find(".cfm-multisel-selectall").on("click touchend", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        selectAllVisible();
+        renderRightPane();
+      });
+      toolbar.find(".cfm-multisel-range").on("click touchend", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        cfmMultiSelectRangeMode = !cfmMultiSelectRangeMode;
+        if (cfmMultiSelectRangeMode) cfmMultiSelectLastClicked = null;
+        renderRightPane();
+      });
+      list.prepend(toolbar);
+    }
+
     // 右侧列表本身也是拖放目标（拖到空白区域 = 放入当前文件夹）
     list.on("dragover", (e) => {
       // 仅在拖到空白区域时触发（不在子行上）
@@ -3450,6 +3881,7 @@ jQuery(async () => {
   function appendCharRow(container, char, showFolderPath) {
     const thumbUrl = getThumbnailUrl("avatar", char.avatar);
     const fav = isFavorite(char.avatar);
+    const isSelected = cfmMultiSelectMode && cfmMultiSelected.has(char.avatar);
     const folderPathHtml = showFolderPath
       ? (() => {
           const p = findCharFolderPath(char.avatar);
@@ -3458,8 +3890,12 @@ jQuery(async () => {
             : "";
         })()
       : "";
+    const checkboxHtml = cfmMultiSelectMode
+      ? `<div class="cfm-multisel-checkbox ${isSelected ? "cfm-multisel-checked" : ""}"><i class="fa-${isSelected ? "solid" : "regular"} fa-square${isSelected ? "-check" : ""}"></i></div>`
+      : "";
     const row = $(`
-            <div class="cfm-row cfm-row-char" data-avatar="${escapeHtml(char.avatar)}" draggable="true">
+            <div class="cfm-row cfm-row-char ${isSelected ? "cfm-multisel-row-selected" : ""}" data-avatar="${escapeHtml(char.avatar)}" data-res-id="${escapeHtml(char.avatar)}" draggable="true">
+                ${checkboxHtml}
                 <div class="cfm-row-icon"><img src="${thumbUrl}" alt="" loading="lazy" onerror="this.src='/img/ai4.png'"></div>
                 <div class="cfm-row-name">${escapeHtml(char.name)}${folderPathHtml}</div>
                 <div class="cfm-row-star ${fav ? "cfm-star-active" : ""}" title="${fav ? "取消收藏" : "添加收藏"}"><i class="fa-${fav ? "solid" : "regular"} fa-star"></i></div>
@@ -3484,9 +3920,16 @@ jQuery(async () => {
         renderRightPane();
       }
     });
-    // 点击打开角色聊天
+    // 点击行为：多选模式下切换选中，否则打开角色聊天
     row.on("click", (e) => {
       e.preventDefault();
+      if ($(e.target).closest(".cfm-row-star").length) return;
+      if (cfmMultiSelectMode) {
+        toggleMultiSelectItem(char.avatar, e.shiftKey);
+        // 更新视觉状态
+        renderRightPane();
+        return;
+      }
       closeMainPopup();
       const characters = getCharacters();
       const idx = characters.findIndex((c) => c.avatar === char.avatar);
@@ -3496,21 +3939,26 @@ jQuery(async () => {
       }
     });
     // 移动端触摸拖拽
-    touchDragMgr.bind(row, () => ({
-      type: "char",
-      avatar: char.avatar,
-      name: char.name,
-    }));
+    touchDragMgr.bind(row, () => {
+      const singleData = {
+        type: "char",
+        avatar: char.avatar,
+        name: char.name,
+      };
+      return getMultiDragData(singleData);
+    });
 
     // PC端拖拽
     row.on("dragstart", (e) => {
+      const singleData = {
+        type: "char",
+        avatar: char.avatar,
+        name: char.name,
+      };
+      const dragData = getMultiDragData(singleData);
       e.originalEvent.dataTransfer.setData(
         "text/plain",
-        JSON.stringify({
-          type: "char",
-          avatar: char.avatar,
-          name: char.name,
-        }),
+        JSON.stringify(dragData),
       );
       e.originalEvent.dataTransfer.effectAllowed = "move";
       row.addClass("cfm-dragging");
@@ -5023,8 +5471,6 @@ jQuery(async () => {
       node.on("click", (e) => {
         e.preventDefault();
         selectedPresetFolder = folderId;
-        if (hasChildren && !presetExpandedNodes.has(folderId))
-          presetExpandedNodes.add(folderId);
         renderPresetsView();
       });
 
@@ -5215,7 +5661,15 @@ jQuery(async () => {
     }
 
     // 右侧渲染
+    // 如果搜索栏有内容，保持搜索模式（必须在 rightList.empty() 之前检查）
+    const presetSearchQuery = $("#cfm-preset-global-search").val();
+    if (presetSearchQuery && presetSearchQuery.trim()) {
+      executePresetSearch();
+      return;
+    }
+
     rightList.empty();
+
     const pm = getContext().getPresetManager();
     const currentVal = pm && pm.select ? pm.select.val() : null;
 
@@ -5411,12 +5865,17 @@ jQuery(async () => {
         }));
         rightList.append(row);
       }
-      // 预设行（带星标）
+      // 预设行（带星标 + 多选支持）
       for (const p of displayItems) {
         const isActive = p.value === currentVal;
         const fav = isResFavorite("presets", p.name);
+        const isMSel = cfmMultiSelectMode && cfmMultiSelected.has(p.name);
+        const msCheckHtml = cfmMultiSelectMode
+          ? `<div class="cfm-multisel-checkbox ${isMSel ? "cfm-multisel-checked" : ""}"><i class="fa-${isMSel ? "solid" : "regular"} fa-square${isMSel ? "-check" : ""}"></i></div>`
+          : "";
         const row = $(`
-          <div class="cfm-row cfm-row-char ${isActive ? "cfm-rv-item-active" : ""}" data-value="${escapeHtml(p.value)}" draggable="true">
+          <div class="cfm-row cfm-row-char ${isActive ? "cfm-rv-item-active" : ""} ${isMSel ? "cfm-multisel-row-selected" : ""}" data-value="${escapeHtml(p.value)}" data-res-id="${escapeHtml(p.name)}" draggable="true">
+            ${msCheckHtml}
             <div class="cfm-row-icon"><i class="fa-solid fa-file-lines" style="font-size:20px;color:#8b9dfc;"></i></div>
             <div class="cfm-row-name">${escapeHtml(p.name)}</div>
             <div class="cfm-row-star ${fav ? "cfm-star-active" : ""}" title="${fav ? "取消收藏" : "添加收藏"}"><i class="fa-${fav ? "solid" : "regular"} fa-star"></i></div>
@@ -5446,6 +5905,11 @@ jQuery(async () => {
         });
         row.on("click", (e) => {
           if ($(e.target).closest(".cfm-row-star").length) return;
+          if (cfmMultiSelectMode) {
+            toggleMultiSelectItem(p.name, e.shiftKey);
+            renderPresetsView();
+            return;
+          }
           applyPreset(p.value);
           rightList
             .find(".cfm-rv-item-active")
@@ -5454,17 +5918,43 @@ jQuery(async () => {
           toastr.success(`已应用预设「${p.name}」`);
         });
         row.on("dragstart", (e) => {
+          const singleData = { type: "preset", name: p.name, value: p.value };
+          const dragData = getMultiDragData(singleData);
           e.originalEvent.dataTransfer.setData(
             "text/plain",
-            JSON.stringify({ type: "preset", name: p.name, value: p.value }),
+            JSON.stringify(dragData),
           );
         });
-        touchDragMgr.bind(row, () => ({
-          type: "preset",
-          name: p.name,
-          value: p.value,
-        }));
+        touchDragMgr.bind(row, () => {
+          const singleData = { type: "preset", name: p.name, value: p.value };
+          return getMultiDragData(singleData);
+        });
         rightList.append(row);
+      }
+
+      // 多选工具栏（预设）
+      if (cfmMultiSelectMode && selectedPresetFolder) {
+        const visible = getVisibleResourceIds();
+        const allSel = visible.length > 0 && visible.every(id => cfmMultiSelected.has(id));
+        const toolbar = $(`
+          <div class="cfm-multisel-toolbar">
+            <button class="cfm-btn cfm-btn-sm cfm-multisel-selectall"><i class="fa-solid fa-${allSel ? "square-minus" : "square-check"}"></i> ${allSel ? "全不选" : "全选"}</button>
+            <button class="cfm-btn cfm-btn-sm cfm-multisel-range ${cfmMultiSelectRangeMode ? "cfm-range-active" : ""}"><i class="fa-solid fa-arrow-down-short-wide"></i> 框选${cfmMultiSelectRangeMode ? "(开)" : ""}</button>
+            <span class="cfm-multisel-count">${cfmMultiSelected.size > 0 ? `已选 ${cfmMultiSelected.size} 项` : ""}</span>
+          </div>
+        `);
+        toolbar.find(".cfm-multisel-selectall").on("click touchend", (e) => {
+          e.preventDefault(); e.stopPropagation();
+          selectAllVisible();
+          renderPresetsView();
+        });
+        toolbar.find(".cfm-multisel-range").on("click touchend", (e) => {
+          e.preventDefault(); e.stopPropagation();
+          cfmMultiSelectRangeMode = !cfmMultiSelectRangeMode;
+          if (cfmMultiSelectRangeMode) cfmMultiSelectLastClicked = null;
+          renderPresetsView();
+        });
+        rightList.prepend(toolbar);
       }
     }
 
@@ -5591,8 +6081,6 @@ jQuery(async () => {
       node.on("click", (e) => {
         e.preventDefault();
         selectedWorldInfoFolder = folderId;
-        if (hasChildren && !worldInfoExpandedNodes.has(folderId))
-          worldInfoExpandedNodes.add(folderId);
         renderWorldInfoView();
       });
 
@@ -5799,7 +6287,15 @@ jQuery(async () => {
     }
 
     // 右侧渲染
+    // 如果搜索栏有内容，保持搜索模式（必须在 rightList.empty() 之前检查）
+    const wiSearchQuery = $("#cfm-worldinfo-global-search").val();
+    if (wiSearchQuery && wiSearchQuery.trim()) {
+      executeWorldInfoSearch();
+      return;
+    }
+
     rightList.empty();
+
     let displayItems = [];
     let displayTitle = "选择左侧文件夹查看内容";
     let childFolders = [];
@@ -6000,11 +6496,16 @@ jQuery(async () => {
         }));
         rightList.append(row);
       }
-      // 世界书行（带星标）
+      // 世界书行（带星标 + 多选支持）
       for (const n of displayItems) {
         const fav = isResFavorite("worldinfo", n);
+        const isMSel = cfmMultiSelectMode && cfmMultiSelected.has(n);
+        const msCheckHtml = cfmMultiSelectMode
+          ? `<div class="cfm-multisel-checkbox ${isMSel ? "cfm-multisel-checked" : ""}"><i class="fa-${isMSel ? "solid" : "regular"} fa-square${isMSel ? "-check" : ""}"></i></div>`
+          : "";
         const row = $(`
-          <div class="cfm-row cfm-row-char" draggable="true">
+          <div class="cfm-row cfm-row-char ${isMSel ? "cfm-multisel-row-selected" : ""}" data-res-id="${escapeHtml(n)}" draggable="true">
+            ${msCheckHtml}
             <div class="cfm-row-icon"><i class="fa-solid fa-book" style="font-size:20px;color:#a6e3a1;"></i></div>
             <div class="cfm-row-name">${escapeHtml(n)}</div>
             <div class="cfm-row-star ${fav ? "cfm-star-active" : ""}" title="${fav ? "取消收藏" : "添加收藏"}"><i class="fa-${fav ? "solid" : "regular"} fa-star"></i></div>
@@ -6034,19 +6535,51 @@ jQuery(async () => {
         });
         row.on("click", (e) => {
           if ($(e.target).closest(".cfm-row-star").length) return;
+          if (cfmMultiSelectMode) {
+            toggleMultiSelectItem(n, e.shiftKey);
+            renderWorldInfoView();
+            return;
+          }
           openWorldInfoEditor(n);
         });
         row.on("dragstart", (e) => {
+          const singleData = { type: "worldinfo", name: n };
+          const dragData = getMultiDragData(singleData);
           e.originalEvent.dataTransfer.setData(
             "text/plain",
-            JSON.stringify({ type: "worldinfo", name: n }),
+            JSON.stringify(dragData),
           );
         });
-        touchDragMgr.bind(row, () => ({
-          type: "worldinfo",
-          name: n,
-        }));
+        touchDragMgr.bind(row, () => {
+          const singleData = { type: "worldinfo", name: n };
+          return getMultiDragData(singleData);
+        });
         rightList.append(row);
+      }
+
+      // 多选工具栏（世界书）
+      if (cfmMultiSelectMode && selectedWorldInfoFolder) {
+        const visible = getVisibleResourceIds();
+        const allSel = visible.length > 0 && visible.every(id => cfmMultiSelected.has(id));
+        const toolbar = $(`
+          <div class="cfm-multisel-toolbar">
+            <button class="cfm-btn cfm-btn-sm cfm-multisel-selectall"><i class="fa-solid fa-${allSel ? "square-minus" : "square-check"}"></i> ${allSel ? "全不选" : "全选"}</button>
+            <button class="cfm-btn cfm-btn-sm cfm-multisel-range ${cfmMultiSelectRangeMode ? "cfm-range-active" : ""}"><i class="fa-solid fa-arrow-down-short-wide"></i> 框选${cfmMultiSelectRangeMode ? "(开)" : ""}</button>
+            <span class="cfm-multisel-count">${cfmMultiSelected.size > 0 ? `已选 ${cfmMultiSelected.size} 项` : ""}</span>
+          </div>
+        `);
+        toolbar.find(".cfm-multisel-selectall").on("click touchend", (e) => {
+          e.preventDefault(); e.stopPropagation();
+          selectAllVisible();
+          renderWorldInfoView();
+        });
+        toolbar.find(".cfm-multisel-range").on("click touchend", (e) => {
+          e.preventDefault(); e.stopPropagation();
+          cfmMultiSelectRangeMode = !cfmMultiSelectRangeMode;
+          if (cfmMultiSelectRangeMode) cfmMultiSelectLastClicked = null;
+          renderWorldInfoView();
+        });
+        rightList.prepend(toolbar);
       }
     }
 
