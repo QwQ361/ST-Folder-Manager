@@ -312,6 +312,9 @@ jQuery(async () => {
       extension_settings[extensionName].buttonMode = "topbar";
     if (extension_settings[extensionName].firstInitDone === undefined)
       extension_settings[extensionName].firstInitDone = false;
+    // 被用户主动删除（但保留标签）的文件夹ID列表，防止自动重新导入
+    if (!Array.isArray(extension_settings[extensionName].excludedTagIds))
+      extension_settings[extensionName].excludedTagIds = [];
   }
   ensureSettings();
 
@@ -345,9 +348,12 @@ jQuery(async () => {
     if (extension_settings[extensionName].firstInitDone) return;
     const tags = getTagList();
     const existingIds = Object.keys(extension_settings[extensionName].folders);
+    const excludedSet = new Set(
+      extension_settings[extensionName].excludedTagIds || [],
+    );
     let imported = 0;
     for (const tag of tags) {
-      if (!existingIds.includes(tag.id)) {
+      if (!existingIds.includes(tag.id) && !excludedSet.has(tag.id)) {
         extension_settings[extensionName].folders[tag.id] = {
           parentId: null,
         };
@@ -370,9 +376,12 @@ jQuery(async () => {
   function detectAndImportNewTags() {
     const tags = getTagList();
     const existingIds = Object.keys(config.folders);
+    const excludedSet = new Set(
+      extension_settings[extensionName].excludedTagIds || [],
+    );
     const newIds = [];
     for (const tag of tags) {
-      if (!existingIds.includes(tag.id)) {
+      if (!existingIds.includes(tag.id) && !excludedSet.has(tag.id)) {
         config.folders[tag.id] = { parentId: null };
         newIds.push(tag.id);
       }
@@ -405,6 +414,7 @@ jQuery(async () => {
   function oneClickImportAllTags() {
     const tags = getTagList();
     const existingIds = getFolderTagIds();
+    const excluded = extension_settings[extensionName].excludedTagIds || [];
     let imported = 0,
       skipped = 0;
     for (const tag of tags) {
@@ -413,9 +423,15 @@ jQuery(async () => {
         continue;
       }
       config.folders[tag.id] = { parentId: null };
+      // 从排除列表中移除（用户主动一键导入意味着重新纳入管理）
+      const exIdx = excluded.indexOf(tag.id);
+      if (exIdx >= 0) excluded.splice(exIdx, 1);
       imported++;
     }
-    if (imported > 0) saveConfig(config);
+    if (imported > 0) {
+      saveConfig(config);
+      getContext().saveSettingsDebounced();
+    }
     toastr.success(`已导入 ${imported} 个标签`);
     return imported;
   }
@@ -963,12 +979,12 @@ jQuery(async () => {
         } else if (targetId) {
           avatars.forEach((av) => {
             const ch = getCharacters().find((c) => c.avatar === av);
-            handleCharDropToFolder(av, targetId, ch?.name || av);
+            handleCharDropToFolder(av, targetId, ch?.name || av, count > 1);
           });
           toastr.success(
             count > 1
-              ? `已将 ${count} 个角色移动到「${getTagName(targetId)}」`
-              : `已将「${d.name || d.avatar}」移动到「${getTagName(targetId)}」`,
+              ? `已将 ${count} 个角色${cfmCopyMode ? "复制" : "移动"}到「${getTagName(targetId)}」`
+              : `已将「${d.name || d.avatar}」${cfmCopyMode ? "复制" : "移动"}到「${getTagName(targetId)}」`,
           );
           if (d.multiSelect) clearMultiSelect();
           renderLeftTree();
@@ -982,12 +998,17 @@ jQuery(async () => {
         ) {
           avatars.forEach((av) => {
             const ch = getCharacters().find((c) => c.avatar === av);
-            handleCharDropToFolder(av, selectedTreeNode, ch?.name || av);
+            handleCharDropToFolder(
+              av,
+              selectedTreeNode,
+              ch?.name || av,
+              count > 1,
+            );
           });
           toastr.success(
             count > 1
-              ? `已将 ${count} 个角色移动到「${getTagName(selectedTreeNode)}」`
-              : `已将「${d.name || d.avatar}」移动到「${getTagName(selectedTreeNode)}」`,
+              ? `已将 ${count} 个角色${cfmCopyMode ? "复制" : "移动"}到「${getTagName(selectedTreeNode)}」`
+              : `已将「${d.name || d.avatar}」${cfmCopyMode ? "复制" : "移动"}到「${getTagName(selectedTreeNode)}」`,
           );
           if (d.multiSelect) clearMultiSelect();
           renderLeftTree();
@@ -1338,13 +1359,16 @@ jQuery(async () => {
     getContext().saveSettingsDebounced();
   }
   // 处理角色拖放到文件夹（根据复制模式决定行为）
-  function handleCharDropToFolder(avatar, folderId, charName) {
+  // silent: 批量操作时为true，抑制单条toastr消息
+  function handleCharDropToFolder(avatar, folderId, charName, silent) {
     if (cfmCopyMode) {
       copyCharToFolder(avatar, folderId);
-      toastr.success(`已将「${charName}」复制到「${getTagName(folderId)}」`);
+      if (!silent)
+        toastr.success(`已将「${charName}」复制到「${getTagName(folderId)}」`);
     } else {
       moveCharToFolder(avatar, folderId);
-      toastr.success(`已将「${charName}」移动到「${getTagName(folderId)}」`);
+      if (!silent)
+        toastr.success(`已将「${charName}」移动到「${getTagName(folderId)}」`);
     }
   }
   // 自动清理多余的路径标签（只保留最深层的叶子标签）
@@ -1826,6 +1850,9 @@ jQuery(async () => {
   let cfmMultiSelectLastClicked = null; // 框选：上次点击的标识符
   let cfmMultiSelectRangeMode = false; // 框选模式开关
 
+  // PC端拖拽数据备份（解决HTML5 dataTransfer可靠性问题）
+  let _pcDragData = null;
+
   // 获取当前右栏可见的资源列表（仅资源，不含文件夹），用于框选
   function getVisibleResourceIds() {
     const list = [];
@@ -1890,6 +1917,43 @@ jQuery(async () => {
       selectedIds: Array.from(cfmMultiSelected),
       count: cfmMultiSelected.size,
     };
+  }
+
+  // PC端dragstart辅助：存储拖拽数据到全局变量并设置自定义拖拽图像
+  function pcDragStart(e, dragData) {
+    _pcDragData = dragData;
+    e.originalEvent.dataTransfer.setData(
+      "text/plain",
+      JSON.stringify(dragData),
+    );
+    e.originalEvent.dataTransfer.effectAllowed = "move";
+    // 多选时设置自定义拖拽图像
+    if (dragData.multiSelect && dragData.count > 1) {
+      const ghost = document.createElement("div");
+      ghost.className = "cfm-pc-drag-ghost";
+      ghost.textContent = `📦 共 ${dragData.count} 项`;
+      ghost.style.cssText =
+        "position:fixed;left:-9999px;top:-9999px;padding:6px 16px;border-radius:8px;background:rgba(40,40,40,0.92);color:#fff;font-size:14px;white-space:nowrap;z-index:99999;pointer-events:none;";
+      document.body.appendChild(ghost);
+      e.originalEvent.dataTransfer.setDragImage(ghost, 0, 0);
+      // 异步移除幽灵元素
+      setTimeout(() => ghost.remove(), 0);
+    }
+  }
+
+  // PC端drop辅助：优先从全局变量获取拖拽数据，回退到dataTransfer
+  function pcGetDropData(e) {
+    if (_pcDragData) return _pcDragData;
+    try {
+      return JSON.parse(e.originalEvent.dataTransfer.getData("text/plain"));
+    } catch {
+      return null;
+    }
+  }
+
+  // PC端dragend辅助：清除全局拖拽数据
+  function pcDragEnd() {
+    _pcDragData = null;
   }
 
   function showMainPopup() {
@@ -2785,7 +2849,8 @@ jQuery(async () => {
       // 多选工具栏（搜索模式下也可用）
       if (cfmMultiSelectMode) {
         const visible = getVisibleResourceIds();
-        const allSel = visible.length > 0 && visible.every(id => cfmMultiSelected.has(id));
+        const allSel =
+          visible.length > 0 && visible.every((id) => cfmMultiSelected.has(id));
         const toolbar = $(`
           <div class="cfm-multisel-toolbar">
             <button class="cfm-btn cfm-btn-sm cfm-multisel-selectall"><i class="fa-solid fa-${allSel ? "square-minus" : "square-check"}"></i> ${allSel ? "全不选" : "全选"}</button>
@@ -2794,12 +2859,14 @@ jQuery(async () => {
           </div>
         `);
         toolbar.find(".cfm-multisel-selectall").on("click touchend", (e) => {
-          e.preventDefault(); e.stopPropagation();
+          e.preventDefault();
+          e.stopPropagation();
           selectAllVisible();
           executeGlobalSearch();
         });
         toolbar.find(".cfm-multisel-range").on("click touchend", (e) => {
-          e.preventDefault(); e.stopPropagation();
+          e.preventDefault();
+          e.stopPropagation();
           cfmMultiSelectRangeMode = !cfmMultiSelectRangeMode;
           if (cfmMultiSelectRangeMode) cfmMultiSelectLastClicked = null;
           executeGlobalSearch();
@@ -2970,8 +3037,9 @@ jQuery(async () => {
         row.on("dragstart", (e) => {
           const singleData = { type: "preset", name: p.name, value: p.value };
           const dragData = getMultiDragData(singleData);
-          e.originalEvent.dataTransfer.setData("text/plain", JSON.stringify(dragData));
+          pcDragStart(e, dragData);
         });
+        row.on("dragend", () => pcDragEnd());
         touchDragMgr.bind(row, () => {
           const singleData = { type: "preset", name: p.name, value: p.value };
           return getMultiDragData(singleData);
@@ -2982,7 +3050,8 @@ jQuery(async () => {
       // 多选工具栏（搜索模式下也可用）
       if (cfmMultiSelectMode) {
         const visible = getVisibleResourceIds();
-        const allSel = visible.length > 0 && visible.every(id => cfmMultiSelected.has(id));
+        const allSel =
+          visible.length > 0 && visible.every((id) => cfmMultiSelected.has(id));
         const toolbar = $(`
           <div class="cfm-multisel-toolbar">
             <button class="cfm-btn cfm-btn-sm cfm-multisel-selectall"><i class="fa-solid fa-${allSel ? "square-minus" : "square-check"}"></i> ${allSel ? "全不选" : "全选"}</button>
@@ -2991,12 +3060,14 @@ jQuery(async () => {
           </div>
         `);
         toolbar.find(".cfm-multisel-selectall").on("click touchend", (e) => {
-          e.preventDefault(); e.stopPropagation();
+          e.preventDefault();
+          e.stopPropagation();
           selectAllVisible();
           executePresetSearch();
         });
         toolbar.find(".cfm-multisel-range").on("click touchend", (e) => {
-          e.preventDefault(); e.stopPropagation();
+          e.preventDefault();
+          e.stopPropagation();
           cfmMultiSelectRangeMode = !cfmMultiSelectRangeMode;
           if (cfmMultiSelectRangeMode) cfmMultiSelectLastClicked = null;
           executePresetSearch();
@@ -3157,8 +3228,9 @@ jQuery(async () => {
           row.on("dragstart", (e) => {
             const singleData = { type: "worldinfo", name: n };
             const dragData = getMultiDragData(singleData);
-            e.originalEvent.dataTransfer.setData("text/plain", JSON.stringify(dragData));
+            pcDragStart(e, dragData);
           });
+          row.on("dragend", () => pcDragEnd());
           touchDragMgr.bind(row, () => {
             const singleData = { type: "worldinfo", name: n };
             return getMultiDragData(singleData);
@@ -3169,7 +3241,9 @@ jQuery(async () => {
         // 多选工具栏（搜索模式下也可用）
         if (cfmMultiSelectMode) {
           const visible = getVisibleResourceIds();
-          const allSel = visible.length > 0 && visible.every(id => cfmMultiSelected.has(id));
+          const allSel =
+            visible.length > 0 &&
+            visible.every((id) => cfmMultiSelected.has(id));
           const toolbar = $(`
             <div class="cfm-multisel-toolbar">
               <button class="cfm-btn cfm-btn-sm cfm-multisel-selectall"><i class="fa-solid fa-${allSel ? "square-minus" : "square-check"}"></i> ${allSel ? "全不选" : "全选"}</button>
@@ -3178,12 +3252,14 @@ jQuery(async () => {
             </div>
           `);
           toolbar.find(".cfm-multisel-selectall").on("click touchend", (e) => {
-            e.preventDefault(); e.stopPropagation();
+            e.preventDefault();
+            e.stopPropagation();
             selectAllVisible();
             executeWorldInfoSearch();
           });
           toolbar.find(".cfm-multisel-range").on("click touchend", (e) => {
-            e.preventDefault(); e.stopPropagation();
+            e.preventDefault();
+            e.stopPropagation();
             cfmMultiSelectRangeMode = !cfmMultiSelectRangeMode;
             if (cfmMultiSelectRangeMode) cfmMultiSelectLastClicked = null;
             executeWorldInfoSearch();
@@ -3286,15 +3362,21 @@ jQuery(async () => {
     uncatNode.on("drop", (e) => {
       e.preventDefault();
       uncatNode.removeClass("cfm-drop-target");
-      let data;
-      try {
-        data = JSON.parse(e.originalEvent.dataTransfer.getData("text/plain"));
-      } catch {
-        return;
-      }
+      const data = pcGetDropData(e);
+      if (!data) return;
       if (data.type === "char" && data.avatar) {
-        removeCharFromAllFolders(data.avatar);
-        toastr.success(`已将「${data.name || data.avatar}」移出所有文件夹`);
+        const avatars =
+          data.multiSelect && data.selectedIds
+            ? data.selectedIds
+            : [data.avatar];
+        const count = avatars.length;
+        avatars.forEach((av) => removeCharFromAllFolders(av));
+        toastr.success(
+          count > 1
+            ? `已将 ${count} 个角色移出所有文件夹`
+            : `已将「${data.name || data.avatar}」移出所有文件夹`,
+        );
+        if (data.multiSelect) clearMultiSelect();
         renderLeftTree();
         renderRightPane();
       }
@@ -3359,15 +3441,12 @@ jQuery(async () => {
 
     // PC端拖拽
     node.on("dragstart", (e) => {
-      e.originalEvent.dataTransfer.setData(
-        "text/plain",
-        JSON.stringify({ type: "folder", id: folderId }),
-      );
-      e.originalEvent.dataTransfer.effectAllowed = "move";
+      pcDragStart(e, { type: "folder", id: folderId });
       node.addClass("cfm-dragging");
     });
     node.on("dragend", () => {
       node.removeClass("cfm-dragging");
+      pcDragEnd();
       $(".cfm-tnode").removeClass(
         "cfm-drop-target cfm-drop-forbidden cfm-drop-before cfm-drop-after",
       );
@@ -3395,14 +3474,7 @@ jQuery(async () => {
       node.data("dropZone", dropZone);
 
       // 对于文件夹拖放，检查循环（仅 into 模式需要检查）
-      let data = {};
-      try {
-        data = JSON.parse(
-          e.originalEvent.dataTransfer.getData("text/plain") || "{}",
-        );
-      } catch {
-        /* ignore */
-      }
+      const data = _pcDragData || {};
 
       if (data.type === "folder" && data.id) {
         if (data.id === folderId) {
@@ -3436,12 +3508,8 @@ jQuery(async () => {
       node.removeClass(
         "cfm-drop-target cfm-drop-forbidden cfm-drop-before cfm-drop-after",
       );
-      let data;
-      try {
-        data = JSON.parse(e.originalEvent.dataTransfer.getData("text/plain"));
-      } catch {
-        return;
-      }
+      const data = pcGetDropData(e);
+      if (!data) return;
 
       if (data.type === "folder" && data.id) {
         if (data.id === folderId) return;
@@ -3490,12 +3558,13 @@ jQuery(async () => {
         const count = avatars.length;
         avatars.forEach((av) => {
           const ch = getCharacters().find((c) => c.avatar === av);
-          handleCharDropToFolder(av, folderId, ch?.name || av);
+          handleCharDropToFolder(av, folderId, ch?.name || av, count > 1);
         });
-        if (count > 1)
-          toastr.success(
-            `已将 ${count} 个角色移动到「${getTagName(folderId)}」`,
-          );
+        toastr.success(
+          count > 1
+            ? `已将 ${count} 个角色${cfmCopyMode ? "复制" : "移动"}到「${getTagName(folderId)}」`
+            : `已将「${data.name || data.avatar}」${cfmCopyMode ? "复制" : "移动"}到「${getTagName(folderId)}」`,
+        );
         if (data.multiSelect) clearMultiSelect();
         renderLeftTree();
         renderRightPane();
@@ -3575,7 +3644,8 @@ jQuery(async () => {
       // 多选工具栏（未归类视图）
       if (cfmMultiSelectMode) {
         const visible = getVisibleResourceIds();
-        const allSel = visible.length > 0 && visible.every(id => cfmMultiSelected.has(id));
+        const allSel =
+          visible.length > 0 && visible.every((id) => cfmMultiSelected.has(id));
         const toolbar = $(`
           <div class="cfm-multisel-toolbar">
             <button class="cfm-btn cfm-btn-sm cfm-multisel-selectall"><i class="fa-solid fa-${allSel ? "square-minus" : "square-check"}"></i> ${allSel ? "全不选" : "全选"}</button>
@@ -3584,12 +3654,14 @@ jQuery(async () => {
           </div>
         `);
         toolbar.find(".cfm-multisel-selectall").on("click touchend", (e) => {
-          e.preventDefault(); e.stopPropagation();
+          e.preventDefault();
+          e.stopPropagation();
           selectAllVisible();
           renderRightPane();
         });
         toolbar.find(".cfm-multisel-range").on("click touchend", (e) => {
-          e.preventDefault(); e.stopPropagation();
+          e.preventDefault();
+          e.stopPropagation();
           cfmMultiSelectRangeMode = !cfmMultiSelectRangeMode;
           if (cfmMultiSelectRangeMode) cfmMultiSelectLastClicked = null;
           renderRightPane();
@@ -3616,7 +3688,8 @@ jQuery(async () => {
       // 多选工具栏（收藏视图）
       if (cfmMultiSelectMode) {
         const visible = getVisibleResourceIds();
-        const allSel = visible.length > 0 && visible.every(id => cfmMultiSelected.has(id));
+        const allSel =
+          visible.length > 0 && visible.every((id) => cfmMultiSelected.has(id));
         const toolbar = $(`
           <div class="cfm-multisel-toolbar">
             <button class="cfm-btn cfm-btn-sm cfm-multisel-selectall"><i class="fa-solid fa-${allSel ? "square-minus" : "square-check"}"></i> ${allSel ? "全不选" : "全选"}</button>
@@ -3625,12 +3698,14 @@ jQuery(async () => {
           </div>
         `);
         toolbar.find(".cfm-multisel-selectall").on("click touchend", (e) => {
-          e.preventDefault(); e.stopPropagation();
+          e.preventDefault();
+          e.stopPropagation();
           selectAllVisible();
           renderRightPane();
         });
         toolbar.find(".cfm-multisel-range").on("click touchend", (e) => {
-          e.preventDefault(); e.stopPropagation();
+          e.preventDefault();
+          e.stopPropagation();
           cfmMultiSelectRangeMode = !cfmMultiSelectRangeMode;
           if (cfmMultiSelectRangeMode) cfmMultiSelectLastClicked = null;
           renderRightPane();
@@ -3682,15 +3757,12 @@ jQuery(async () => {
       });
       // 右侧文件夹可拖拽
       row.on("dragstart", (e) => {
-        e.originalEvent.dataTransfer.setData(
-          "text/plain",
-          JSON.stringify({ type: "folder", id: childId }),
-        );
-        e.originalEvent.dataTransfer.effectAllowed = "move";
+        pcDragStart(e, { type: "folder", id: childId });
         row.addClass("cfm-dragging");
       });
       row.on("dragend", () => {
         row.removeClass("cfm-dragging");
+        pcDragEnd();
         $(".cfm-row").removeClass(
           "cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden",
         );
@@ -3711,14 +3783,7 @@ jQuery(async () => {
         else dropZone = "into";
         row.data("dropZone", dropZone);
 
-        let data = {};
-        try {
-          data = JSON.parse(
-            e.originalEvent.dataTransfer.getData("text/plain") || "{}",
-          );
-        } catch {
-          /* ignore */
-        }
+        const data = _pcDragData || {};
 
         if (data.type === "folder" && data.id) {
           if (data.id === childId) {
@@ -3748,12 +3813,8 @@ jQuery(async () => {
         row.removeClass(
           "cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden",
         );
-        let data;
-        try {
-          data = JSON.parse(e.originalEvent.dataTransfer.getData("text/plain"));
-        } catch {
-          return;
-        }
+        const data = pcGetDropData(e);
+        if (!data) return;
 
         if (data.type === "folder" && data.id) {
           if (data.id === childId) return;
@@ -3789,11 +3850,21 @@ jQuery(async () => {
           renderLeftTree();
           renderRightPane();
         } else if (data.type === "char" && data.avatar) {
-          handleCharDropToFolder(
-            data.avatar,
-            childId,
-            data.name || data.avatar,
+          const avatars =
+            data.multiSelect && data.selectedIds
+              ? data.selectedIds
+              : [data.avatar];
+          const count = avatars.length;
+          avatars.forEach((av) => {
+            const ch = getCharacters().find((c) => c.avatar === av);
+            handleCharDropToFolder(av, childId, ch?.name || av, count > 1);
+          });
+          toastr.success(
+            count > 1
+              ? `已将 ${count} 个角色${cfmCopyMode ? "复制" : "移动"}到「${getTagName(childId)}」`
+              : `已将「${data.name || data.avatar}」${cfmCopyMode ? "复制" : "移动"}到「${getTagName(childId)}」`,
           );
+          if (data.multiSelect) clearMultiSelect();
           renderLeftTree();
           renderRightPane();
         }
@@ -3851,12 +3922,8 @@ jQuery(async () => {
       e.preventDefault();
       e.stopPropagation();
       list.removeClass("cfm-right-list-drop-target");
-      let data;
-      try {
-        data = JSON.parse(e.originalEvent.dataTransfer.getData("text/plain"));
-      } catch {
-        return;
-      }
+      const data = pcGetDropData(e);
+      if (!data) return;
 
       if (data.type === "folder" && data.id) {
         if (data.id === folderId) return;
@@ -3871,7 +3938,21 @@ jQuery(async () => {
         renderLeftTree();
         renderRightPane();
       } else if (data.type === "char" && data.avatar) {
-        handleCharDropToFolder(data.avatar, folderId, data.name || data.avatar);
+        const avatars =
+          data.multiSelect && data.selectedIds
+            ? data.selectedIds
+            : [data.avatar];
+        const count = avatars.length;
+        avatars.forEach((av) => {
+          const ch = getCharacters().find((c) => c.avatar === av);
+          handleCharDropToFolder(av, folderId, ch?.name || av, count > 1);
+        });
+        toastr.success(
+          count > 1
+            ? `已将 ${count} 个角色${cfmCopyMode ? "复制" : "移动"}到「${getTagName(folderId)}」`
+            : `已将「${data.name || data.avatar}」${cfmCopyMode ? "复制" : "移动"}到「${getTagName(folderId)}」`,
+        );
+        if (data.multiSelect) clearMultiSelect();
         renderLeftTree();
         renderRightPane();
       }
@@ -3956,15 +4037,12 @@ jQuery(async () => {
         name: char.name,
       };
       const dragData = getMultiDragData(singleData);
-      e.originalEvent.dataTransfer.setData(
-        "text/plain",
-        JSON.stringify(dragData),
-      );
-      e.originalEvent.dataTransfer.effectAllowed = "move";
+      pcDragStart(e, dragData);
       row.addClass("cfm-dragging");
     });
     row.on("dragend", () => {
       row.removeClass("cfm-dragging");
+      pcDragEnd();
     });
     container.append(row);
   }
@@ -4109,6 +4187,10 @@ jQuery(async () => {
       config.folders[tagId] = {
         parentId: configSelectedFolderId || null,
       };
+      // 从排除列表中移除（用户主动添加意味着重新纳入管理）
+      const _ex = extension_settings[extensionName].excludedTagIds;
+      const _exi = _ex.indexOf(tagId);
+      if (_exi >= 0) _ex.splice(_exi, 1);
       saveConfig(config);
       const parentHint = configSelectedFolderId
         ? `「${getTagName(configSelectedFolderId)}」的子级`
@@ -5018,14 +5100,20 @@ jQuery(async () => {
           config.folders[childId].parentId = parentId;
           reparentedChildren.push(childId);
         }
-        if (alsoDeleteTags) deleteTagFromSystem(folderId);
+        if (alsoDeleteTags) {
+          deleteTagFromSystem(folderId);
+        } else {
+          // 仅删除文件夹但保留标签：加入排除列表防止自动重新导入
+          const excluded = extension_settings[extensionName].excludedTagIds;
+          if (!excluded.includes(folderId)) excluded.push(folderId);
+        }
         delete config.folders[folderId];
         saveConfig(config);
         // 重建被提升的子文件夹的标签名
         for (const childId of reparentedChildren) {
           recursiveRebuildTagNames(childId);
         }
-        if (alsoDeleteTags) getContext().saveSettingsDebounced();
+        getContext().saveSettingsDebounced();
         if (configSelectedFolderId === folderId) configSelectedFolderId = null;
         const suffix = alsoDeleteTags ? "（标签已同步删除）" : "";
         toastr.info(`已移除文件夹「${name}」${suffix}`);
@@ -5179,7 +5267,13 @@ jQuery(async () => {
           }
         }
         deletedNames.push(getTagName(folderId));
-        if (alsoDeleteTags) deleteTagFromSystem(folderId);
+        if (alsoDeleteTags) {
+          deleteTagFromSystem(folderId);
+        } else {
+          // 仅删除文件夹但保留标签：加入排除列表防止自动重新导入
+          const excluded = extension_settings[extensionName].excludedTagIds;
+          if (!excluded.includes(folderId)) excluded.push(folderId);
+        }
         delete config.folders[folderId];
         if (configSelectedFolderId === folderId) configSelectedFolderId = null;
       }
@@ -5187,7 +5281,7 @@ jQuery(async () => {
       for (const childId of allReparented) {
         recursiveRebuildTagNames(childId);
       }
-      if (alsoDeleteTags) getContext().saveSettingsDebounced();
+      getContext().saveSettingsDebounced();
       cfmDeleteSelected.clear();
       cfmDeleteCascade = false;
       cfmDeleteLastClickedId = null;
@@ -5219,6 +5313,10 @@ jQuery(async () => {
           config.folders[tag.id].displayName = displayName;
           prefixCount++;
         }
+        // 从排除列表中移除
+        const _ex = extension_settings[extensionName].excludedTagIds;
+        const _exi = _ex.indexOf(tag.id);
+        if (_exi >= 0) _ex.splice(_exi, 1);
       }
       created.push(displayName || name);
     }
@@ -5381,6 +5479,10 @@ jQuery(async () => {
           config.folders[tag.id].displayName = displayName;
           prefixCount++;
         }
+        // 从排除列表中移除
+        const _ex = extension_settings[extensionName].excludedTagIds;
+        const _exi = _ex.indexOf(tag.id);
+        if (_exi >= 0) _ex.splice(_exi, 1);
         count++;
       }
       for (const child of node.children) processNode(child, tag.id);
@@ -5476,19 +5578,16 @@ jQuery(async () => {
 
       // PC拖拽（文件夹排序/嵌套）
       node.on("dragstart", (e) => {
-        e.originalEvent.dataTransfer.setData(
-          "text/plain",
-          JSON.stringify({
-            type: "res-folder",
-            resType: "presets",
-            id: folderId,
-          }),
-        );
-        e.originalEvent.dataTransfer.effectAllowed = "move";
+        pcDragStart(e, {
+          type: "res-folder",
+          resType: "presets",
+          id: folderId,
+        });
         node.addClass("cfm-dragging");
       });
       node.on("dragend", () => {
         node.removeClass("cfm-dragging");
+        pcDragEnd();
         $(".cfm-tnode").removeClass(
           "cfm-drop-target cfm-drop-forbidden cfm-drop-before cfm-drop-after",
         );
@@ -5505,12 +5604,7 @@ jQuery(async () => {
         let zone = relY < 0.25 ? "before" : relY > 0.75 ? "after" : "into";
         node.data("dropZone", zone);
 
-        let data = {};
-        try {
-          data = JSON.parse(
-            e.originalEvent.dataTransfer.getData("text/plain") || "{}",
-          );
-        } catch {}
+        const data = _pcDragData || {};
 
         if (data.type === "res-folder" && data.resType === "presets") {
           if (data.id === folderId) {
@@ -5542,12 +5636,8 @@ jQuery(async () => {
         node.removeClass(
           "cfm-drop-target cfm-drop-forbidden cfm-drop-before cfm-drop-after",
         );
-        let data;
-        try {
-          data = JSON.parse(e.originalEvent.dataTransfer.getData("text/plain"));
-        } catch {
-          return;
-        }
+        const data = pcGetDropData(e);
+        if (!data) return;
 
         if (
           data.type === "res-folder" &&
@@ -5586,9 +5676,19 @@ jQuery(async () => {
           }
           renderPresetsView();
         } else if (data.type === "preset") {
-          setItemGroup("presets", data.name, folderId);
+          const presetNames =
+            data.multiSelect && data.selectedIds
+              ? data.selectedIds
+              : [data.name];
+          const pCount = presetNames.length;
+          presetNames.forEach((n) => setItemGroup("presets", n, folderId));
+          if (data.multiSelect) clearMultiSelect();
           renderPresetsView();
-          toastr.success(`已将「${data.name}」移入「${folderId}」`);
+          toastr.success(
+            pCount > 1
+              ? `已将 ${pCount} 个预设移入「${folderId}」`
+              : `已将「${data.name}」移入「${folderId}」`,
+          );
         }
       });
 
@@ -5641,16 +5741,22 @@ jQuery(async () => {
     uncatNode.on("drop", (e) => {
       e.preventDefault();
       uncatNode.removeClass("cfm-drop-target");
-      try {
-        const d = JSON.parse(
-          e.originalEvent.dataTransfer.getData("text/plain"),
-        );
+      const d = pcGetDropData(e);
+      if (d) {
         if (d.type === "preset") {
-          setItemGroup("presets", d.name, null);
+          const presetNames =
+            d.multiSelect && d.selectedIds ? d.selectedIds : [d.name];
+          const pCount = presetNames.length;
+          presetNames.forEach((n) => setItemGroup("presets", n, null));
+          if (d.multiSelect) clearMultiSelect();
           renderPresetsView();
-          toastr.success(`已将「${d.name}」移出文件夹`);
+          toastr.success(
+            pCount > 1
+              ? `已将 ${pCount} 个预设移出文件夹`
+              : `已将「${d.name}」移出文件夹`,
+          );
         }
-      } catch {}
+      }
     });
     leftTree.append(uncatNode);
 
@@ -5745,18 +5851,16 @@ jQuery(async () => {
           renderPresetsView();
         });
         row.on("dragstart", (e) => {
-          e.originalEvent.dataTransfer.setData(
-            "text/plain",
-            JSON.stringify({
-              type: "res-folder",
-              resType: "presets",
-              id: childId,
-            }),
-          );
+          pcDragStart(e, {
+            type: "res-folder",
+            resType: "presets",
+            id: childId,
+          });
           row.addClass("cfm-dragging");
         });
         row.on("dragend", () => {
           row.removeClass("cfm-dragging");
+          pcDragEnd();
           $(".cfm-row").removeClass(
             "cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden",
           );
@@ -5771,12 +5875,7 @@ jQuery(async () => {
           const relY = (e.originalEvent.clientY - rect.top) / rect.height;
           let zone = relY < 0.25 ? "before" : relY > 0.75 ? "after" : "into";
           row.data("dropZone", zone);
-          let data = {};
-          try {
-            data = JSON.parse(
-              e.originalEvent.dataTransfer.getData("text/plain") || "{}",
-            );
-          } catch {}
+          const data = _pcDragData || {};
           if (data.type === "res-folder" && data.resType === "presets") {
             if (data.id === childId) {
               row.addClass("cfm-drop-forbidden");
@@ -5807,14 +5906,8 @@ jQuery(async () => {
           row.removeClass(
             "cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden",
           );
-          let data;
-          try {
-            data = JSON.parse(
-              e.originalEvent.dataTransfer.getData("text/plain"),
-            );
-          } catch {
-            return;
-          }
+          const data = pcGetDropData(e);
+          if (!data) return;
           if (
             data.type === "res-folder" &&
             data.resType === "presets" &&
@@ -5852,8 +5945,18 @@ jQuery(async () => {
             }
             renderPresetsView();
           } else if (data.type === "preset") {
-            setItemGroup("presets", data.name, childId);
-            toastr.success(`已将「${data.name}」移入「${childId}」`);
+            const presetNames =
+              data.multiSelect && data.selectedIds
+                ? data.selectedIds
+                : [data.name];
+            const pCount = presetNames.length;
+            presetNames.forEach((n) => setItemGroup("presets", n, childId));
+            if (data.multiSelect) clearMultiSelect();
+            toastr.success(
+              pCount > 1
+                ? `已将 ${pCount} 个预设移入「${childId}」`
+                : `已将「${data.name}」移入「${childId}」`,
+            );
             renderPresetsView();
           }
         });
@@ -5920,11 +6023,9 @@ jQuery(async () => {
         row.on("dragstart", (e) => {
           const singleData = { type: "preset", name: p.name, value: p.value };
           const dragData = getMultiDragData(singleData);
-          e.originalEvent.dataTransfer.setData(
-            "text/plain",
-            JSON.stringify(dragData),
-          );
+          pcDragStart(e, dragData);
         });
+        row.on("dragend", () => pcDragEnd());
         touchDragMgr.bind(row, () => {
           const singleData = { type: "preset", name: p.name, value: p.value };
           return getMultiDragData(singleData);
@@ -5935,7 +6036,8 @@ jQuery(async () => {
       // 多选工具栏（预设）
       if (cfmMultiSelectMode && selectedPresetFolder) {
         const visible = getVisibleResourceIds();
-        const allSel = visible.length > 0 && visible.every(id => cfmMultiSelected.has(id));
+        const allSel =
+          visible.length > 0 && visible.every((id) => cfmMultiSelected.has(id));
         const toolbar = $(`
           <div class="cfm-multisel-toolbar">
             <button class="cfm-btn cfm-btn-sm cfm-multisel-selectall"><i class="fa-solid fa-${allSel ? "square-minus" : "square-check"}"></i> ${allSel ? "全不选" : "全选"}</button>
@@ -5944,12 +6046,14 @@ jQuery(async () => {
           </div>
         `);
         toolbar.find(".cfm-multisel-selectall").on("click touchend", (e) => {
-          e.preventDefault(); e.stopPropagation();
+          e.preventDefault();
+          e.stopPropagation();
           selectAllVisible();
           renderPresetsView();
         });
         toolbar.find(".cfm-multisel-range").on("click touchend", (e) => {
-          e.preventDefault(); e.stopPropagation();
+          e.preventDefault();
+          e.stopPropagation();
           cfmMultiSelectRangeMode = !cfmMultiSelectRangeMode;
           if (cfmMultiSelectRangeMode) cfmMultiSelectLastClicked = null;
           renderPresetsView();
@@ -5982,12 +6086,8 @@ jQuery(async () => {
         e.preventDefault();
         e.stopPropagation();
         rightList.removeClass("cfm-right-list-drop-target");
-        let data;
-        try {
-          data = JSON.parse(e.originalEvent.dataTransfer.getData("text/plain"));
-        } catch {
-          return;
-        }
+        const data = pcGetDropData(e);
+        if (!data) return;
         if (
           data.type === "res-folder" &&
           data.resType === "presets" &&
@@ -6001,8 +6101,18 @@ jQuery(async () => {
           toastr.success(`「${data.id}」已移入「${currentFolder}」`);
           renderPresetsView();
         } else if (data.type === "preset") {
-          setItemGroup("presets", data.name, currentFolder);
-          toastr.success(`已将「${data.name}」移入「${currentFolder}」`);
+          const presetNames =
+            data.multiSelect && data.selectedIds
+              ? data.selectedIds
+              : [data.name];
+          const pCount = presetNames.length;
+          presetNames.forEach((n) => setItemGroup("presets", n, currentFolder));
+          if (data.multiSelect) clearMultiSelect();
+          toastr.success(
+            pCount > 1
+              ? `已将 ${pCount} 个预设移入「${currentFolder}」`
+              : `已将「${data.name}」移入「${currentFolder}」`,
+          );
           renderPresetsView();
         }
       });
@@ -6086,19 +6196,16 @@ jQuery(async () => {
 
       // PC拖拽
       node.on("dragstart", (e) => {
-        e.originalEvent.dataTransfer.setData(
-          "text/plain",
-          JSON.stringify({
-            type: "res-folder",
-            resType: "worldinfo",
-            id: folderId,
-          }),
-        );
-        e.originalEvent.dataTransfer.effectAllowed = "move";
+        pcDragStart(e, {
+          type: "res-folder",
+          resType: "worldinfo",
+          id: folderId,
+        });
         node.addClass("cfm-dragging");
       });
       node.on("dragend", () => {
         node.removeClass("cfm-dragging");
+        pcDragEnd();
         $(".cfm-tnode").removeClass(
           "cfm-drop-target cfm-drop-forbidden cfm-drop-before cfm-drop-after",
         );
@@ -6115,12 +6222,7 @@ jQuery(async () => {
         let zone = relY < 0.25 ? "before" : relY > 0.75 ? "after" : "into";
         node.data("dropZone", zone);
 
-        let data = {};
-        try {
-          data = JSON.parse(
-            e.originalEvent.dataTransfer.getData("text/plain") || "{}",
-          );
-        } catch {}
+        const data = _pcDragData || {};
 
         if (data.type === "res-folder" && data.resType === "worldinfo") {
           if (data.id === folderId) {
@@ -6152,12 +6254,8 @@ jQuery(async () => {
         node.removeClass(
           "cfm-drop-target cfm-drop-forbidden cfm-drop-before cfm-drop-after",
         );
-        let data;
-        try {
-          data = JSON.parse(e.originalEvent.dataTransfer.getData("text/plain"));
-        } catch {
-          return;
-        }
+        const data = pcGetDropData(e);
+        if (!data) return;
 
         if (
           data.type === "res-folder" &&
@@ -6196,9 +6294,19 @@ jQuery(async () => {
           }
           renderWorldInfoView();
         } else if (data.type === "worldinfo") {
-          setItemGroup("worldinfo", data.name, folderId);
+          const wiNames =
+            data.multiSelect && data.selectedIds
+              ? data.selectedIds
+              : [data.name];
+          const wCount = wiNames.length;
+          wiNames.forEach((n) => setItemGroup("worldinfo", n, folderId));
+          if (data.multiSelect) clearMultiSelect();
           renderWorldInfoView();
-          toastr.success(`已将「${data.name}」移入「${folderId}」`);
+          toastr.success(
+            wCount > 1
+              ? `已将 ${wCount} 个世界书移入「${folderId}」`
+              : `已将「${data.name}」移入「${folderId}」`,
+          );
         }
       });
 
@@ -6267,16 +6375,20 @@ jQuery(async () => {
     uncatNode.on("drop", (e) => {
       e.preventDefault();
       uncatNode.removeClass("cfm-drop-target");
-      try {
-        const d = JSON.parse(
-          e.originalEvent.dataTransfer.getData("text/plain"),
+      const d = pcGetDropData(e);
+      if (d && d.type === "worldinfo") {
+        const wiNames =
+          d.multiSelect && d.selectedIds ? d.selectedIds : [d.name];
+        const wCount = wiNames.length;
+        wiNames.forEach((n) => setItemGroup("worldinfo", n, null));
+        if (d.multiSelect) clearMultiSelect();
+        renderWorldInfoView();
+        toastr.success(
+          wCount > 1
+            ? `已将 ${wCount} 个世界书移出文件夹`
+            : `已将「${d.name}」移出文件夹`,
         );
-        if (d.type === "worldinfo") {
-          setItemGroup("worldinfo", d.name, null);
-          renderWorldInfoView();
-          toastr.success(`已将「${d.name}」移出文件夹`);
-        }
-      } catch {}
+      }
     });
     leftTree.append(uncatNode);
 
@@ -6376,18 +6488,16 @@ jQuery(async () => {
           renderWorldInfoView();
         });
         row.on("dragstart", (e) => {
-          e.originalEvent.dataTransfer.setData(
-            "text/plain",
-            JSON.stringify({
-              type: "res-folder",
-              resType: "worldinfo",
-              id: childId,
-            }),
-          );
+          pcDragStart(e, {
+            type: "res-folder",
+            resType: "worldinfo",
+            id: childId,
+          });
           row.addClass("cfm-dragging");
         });
         row.on("dragend", () => {
           row.removeClass("cfm-dragging");
+          pcDragEnd();
           $(".cfm-row").removeClass(
             "cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden",
           );
@@ -6402,12 +6512,7 @@ jQuery(async () => {
           const relY = (e.originalEvent.clientY - rect.top) / rect.height;
           let zone = relY < 0.25 ? "before" : relY > 0.75 ? "after" : "into";
           row.data("dropZone", zone);
-          let data = {};
-          try {
-            data = JSON.parse(
-              e.originalEvent.dataTransfer.getData("text/plain") || "{}",
-            );
-          } catch {}
+          const data = _pcDragData || {};
           if (data.type === "res-folder" && data.resType === "worldinfo") {
             if (data.id === childId) {
               row.addClass("cfm-drop-forbidden");
@@ -6438,14 +6543,8 @@ jQuery(async () => {
           row.removeClass(
             "cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden",
           );
-          let data;
-          try {
-            data = JSON.parse(
-              e.originalEvent.dataTransfer.getData("text/plain"),
-            );
-          } catch {
-            return;
-          }
+          const data = pcGetDropData(e);
+          if (!data) return;
           if (
             data.type === "res-folder" &&
             data.resType === "worldinfo" &&
@@ -6483,8 +6582,18 @@ jQuery(async () => {
             }
             renderWorldInfoView();
           } else if (data.type === "worldinfo") {
-            setItemGroup("worldinfo", data.name, childId);
-            toastr.success(`已将「${data.name}」移入「${childId}」`);
+            const wiNames =
+              data.multiSelect && data.selectedIds
+                ? data.selectedIds
+                : [data.name];
+            const wCount = wiNames.length;
+            wiNames.forEach((n) => setItemGroup("worldinfo", n, childId));
+            if (data.multiSelect) clearMultiSelect();
+            toastr.success(
+              wCount > 1
+                ? `已将 ${wCount} 个世界书移入「${childId}」`
+                : `已将「${data.name}」移入「${childId}」`,
+            );
             renderWorldInfoView();
           }
         });
@@ -6545,11 +6654,9 @@ jQuery(async () => {
         row.on("dragstart", (e) => {
           const singleData = { type: "worldinfo", name: n };
           const dragData = getMultiDragData(singleData);
-          e.originalEvent.dataTransfer.setData(
-            "text/plain",
-            JSON.stringify(dragData),
-          );
+          pcDragStart(e, dragData);
         });
+        row.on("dragend", () => pcDragEnd());
         touchDragMgr.bind(row, () => {
           const singleData = { type: "worldinfo", name: n };
           return getMultiDragData(singleData);
@@ -6560,7 +6667,8 @@ jQuery(async () => {
       // 多选工具栏（世界书）
       if (cfmMultiSelectMode && selectedWorldInfoFolder) {
         const visible = getVisibleResourceIds();
-        const allSel = visible.length > 0 && visible.every(id => cfmMultiSelected.has(id));
+        const allSel =
+          visible.length > 0 && visible.every((id) => cfmMultiSelected.has(id));
         const toolbar = $(`
           <div class="cfm-multisel-toolbar">
             <button class="cfm-btn cfm-btn-sm cfm-multisel-selectall"><i class="fa-solid fa-${allSel ? "square-minus" : "square-check"}"></i> ${allSel ? "全不选" : "全选"}</button>
@@ -6569,12 +6677,14 @@ jQuery(async () => {
           </div>
         `);
         toolbar.find(".cfm-multisel-selectall").on("click touchend", (e) => {
-          e.preventDefault(); e.stopPropagation();
+          e.preventDefault();
+          e.stopPropagation();
           selectAllVisible();
           renderWorldInfoView();
         });
         toolbar.find(".cfm-multisel-range").on("click touchend", (e) => {
-          e.preventDefault(); e.stopPropagation();
+          e.preventDefault();
+          e.stopPropagation();
           cfmMultiSelectRangeMode = !cfmMultiSelectRangeMode;
           if (cfmMultiSelectRangeMode) cfmMultiSelectLastClicked = null;
           renderWorldInfoView();
@@ -6609,12 +6719,8 @@ jQuery(async () => {
         e.preventDefault();
         e.stopPropagation();
         rightList.removeClass("cfm-right-list-drop-target");
-        let data;
-        try {
-          data = JSON.parse(e.originalEvent.dataTransfer.getData("text/plain"));
-        } catch {
-          return;
-        }
+        const data = pcGetDropData(e);
+        if (!data) return;
         if (
           data.type === "res-folder" &&
           data.resType === "worldinfo" &&
@@ -6628,8 +6734,18 @@ jQuery(async () => {
           toastr.success(`「${data.id}」已移入「${currentFolder}」`);
           renderWorldInfoView();
         } else if (data.type === "worldinfo") {
-          setItemGroup("worldinfo", data.name, currentFolder);
-          toastr.success(`已将「${data.name}」移入「${currentFolder}」`);
+          const wiNames =
+            data.multiSelect && data.selectedIds
+              ? data.selectedIds
+              : [data.name];
+          const wCount = wiNames.length;
+          wiNames.forEach((n) => setItemGroup("worldinfo", n, currentFolder));
+          if (data.multiSelect) clearMultiSelect();
+          toastr.success(
+            wCount > 1
+              ? `已将 ${wCount} 个世界书移入「${currentFolder}」`
+              : `已将「${data.name}」移入「${currentFolder}」`,
+          );
           renderWorldInfoView();
         }
       });
@@ -6803,6 +6919,10 @@ jQuery(async () => {
               sortOrder: folderDef.sortOrder ?? 0,
             };
             if (dn) config.folders[tag.id].displayName = dn;
+            // 从排除列表中移除
+            const _ex = extension_settings[extensionName].excludedTagIds;
+            const _exi = _ex.indexOf(tag.id);
+            if (_exi >= 0) _ex.splice(_exi, 1);
             pathToTagId[pathKey] = tag.id;
             report.foldersCreated++;
           }
