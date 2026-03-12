@@ -885,6 +885,85 @@
   box-shadow: 0 0 0 1px rgba(88, 101, 242, 0.4);
 }
 
+/* 批量创建模板区域 */
+.cfm-tpl-section {
+  margin-bottom: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.cfm-tpl-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.cfm-tpl-label {
+  font-size: 12px;
+  color: #89b4fa;
+  font-weight: 600;
+}
+.cfm-tpl-label i {
+  margin-right: 4px;
+}
+.cfm-tpl-save-btn {
+  font-size: 11px !important;
+  padding: 2px 8px !important;
+}
+.cfm-tpl-list {
+  max-height: 120px;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+.cfm-tpl-item {
+  display: flex;
+  align-items: center;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.cfm-tpl-item:hover {
+  background: rgba(137, 180, 250, 0.1);
+}
+.cfm-tpl-name {
+  flex: 1;
+  font-size: 12px;
+  color: var(--SmartThemeBodyColor, #cdd6f4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cfm-tpl-del {
+  background: none;
+  border: none;
+  color: #a6adc8;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  opacity: 0;
+  transition:
+    opacity 0.12s,
+    color 0.12s;
+}
+.cfm-tpl-item:hover .cfm-tpl-del {
+  opacity: 0.7;
+}
+.cfm-tpl-del:hover {
+  opacity: 1 !important;
+  color: #f38ba8 !important;
+  background: rgba(243, 139, 168, 0.1);
+}
+.cfm-tpl-empty {
+  font-size: 11px;
+  color: #a6adc8;
+  text-align: center;
+  padding: 8px;
+  opacity: 0.6;
+}
+
 /* ========== 新导入标签高亮 ========== */
 .cfm-new-badge {
   display: inline-block;
@@ -1763,6 +1842,489 @@
 }
 
 /* ========== 多选模式 ========== */
+/* 导入按钮 */
+.cfm-import-btn {
+  background: none !important;
+  border: none !important;
+  color: var(--SmartThemeBodyColor, #cdd6f4) !important;
+  cursor: pointer !important;
+  font-size: 13px !important;
+  padding: 2px 6px !important;
+  border-radius: 3px !important;
+  opacity: 0.6 !important;
+  transition:
+    opacity 0.15s,
+    background-color 0.15s !important;
+  flex-shrink: 0;
+}
+.cfm-import-btn:hover {
+  opacity: 1 !important;
+  background-color: rgba(255, 255, 255, 0.1) !important;
+  color: #89b4fa !important;
+}
+
+/* 导出按钮 */
+.cfm-export-btn {
+  background: none !important;
+  border: none !important;
+  color: var(--SmartThemeBodyColor, #cdd6f4) !important;
+  cursor: pointer !important;
+  font-size: 13px !important;
+  padding: 2px 6px !important;
+  border-radius: 3px !important;
+  opacity: 0.6 !important;
+  transition:
+    opacity 0.15s,
+    background-color 0.15s,
+    color 0.15s !important;
+  flex-shrink: 0;
+}
+.cfm-export-btn:hover {
+  opacity: 1 !important;
+  background-color: rgba(255, 255, 255, 0.1) !important;
+  color: #a6e3a1 !important;
+}
+.cfm-export-btn.cfm-export-active {
+  opacity: 1 !important;
+  color: #a6e3a1 !important;
+  background-color: rgba(166, 227, 161, 0.15) !important;
+  border: 1px solid rgba(166, 227, 161, 0.4) !important;
+}
+
+/* 导出模式遮罩 */
+.cfm-popup.cfm-export-mode .cfm-left-pane {
+  opacity: 0.5;
+  pointer-events: none;
+}
+.cfm-popup.cfm-export-mode .cfm-tab {
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+/* 导出勾选框 */
+.cfm-export-checkbox {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  margin-right: 6px;
+  cursor: pointer;
+  color: var(--SmartThemeBodyColor, #cdd6f4);
+  opacity: 0.5;
+  transition:
+    opacity 0.15s,
+    color 0.15s;
+}
+.cfm-export-checkbox.cfm-export-checked {
+  color: #a6e3a1;
+  opacity: 1;
+}
+
+/* 导出选中行 */
+.cfm-export-row-selected {
+  background-color: rgba(166, 227, 161, 0.1) !important;
+  border-left: 2px solid #a6e3a1 !important;
+}
+
+/* 导出工具栏 */
+.cfm-export-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: rgba(166, 227, 161, 0.08);
+  border-bottom: 1px solid rgba(166, 227, 161, 0.15);
+  flex-shrink: 0;
+}
+.cfm-export-toolbar .cfm-export-count {
+  flex: 1;
+  font-size: 12px;
+  color: #a6e3a1;
+}
+.cfm-export-toolbar .cfm-export-cancel {
+  color: #f38ba8 !important;
+  border-color: rgba(243, 139, 168, 0.4) !important;
+}
+.cfm-export-toolbar .cfm-export-cancel:hover {
+  background-color: rgba(243, 139, 168, 0.15) !important;
+}
+.cfm-export-toolbar .cfm-btn {
+  background-color: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--SmartThemeBorderColor, #45475a);
+  color: var(--SmartThemeBodyColor, #cdd6f4);
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+.cfm-export-toolbar .cfm-btn:hover {
+  background-color: rgba(255, 255, 255, 0.12);
+}
+/* 导出框选模式激活 */
+.cfm-export-toolbar .cfm-range-active {
+  background-color: rgba(166, 227, 161, 0.3) !important;
+  border-color: #a6e3a1 !important;
+  color: #a6e3a1 !important;
+  animation: cfm-range-pulse 1.5s ease-in-out infinite;
+}
+
+/* 删除按钮 */
+.cfm-res-delete-btn {
+  background: none !important;
+  border: none !important;
+  color: var(--SmartThemeBodyColor, #cdd6f4) !important;
+  cursor: pointer !important;
+  font-size: 13px !important;
+  padding: 2px 6px !important;
+  border-radius: 3px !important;
+  opacity: 0.6 !important;
+  transition:
+    opacity 0.15s,
+    background-color 0.15s,
+    color 0.15s !important;
+  flex-shrink: 0;
+}
+.cfm-res-delete-btn:hover {
+  opacity: 1 !important;
+  background-color: rgba(255, 255, 255, 0.1) !important;
+  color: #f38ba8 !important;
+}
+.cfm-res-delete-btn.cfm-res-delete-active {
+  opacity: 1 !important;
+  color: #f38ba8 !important;
+  background-color: rgba(243, 139, 168, 0.15) !important;
+  border: 1px solid rgba(243, 139, 168, 0.4) !important;
+}
+
+/* 删除模式遮罩 */
+.cfm-popup.cfm-res-delete-mode .cfm-left-pane {
+  opacity: 0.5;
+  pointer-events: none;
+}
+.cfm-popup.cfm-res-delete-mode .cfm-tab {
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+/* 删除勾选框 */
+.cfm-res-delete-checkbox {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  margin-right: 6px;
+  cursor: pointer;
+  color: var(--SmartThemeBodyColor, #cdd6f4);
+  opacity: 0.5;
+  transition:
+    opacity 0.15s,
+    color 0.15s;
+}
+.cfm-res-delete-checkbox.cfm-res-delete-checked {
+  color: #f38ba8;
+  opacity: 1;
+}
+
+/* 删除选中行 */
+.cfm-res-delete-row-selected {
+  background-color: rgba(243, 139, 168, 0.1) !important;
+  border-left: 2px solid #f38ba8 !important;
+}
+
+/* 删除工具栏 */
+.cfm-res-delete-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: rgba(243, 139, 168, 0.08);
+  border-bottom: 1px solid rgba(243, 139, 168, 0.15);
+  flex-shrink: 0;
+}
+.cfm-res-delete-toolbar .cfm-res-delete-count {
+  flex: 1;
+  font-size: 12px;
+  color: #f38ba8;
+}
+.cfm-res-delete-toolbar .cfm-res-delete-cancel {
+  color: #a6adc8 !important;
+  border-color: rgba(166, 173, 200, 0.4) !important;
+}
+.cfm-res-delete-toolbar .cfm-res-delete-cancel:hover {
+  background-color: rgba(166, 173, 200, 0.15) !important;
+}
+.cfm-res-delete-toolbar .cfm-btn {
+  background-color: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--SmartThemeBorderColor, #45475a);
+  color: var(--SmartThemeBodyColor, #cdd6f4);
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+.cfm-res-delete-toolbar .cfm-btn:hover {
+  background-color: rgba(255, 255, 255, 0.12);
+}
+/* 删除框选模式激活 */
+.cfm-res-delete-toolbar .cfm-range-active {
+  background-color: rgba(243, 139, 168, 0.3) !important;
+  border-color: #f38ba8 !important;
+  color: #f38ba8 !important;
+  animation: cfm-range-pulse 1.5s ease-in-out infinite;
+}
+
+/* ==================== 角色卡快速编辑模式 ==================== */
+
+/* 编辑按钮 */
+.cfm-edit-char-btn {
+  background: none !important;
+  border: none !important;
+  color: var(--SmartThemeBodyColor, #cdd6f4) !important;
+  cursor: pointer !important;
+  font-size: 13px !important;
+  padding: 2px 6px !important;
+  border-radius: 3px !important;
+  opacity: 0.6 !important;
+  transition:
+    opacity 0.15s,
+    background-color 0.15s,
+    color 0.15s !important;
+  flex-shrink: 0;
+}
+.cfm-edit-char-btn:hover {
+  opacity: 1 !important;
+  background-color: rgba(255, 255, 255, 0.1) !important;
+  color: #89b4fa !important;
+}
+.cfm-edit-char-btn.cfm-edit-active {
+  opacity: 1 !important;
+  color: #89b4fa !important;
+  background-color: rgba(137, 180, 250, 0.15) !important;
+  border: 1px solid rgba(137, 180, 250, 0.4) !important;
+}
+
+/* 编辑模式遮罩 */
+.cfm-popup.cfm-edit-mode .cfm-left-pane {
+  opacity: 0.5;
+  pointer-events: none;
+}
+.cfm-popup.cfm-edit-mode .cfm-tab {
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+/* 编辑勾选框 */
+.cfm-edit-checkbox {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  margin-right: 6px;
+  cursor: pointer;
+  color: var(--SmartThemeBodyColor, #cdd6f4);
+  opacity: 0.5;
+  transition:
+    opacity 0.15s,
+    color 0.15s;
+}
+.cfm-edit-checkbox.cfm-edit-checked {
+  color: #89b4fa;
+  opacity: 1;
+}
+
+/* 编辑选中行 */
+.cfm-edit-row-selected {
+  background-color: rgba(137, 180, 250, 0.1) !important;
+  border-left: 2px solid #89b4fa !important;
+}
+
+/* 编辑工具栏 */
+.cfm-edit-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: rgba(137, 180, 250, 0.08);
+  border-bottom: 1px solid rgba(137, 180, 250, 0.15);
+  flex-shrink: 0;
+}
+.cfm-edit-toolbar .cfm-edit-count {
+  flex: 1;
+  font-size: 12px;
+  color: #89b4fa;
+}
+.cfm-edit-toolbar .cfm-edit-cancel {
+  color: #f38ba8 !important;
+  border-color: rgba(243, 139, 168, 0.4) !important;
+}
+.cfm-edit-toolbar .cfm-edit-cancel:hover {
+  background-color: rgba(243, 139, 168, 0.15) !important;
+}
+.cfm-edit-toolbar .cfm-btn {
+  background-color: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--SmartThemeBorderColor, #45475a);
+  color: var(--SmartThemeBodyColor, #cdd6f4);
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+.cfm-edit-toolbar .cfm-btn:hover {
+  background-color: rgba(255, 255, 255, 0.12);
+}
+/* 编辑框选模式激活 */
+.cfm-edit-toolbar .cfm-range-active {
+  background-color: rgba(137, 180, 250, 0.3) !important;
+  border-color: #89b4fa !important;
+  color: #89b4fa !important;
+  animation: cfm-range-pulse 1.5s ease-in-out infinite;
+}
+
+/* 单行编辑铅笔按钮 */
+.cfm-row-edit-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  cursor: pointer;
+  color: var(--SmartThemeBodyColor, #cdd6f4);
+  opacity: 0.4;
+  transition:
+    opacity 0.15s,
+    color 0.15s;
+  flex-shrink: 0;
+  font-size: 12px;
+  border-radius: 3px;
+}
+.cfm-row-edit-btn:hover {
+  opacity: 1 !important;
+  color: #89b4fa !important;
+  background-color: rgba(137, 180, 250, 0.15);
+}
+
+/* 编辑弹窗 */
+.cfm-edit-popup-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100000;
+  animation: cfm-fade-in 0.15s ease;
+}
+.cfm-edit-popup {
+  background: var(--SmartThemeBlurTintColor, #1e1e2e);
+  border: 1px solid var(--SmartThemeBorderColor, #45475a);
+  border-radius: 10px;
+  padding: 20px 24px;
+  width: min(480px, 90vw);
+  min-width: 0;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  box-sizing: border-box;
+  margin: auto;
+}
+.cfm-edit-popup-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #89b4fa;
+  margin-bottom: 12px;
+}
+.cfm-edit-popup-names {
+  max-height: 120px;
+  overflow-y: auto;
+  margin-bottom: 14px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.cfm-edit-name-item {
+  font-size: 12px;
+  color: var(--SmartThemeBodyColor, #cdd6f4);
+  padding: 2px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cfm-edit-name-more {
+  color: #a6adc8;
+  font-style: italic;
+}
+.cfm-edit-popup-field {
+  margin-bottom: 12px;
+}
+.cfm-edit-popup-field label {
+  display: block;
+  font-size: 12px;
+  color: #a6adc8;
+  margin-bottom: 4px;
+}
+.cfm-edit-input {
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 13px;
+  color: var(--SmartThemeBodyColor, #cdd6f4);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--SmartThemeBorderColor, #45475a);
+  border-radius: 6px;
+  outline: none;
+  transition: border-color 0.15s;
+  box-sizing: border-box;
+}
+.cfm-edit-input:focus {
+  border-color: #89b4fa;
+}
+.cfm-edit-popup-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+.cfm-edit-popup-actions .cfm-btn {
+  padding: 6px 16px;
+  font-size: 13px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid var(--SmartThemeBorderColor, #45475a);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--SmartThemeBodyColor, #cdd6f4);
+  transition: all 0.15s;
+}
+.cfm-edit-popup-actions .cfm-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+.cfm-edit-popup-actions .cfm-edit-popup-confirm {
+  background: rgba(137, 180, 250, 0.2);
+  color: #89b4fa;
+  border-color: rgba(137, 180, 250, 0.4);
+}
+.cfm-edit-popup-actions .cfm-edit-popup-confirm:hover {
+  background: rgba(137, 180, 250, 0.35);
+}
+.cfm-edit-popup-actions .cfm-edit-popup-cancel {
+  color: #a6adc8;
+}
+.cfm-edit-popup-actions .cfm-edit-popup-cancel:hover {
+  color: #f38ba8;
+  border-color: rgba(243, 139, 168, 0.4);
+  background: rgba(243, 139, 168, 0.1);
+}
+
 /* 多选切换按钮 */
 .cfm-multisel-toggle {
   background: none !important;
@@ -1877,5 +2439,501 @@
     height: 28px;
     font-size: 20px;
     margin-right: 8px;
+  }
+  /* 移动端导出工具栏适配 */
+  .cfm-export-toolbar {
+    padding: 8px 14px;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .cfm-export-toolbar .cfm-btn {
+    padding: 8px 12px;
+    font-size: 13px;
+    min-height: 36px;
+  }
+  .cfm-export-checkbox {
+    width: 28px;
+    height: 28px;
+    font-size: 20px;
+    margin-right: 8px;
+  }
+  /* 移动端删除工具栏适配 */
+  .cfm-res-delete-toolbar {
+    padding: 8px 14px;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .cfm-res-delete-toolbar .cfm-btn {
+    padding: 8px 12px;
+    font-size: 13px;
+    min-height: 36px;
+  }
+  .cfm-res-delete-checkbox {
+    width: 28px;
+    height: 28px;
+    font-size: 20px;
+    margin-right: 8px;
+  }
+}
+
+/* ==================== 原生界面文件夹过滤按钮 ==================== */
+.cfm-nf-btn {
+  cursor: pointer;
+  opacity: 0.7;
+  transition:
+    opacity 0.2s,
+    color 0.2s;
+  font-size: 14px;
+}
+.cfm-nf-btn:hover {
+  opacity: 1;
+}
+.cfm-nf-btn-active {
+  opacity: 1;
+  color: #89b4fa !important;
+}
+
+/* 隐藏被过滤的 select option（原生 select 的 option 不支持 display:none，用 disabled + 视觉隐藏） */
+option.cfm-nf-hidden {
+  display: none !important;
+}
+
+/* 未归类节点样式 */
+.cfm-nf-uncat {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  margin-top: 4px;
+  padding-top: 6px;
+}
+.cfm-nf-uncat .cfm-nf-icon {
+  color: #a6adc8;
+}
+
+/* ==================== 原生界面文件夹浮动面板 ==================== */
+.cfm-nf-panel {
+  position: fixed;
+  z-index: 10000;
+  background: var(--SmartThemeBlurTintColor, #1e1e2e);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  min-width: 220px;
+  max-width: 320px;
+  max-height: 400px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  backdrop-filter: blur(12px);
+}
+.cfm-nf-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  flex-shrink: 0;
+}
+.cfm-nf-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.8);
+}
+.cfm-nf-title i {
+  margin-right: 4px;
+}
+.cfm-nf-toolbar-actions {
+  display: flex;
+  gap: 8px;
+}
+.cfm-nf-toolbar-actions i {
+  cursor: pointer;
+  font-size: 12px;
+  opacity: 0.6;
+  transition: opacity 0.2s;
+}
+.cfm-nf-toolbar-actions i:hover {
+  opacity: 1;
+}
+.cfm-nf-tree {
+  overflow-y: auto;
+  flex: 1;
+  padding: 4px 0;
+}
+.cfm-nf-item {
+  display: flex;
+  align-items: center;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+  font-size: 13px;
+  gap: 6px;
+  user-select: none;
+}
+.cfm-nf-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.cfm-nf-item.cfm-nf-active {
+  background: rgba(137, 180, 250, 0.15);
+  color: #89b4fa;
+}
+.cfm-nf-show-all {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding-left: 12px !important;
+}
+.cfm-nf-arrow {
+  width: 14px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.2s;
+  font-size: 10px;
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+.cfm-nf-arrow:hover {
+  opacity: 1;
+}
+.cfm-nf-arrow.cfm-nf-expanded {
+  transform: rotate(90deg);
+}
+.cfm-nf-arrow-placeholder {
+  width: 14px;
+  flex-shrink: 0;
+}
+.cfm-nf-icon {
+  font-size: 12px;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+.cfm-nf-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cfm-nf-count {
+  font-size: 11px;
+  opacity: 0.5;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* ==================== 角色世界书归类弹窗 ==================== */
+#cfm-charbook-classify-btn {
+  background: none !important;
+  border: 1px solid var(--SmartThemeBorderColor, #45475a) !important;
+  color: var(--SmartThemeBodyColor, #cdd6f4) !important;
+  cursor: pointer !important;
+  font-size: 13px !important;
+  padding: 2px 6px !important;
+  border-radius: 3px !important;
+  opacity: 0.6 !important;
+  transition: opacity 0.15s, background-color 0.15s, color 0.15s !important;
+  flex-shrink: 0;
+}
+#cfm-charbook-classify-btn:hover {
+  opacity: 1 !important;
+  background-color: rgba(255, 255, 255, 0.1) !important;
+  color: #f9e2af !important;
+}
+
+.cfm-cb-popup {
+  background: var(--SmartThemeBlurTintColor, #1a1a2e);
+  border: 1px solid var(--SmartThemeBorderColor, #444);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  color: var(--SmartThemeBodyColor, #ccc);
+  width: 560px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.cfm-cb-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  flex-shrink: 0;
+}
+.cfm-cb-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #f9e2af;
+}
+.cfm-cb-title i {
+  margin-right: 6px;
+}
+.cfm-cb-close {
+  background: none;
+  border: none;
+  color: var(--SmartThemeBodyColor, #ccc);
+  cursor: pointer;
+  font-size: 16px;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+  padding: 4px;
+}
+.cfm-cb-close:hover {
+  opacity: 1;
+  color: #f38ba8;
+}
+.cfm-cb-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 18px;
+}
+.cfm-cb-section {
+  margin-bottom: 16px;
+}
+.cfm-cb-section:last-of-type {
+  margin-bottom: 12px;
+}
+.cfm-cb-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--SmartThemeBodyColor, #cdd6f4);
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.cfm-cb-section-title i {
+  color: #89b4fa;
+}
+.cfm-cb-section-count {
+  font-size: 11px;
+  color: #a6adc8;
+  font-weight: normal;
+  margin-left: auto;
+}
+.cfm-cb-section-desc {
+  font-size: 11px;
+  color: #a6adc8;
+  margin-bottom: 8px;
+}
+.cfm-cb-list {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.15);
+}
+.cfm-cb-row {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  transition: background-color 0.1s;
+}
+.cfm-cb-row:last-child {
+  border-bottom: none;
+}
+.cfm-cb-row:hover {
+  background-color: rgba(255, 255, 255, 0.04);
+}
+.cfm-cb-check-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.cfm-cb-check-label input[type="checkbox"] {
+  accent-color: #f9e2af;
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+.cfm-cb-wi-name {
+  font-weight: 500;
+  color: var(--SmartThemeBodyColor, #cdd6f4);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cfm-cb-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 3px;
+  padding-left: 23px;
+  font-size: 11px;
+  color: #a6adc8;
+}
+.cfm-cb-chars {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 250px;
+}
+.cfm-cb-cur {
+  flex-shrink: 0;
+}
+.cfm-cb-status {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+.cfm-cb-imported {
+  color: #a6e3a1;
+  background: rgba(166, 227, 161, 0.12);
+}
+.cfm-cb-not-imported {
+  color: #f9e2af;
+  background: rgba(249, 226, 175, 0.12);
+}
+.cfm-cb-empty {
+  padding: 16px;
+  text-align: center;
+  color: #a6adc8;
+  font-size: 13px;
+}
+.cfm-cb-select-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+.cfm-cb-select-actions button {
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #a6adc8;
+  font-size: 11px;
+  padding: 2px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.cfm-cb-select-actions button:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--SmartThemeBodyColor, #cdd6f4);
+}
+.cfm-cb-target {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.cfm-cb-target-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--SmartThemeBodyColor, #cdd6f4);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.cfm-cb-target-label i {
+  margin-right: 4px;
+  color: #f9e2af;
+}
+.cfm-cb-target-select {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--SmartThemeBodyColor, #cdd6f4);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--SmartThemeBorderColor, #45475a);
+  border-radius: 6px;
+  outline: none;
+}
+.cfm-cb-target-select:focus {
+  border-color: #f9e2af;
+}
+.cfm-cb-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  flex-shrink: 0;
+}
+.cfm-cb-cancel, .cfm-cb-confirm {
+  padding: 7px 18px;
+  font-size: 13px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid var(--SmartThemeBorderColor, #45475a);
+  transition: all 0.15s;
+}
+.cfm-cb-cancel {
+  background: rgba(255, 255, 255, 0.06);
+  color: #a6adc8;
+}
+.cfm-cb-cancel:hover {
+  color: #f38ba8;
+  border-color: rgba(243, 139, 168, 0.4);
+  background: rgba(243, 139, 168, 0.1);
+}
+.cfm-cb-confirm {
+  background: rgba(249, 226, 175, 0.2);
+  color: #f9e2af;
+  border-color: rgba(249, 226, 175, 0.4);
+}
+.cfm-cb-confirm:hover {
+  background: rgba(249, 226, 175, 0.35);
+}
+
+.cfm-cb-auto-setting {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: rgba(249, 226, 175, 0.06);
+  border: 1px solid rgba(249, 226, 175, 0.15);
+  border-radius: 6px;
+}
+.cfm-cb-auto-setting .cfm-cb-check-label {
+  font-size: 12px;
+}
+.cfm-cb-auto-setting .cfm-cb-check-label input[type="checkbox"] {
+  accent-color: #f9e2af;
+}
+.cfm-cb-auto-hint {
+  font-size: 11px;
+  color: #a6adc8;
+  margin-top: 4px;
+  padding-left: 23px;
+}
+
+/* 移动端适配 */
+@media (max-width: 768px) {
+  #cfm-charbook-classify-overlay {
+    padding: 8px !important;
+    overflow-y: auto !important;
+    align-items: flex-start !important;
+    padding-top: 16px !important;
+    padding-bottom: 16px !important;
+  }
+  .cfm-cb-popup {
+    width: 95vw;
+    max-height: none;
+    flex-shrink: 0;
+  }
+  .cfm-cb-body {
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+  .cfm-cb-list {
+    max-height: 150px;
+  }
+  .cfm-cb-row-meta {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .cfm-cb-chars {
+    max-width: 100%;
+  }
+  .cfm-cb-target {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+  .cfm-cb-header {
+    padding: 10px 14px;
+  }
+  .cfm-cb-footer {
+    padding: 10px 14px;
   }
 }
