@@ -2695,6 +2695,34 @@ jQuery(async () => {
       $("#cfm-bg-rename-btn").attr("title", "重命名背景");
       $(".cfm-popup").removeClass("cfm-bg-rename-mode");
     }
+    // 世界书备注模式
+    if (cfmWorldInfoNoteMode) {
+      cfmWorldInfoNoteMode = false;
+      cfmWorldInfoNoteSelected.clear();
+      cfmWorldInfoNoteRangeMode = false;
+      cfmWorldInfoNoteLastClicked = null;
+      $("#cfm-worldinfo-note-btn").removeClass("cfm-edit-active");
+      $("#cfm-worldinfo-note-btn")
+        .find("i")
+        .removeClass("fa-check")
+        .addClass("fa-pen-to-square");
+      $("#cfm-worldinfo-note-btn").attr("title", "编辑备注");
+      $(".cfm-popup").removeClass("cfm-worldinfo-note-mode");
+    }
+    // 预设备注模式
+    if (cfmPresetNoteMode) {
+      cfmPresetNoteMode = false;
+      cfmPresetNoteSelected.clear();
+      cfmPresetNoteRangeMode = false;
+      cfmPresetNoteLastClicked = null;
+      $("#cfm-preset-note-btn").removeClass("cfm-edit-active");
+      $("#cfm-preset-note-btn")
+        .find("i")
+        .removeClass("fa-check")
+        .addClass("fa-pen-to-square");
+      $("#cfm-preset-note-btn").attr("title", "编辑备注");
+      $(".cfm-popup").removeClass("cfm-preset-note-mode");
+    }
   }
 
   function enterExportMode() {
@@ -3281,8 +3309,15 @@ jQuery(async () => {
       toastr.info(`正在删除 ${count} 个${typeLabel}...`);
 
       if (currentResourceType === "chars") {
+        const ctx = getContext();
+        const evtSource = ctx.eventSource;
+        const evtTypes = ctx.eventTypes;
+        const allChars = ctx.characters;
         for (const avatar of selected) {
           try {
+            // 在删除前获取角色信息，用于触发事件
+            const character = allChars.find((c) => c.avatar === avatar);
+            const chid = character ? allChars.indexOf(character) : -1;
             const resp = await fetch("/api/characters/delete", {
               method: "POST",
               headers: headers,
@@ -3299,6 +3334,14 @@ jQuery(async () => {
               else if (Array.isArray(favSet)) {
                 const idx = favSet.indexOf(avatar);
                 if (idx !== -1) favSet.splice(idx, 1);
+              }
+              // 触发 CHARACTER_DELETED 事件，让其他插件（如自动删除绑定世界书）能够响应
+              if (evtSource && evtTypes && character) {
+                try {
+                  await evtSource.emit(evtTypes.CHARACTER_DELETED, { id: chid, character: character });
+                } catch (evtErr) {
+                  console.warn(`[CFM] 触发 CHARACTER_DELETED 事件失败`, evtErr);
+                }
               }
               success++;
             } else {
@@ -4594,19 +4637,11 @@ jQuery(async () => {
   }
 
   function enterPresetNoteMode() {
+    clearAllExclusiveModes();
     cfmPresetNoteMode = true;
     cfmPresetNoteSelected.clear();
     cfmPresetNoteRangeMode = false;
     cfmPresetNoteLastClicked = null;
-    if (cfmMultiSelectMode) {
-      cfmMultiSelectMode = false;
-      clearMultiSelect();
-      cfmMultiSelectRangeMode = false;
-      $(".cfm-multisel-toggle").removeClass("cfm-multisel-active");
-    }
-    if (cfmExportMode) exitExportMode();
-    if (cfmResDeleteMode) exitResDeleteMode();
-    if (cfmPresetRenameMode) exitPresetRenameMode();
     $("#cfm-preset-note-btn").addClass("cfm-edit-active");
     $("#cfm-preset-note-btn")
       .find("i")
@@ -4812,19 +4847,11 @@ jQuery(async () => {
   }
 
   function enterWorldInfoNoteMode() {
+    clearAllExclusiveModes();
     cfmWorldInfoNoteMode = true;
     cfmWorldInfoNoteSelected.clear();
     cfmWorldInfoNoteRangeMode = false;
     cfmWorldInfoNoteLastClicked = null;
-    if (cfmMultiSelectMode) {
-      cfmMultiSelectMode = false;
-      clearMultiSelect();
-      cfmMultiSelectRangeMode = false;
-      $(".cfm-multisel-toggle").removeClass("cfm-multisel-active");
-    }
-    if (cfmExportMode) exitExportMode();
-    if (cfmResDeleteMode) exitResDeleteMode();
-    if (cfmWorldInfoRenameMode) exitWorldInfoRenameMode();
     $("#cfm-worldinfo-note-btn").addClass("cfm-edit-active");
     $("#cfm-worldinfo-note-btn")
       .find("i")
@@ -5019,19 +5046,11 @@ jQuery(async () => {
   let cfmPresetRenameLastClicked = null;
 
   function enterPresetRenameMode() {
+    clearAllExclusiveModes();
     cfmPresetRenameMode = true;
     cfmPresetRenameSelected.clear();
     cfmPresetRenameRangeMode = false;
     cfmPresetRenameLastClicked = null;
-    if (cfmMultiSelectMode) {
-      cfmMultiSelectMode = false;
-      clearMultiSelect();
-      cfmMultiSelectRangeMode = false;
-      $(".cfm-multisel-toggle").removeClass("cfm-multisel-active");
-    }
-    if (cfmExportMode) exitExportMode();
-    if (cfmResDeleteMode) exitResDeleteMode();
-    if (cfmPresetNoteMode) exitPresetNoteMode();
     $("#cfm-preset-rename-btn").addClass("cfm-edit-active");
     $("#cfm-preset-rename-btn")
       .find("i")
@@ -5531,7 +5550,8 @@ jQuery(async () => {
   }
 
   // 同步更新世界书DOM中的option（重命名后立即同步）
-  function syncWorldInfoOptionInDOM(oldName, newName) {
+  async function syncWorldInfoOptionInDOM(oldName, newName) {
+    // 更新编辑器下拉列表
     const $select = $("#world_editor_select");
     const $option = $select.find(`option`).filter(function () {
       return $(this).text() === oldName;
@@ -5544,6 +5564,29 @@ jQuery(async () => {
       }
     } else {
       $select.append($(`<option></option>`).val(newName).text(newName));
+    }
+    // 更新全局世界书选择器
+    const $globalSelect = $("#world_info");
+    const $globalOption = $globalSelect.find(`option`).filter(function () {
+      return $(this).text() === oldName;
+    });
+    if ($globalOption.length > 0) {
+      $globalOption.text(newName);
+    }
+    // 同步更新 world_names 数组（内存中的世界书名称列表）
+    try {
+      const wiModule = await import("../../../world-info.js");
+      const wNames = wiModule.world_names;
+      if (Array.isArray(wNames)) {
+        const oldIdx = wNames.indexOf(oldName);
+        if (oldIdx !== -1) {
+          wNames[oldIdx] = newName;
+        } else if (!wNames.includes(newName)) {
+          wNames.push(newName);
+        }
+      }
+    } catch (e) {
+      console.warn("[CFM] 同步 world_names 失败", e);
     }
     // 同时清除世界书名称缓存，确保下次渲染获取最新数据
     _worldInfoNamesCache = null;
@@ -5622,19 +5665,11 @@ jQuery(async () => {
   let cfmWorldInfoRenameLastClicked = null;
 
   function enterWorldInfoRenameMode() {
+    clearAllExclusiveModes();
     cfmWorldInfoRenameMode = true;
     cfmWorldInfoRenameSelected.clear();
     cfmWorldInfoRenameRangeMode = false;
     cfmWorldInfoRenameLastClicked = null;
-    if (cfmMultiSelectMode) {
-      cfmMultiSelectMode = false;
-      clearMultiSelect();
-      cfmMultiSelectRangeMode = false;
-      $(".cfm-multisel-toggle").removeClass("cfm-multisel-active");
-    }
-    if (cfmExportMode) exitExportMode();
-    if (cfmResDeleteMode) exitResDeleteMode();
-    if (cfmWorldInfoNoteMode) exitWorldInfoNoteMode();
     $("#cfm-worldinfo-rename-btn").addClass("cfm-edit-active");
     $("#cfm-worldinfo-rename-btn")
       .find("i")
@@ -5908,6 +5943,67 @@ jQuery(async () => {
     }
   }
 
+  // 世界书重命名后，更新所有角色卡的主绑定和辅助世界书引用
+  async function updateCharWorldBindings(oldName, newName) {
+    const characters = getContext().characters;
+    const headers = getContext().getRequestHeaders();
+    let updatedPrimary = 0;
+    let updatedAux = 0;
+
+    // 1. 更新角色卡主绑定世界书 (character.data.extensions.world)
+    for (const char of characters) {
+      if (char?.data?.extensions?.world === oldName) {
+        try {
+          const resp = await fetch("/api/characters/merge-attributes", {
+            method: "POST",
+            headers: headers,
+            body: JSON.stringify({
+              avatar: char.avatar,
+              data: { extensions: { world: newName } },
+            }),
+          });
+          if (resp.ok) {
+            // 更新本地缓存
+            char.data.extensions.world = newName;
+            updatedPrimary++;
+          }
+        } catch (e) {
+          console.warn(`[CFM] 更新角色 ${char.avatar} 的主绑定世界书失败`, e);
+        }
+      }
+    }
+
+    // 2. 更新辅助世界书 (world_info.charLore[].extraBooks)
+    try {
+      const wiModule = await import("../../../world-info.js");
+      const worldInfoObj = wiModule.world_info;
+      if (worldInfoObj?.charLore && Array.isArray(worldInfoObj.charLore)) {
+        let changed = false;
+        for (const entry of worldInfoObj.charLore) {
+          if (entry.extraBooks && Array.isArray(entry.extraBooks)) {
+            const idx = entry.extraBooks.indexOf(oldName);
+            if (idx !== -1) {
+              entry.extraBooks[idx] = newName;
+              changed = true;
+              updatedAux++;
+            }
+          }
+        }
+        if (changed) {
+          getContext().saveSettingsDebounced();
+        }
+      }
+    } catch (e) {
+      console.warn("[CFM] 更新辅助世界书绑定失败", e);
+    }
+
+    if (updatedPrimary > 0 || updatedAux > 0) {
+      console.log(
+        `[CFM] 世界书「${oldName}」→「${newName}」：更新了 ${updatedPrimary} 个主绑定、${updatedAux} 个辅助绑定`,
+      );
+    }
+  }
+
   // 执行世界书重命名
   async function executeWorldInfoRename(names) {
     const result = await showWorldInfoRenamePopup(names);
@@ -5949,8 +6045,10 @@ jQuery(async () => {
           body: JSON.stringify({ name: oldName }),
         });
         // 同步更新DOM中的option（防止渲染时清理逻辑误删新名称的分组）
-        syncWorldInfoOptionInDOM(oldName, newName);
+        await syncWorldInfoOptionInDOM(oldName, newName);
         updateSettingsAfterRename("worldinfo", oldName, newName);
+        // 更新角色卡的世界书绑定
+        await updateCharWorldBindings(oldName, newName);
         toastr.success(`已将「${oldName}」重命名为「${newName}」`);
       } catch (e) {
         console.error("[CFM] 世界书重命名失败", e);
@@ -6018,8 +6116,10 @@ jQuery(async () => {
             body: JSON.stringify({ name: oldName }),
           });
           // 同步更新DOM中的option
-          syncWorldInfoOptionInDOM(oldName, newName);
+          await syncWorldInfoOptionInDOM(oldName, newName);
           updateSettingsAfterRename("worldinfo", oldName, newName);
+          // 更新角色卡的世界书绑定
+          await updateCharWorldBindings(oldName, newName);
           success++;
         } catch (e) {
           console.warn(`[CFM] 重命名世界书 ${oldName} 失败`, e);
@@ -6043,19 +6143,11 @@ jQuery(async () => {
   let cfmEditLastClicked = null;
 
   function enterEditMode() {
+    clearAllExclusiveModes();
     cfmEditMode = true;
     cfmEditSelected.clear();
     cfmEditRangeMode = false;
     cfmEditLastClicked = null;
-    // 关闭其他模式
-    if (cfmMultiSelectMode) {
-      cfmMultiSelectMode = false;
-      clearMultiSelect();
-      cfmMultiSelectRangeMode = false;
-      $(".cfm-multisel-toggle").removeClass("cfm-multisel-active");
-    }
-    if (cfmExportMode) exitExportMode();
-    if (cfmResDeleteMode) exitResDeleteMode();
     // 更新按钮外观
     $("#cfm-edit-char-btn").addClass("cfm-edit-active");
     $("#cfm-edit-char-btn")
@@ -7572,6 +7664,34 @@ jQuery(async () => {
         }
         if (embImported > 0) {
           _worldInfoNamesCache = null;
+          // 强制从 API 刷新世界书名称列表，并同步到 DOM 和 world_names
+          try {
+            const freshNames = await getWorldInfoNames(true);
+            const wiModule = await import("../../../world-info.js");
+            const wNames = wiModule.world_names;
+            const editorSelect = $("#world_editor_select");
+            const globalSelect = $("#world_info");
+            for (const fn of freshNames) {
+              // 同步到 #world_editor_select
+              if (!editorSelect.find(`option[value="${CSS.escape(fn)}"]`).length) {
+                editorSelect.append(
+                  $('<option>').val(fn).text(fn)
+                );
+              }
+              // 同步到 #world_info
+              if (!globalSelect.find(`option[value="${CSS.escape(fn)}"]`).length) {
+                globalSelect.append(
+                  $('<option>').val(fn).text(fn)
+                );
+              }
+              // 同步到 world_names 数组
+              if (Array.isArray(wNames) && !wNames.includes(fn)) {
+                wNames.push(fn);
+              }
+            }
+          } catch (syncErr) {
+            console.warn("[CFM] 同步世界书名称到DOM失败", syncErr);
+          }
           toastr.info(`自动提取了 ${embImported} 个内嵌世界书`, "角色世界书");
         }
       }
@@ -14135,10 +14255,14 @@ jQuery(async () => {
       }
       if (ch.data?.character_book) {
         const bookName = ch.data.character_book.name || `${ch.name}'s Lorebook`;
+        // 判断是否已导入：内嵌世界书名称在列表中，或者角色已绑定了一个存在的世界书
+        const worldName = ch.data?.extensions?.world;
+        const imported =
+          wiNames.has(bookName) || (worldName && wiNames.has(worldName));
         embedded.set(ch.avatar, {
           name: ch.name || ch.avatar,
           bookName,
-          alreadyImported: wiNames.has(bookName),
+          alreadyImported: imported,
         });
       }
     }
@@ -14424,6 +14548,47 @@ jQuery(async () => {
 
       // 刷新缓存和视图
       _worldInfoNamesCache = null;
+      if (importedCount > 0) {
+        // 有新导入的世界书时，需要先同步DOM和world_names
+        // 通过API获取最新的世界书列表并更新DOM
+        try {
+          const resp = await fetch("/api/settings/get", {
+            method: "POST",
+            headers: getContext().getRequestHeaders(),
+            body: JSON.stringify({}),
+          });
+          if (resp.ok) {
+            const settingsData = await resp.json();
+            const latestNames = settingsData.world_names || [];
+            // 更新DOM中的world_editor_select
+            const $editorSelect = $("#world_editor_select");
+            const existingOptions = new Set();
+            $editorSelect.find("option").each(function () {
+              existingOptions.add($(this).text());
+            });
+            for (const wn of latestNames) {
+              if (!existingOptions.has(wn)) {
+                $editorSelect.append($(`<option></option>`).val(wn).text(wn));
+              }
+            }
+            // 同步更新内存中的world_names
+            try {
+              const wiModule = await import("../../../world-info.js");
+              const wNames = wiModule.world_names;
+              if (Array.isArray(wNames)) {
+                for (const wn of latestNames) {
+                  if (!wNames.includes(wn)) wNames.push(wn);
+                }
+              }
+            } catch (e) {
+              console.warn("[CFM] 同步 world_names 失败", e);
+            }
+            _worldInfoNamesCache = latestNames;
+          }
+        } catch (e) {
+          console.warn("[CFM] 刷新世界书列表失败", e);
+        }
+      }
       renderWorldInfoView();
 
       // 汇报结果
