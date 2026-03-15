@@ -1892,17 +1892,41 @@ jQuery(async () => {
   /**
    * 检测邻居按钮（用户设定管理）的实际图标样式
    * 通过 getComputedStyle 直接读取，不依赖 CSS 规则解析
-   * @returns {string|null} CSS url() 格式的图标URL，或 null
+   * @returns {{ cssUrl: string, target: string, styles: Object }|null}
+   *   cssUrl: CSS url() 格式的图标URL
+   *   target: 匹配到的元素选择器 (".drawer-icon" 或 ".drawer-toggle")
+   *   styles: 需要复制的额外样式（width, height 等）
    */
   function detectNeighborIcon() {
-    const neighborIcon = document.querySelector(
-      "#persona-management-button .drawer-icon",
-    );
-    if (!neighborIcon) return null;
-    const computed = window.getComputedStyle(neighborIcon);
-    const bgImage = computed.backgroundImage;
-    if (bgImage && bgImage !== "none" && bgImage !== "") {
-      return bgImage;
+    // 同时检测 .drawer-icon 和 .drawer-toggle 两种元素
+    for (const cls of [".drawer-icon", ".drawer-toggle"]) {
+      const neighborIcon = document.querySelector(
+        `#persona-management-button ${cls}`,
+      );
+      if (!neighborIcon) continue;
+      const computed = window.getComputedStyle(neighborIcon);
+      const bgImage = computed.backgroundImage;
+      if (bgImage && bgImage !== "none" && bgImage !== "") {
+        const extraStyles = {};
+        if (cls === ".drawer-toggle") {
+          // 从 .drawer-toggle 复制关键样式属性
+          const w = computed.width;
+          const h = computed.height;
+          const bgSize = computed.backgroundSize;
+          const bgRepeat = computed.backgroundRepeat;
+          const bgPos = computed.backgroundPosition;
+          const display = computed.display;
+          const color = computed.color;
+          if (w) extraStyles.width = w;
+          if (h) extraStyles.height = h;
+          if (bgSize) extraStyles.backgroundSize = bgSize;
+          if (bgRepeat) extraStyles.backgroundRepeat = bgRepeat;
+          if (bgPos) extraStyles.backgroundPosition = bgPos;
+          if (display) extraStyles.display = display;
+          if (color) extraStyles.color = color;
+        }
+        return { cssUrl: bgImage, target: cls, styles: extraStyles };
+      }
     }
     return null;
   }
@@ -1926,16 +1950,18 @@ jQuery(async () => {
           continue;
         for (const rule of sheet.cssRules) {
           if (!rule.selectorText || !rule.style) continue;
-          // 放宽匹配：任何包含 #xxx 和 .drawer-icon 的选择器
-          const match = rule.selectorText.match(
-            /#([\w-]+)(?:\s+|.*?)(?:\.drawer-icon)/,
-          );
           if (
-            match &&
-            rule.style.backgroundImage &&
-            rule.style.backgroundImage !== "none" &&
-            rule.style.backgroundImage !== ""
-          ) {
+            !rule.style.backgroundImage ||
+            rule.style.backgroundImage === "none" ||
+            rule.style.backgroundImage === ""
+          )
+            continue;
+          // 放宽匹配：任何包含 #xxx 和 .drawer-icon 或 .drawer-toggle 的选择器
+          // 支持逗号分隔的多选择器（matchAll 全局匹配）
+          const matches = rule.selectorText.matchAll(
+            /#([\w-]+)(?:\s+|.*?)(?:\.drawer-icon|\.drawer-toggle)/g,
+          );
+          for (const match of matches) {
             iconMap[match[1]] = rule.style.backgroundImage;
           }
         }
@@ -1953,12 +1979,16 @@ jQuery(async () => {
     ];
     for (const btnId of knownButtons) {
       if (iconMap[btnId]) continue; // CSS 规则已检测到
-      const iconEl = document.querySelector(`#${btnId} .drawer-icon`);
-      if (!iconEl) continue;
-      const computed = window.getComputedStyle(iconEl);
-      const bgImage = computed.backgroundImage;
-      if (bgImage && bgImage !== "none" && bgImage !== "") {
-        iconMap[btnId] = bgImage;
+      // 同时检测 .drawer-icon 和 .drawer-toggle 两种元素
+      for (const cls of [".drawer-icon", ".drawer-toggle"]) {
+        const iconEl = document.querySelector(`#${btnId} ${cls}`);
+        if (!iconEl) continue;
+        const computed = window.getComputedStyle(iconEl);
+        const bgImage = computed.backgroundImage;
+        if (bgImage && bgImage !== "none" && bgImage !== "") {
+          iconMap[btnId] = bgImage;
+          break;
+        }
       }
     }
     const uniqueUrls = [...new Set(Object.values(iconMap))];
@@ -1986,12 +2016,30 @@ jQuery(async () => {
   /**
    * 应用自定义图标到顶栏按钮
    * @param {string} cssUrl - CSS url() 格式的图标链接
+   * @param {string} [targetCls] - 图标来源元素类名（".drawer-icon" 或 ".drawer-toggle"）
+   * @param {Object} [extraStyles] - 需要额外复制的样式属性
    */
-  function applyCustomIcon(cssUrl) {
+  function applyCustomIcon(cssUrl, targetCls, extraStyles) {
     const icon = $("#cfm-topbar-button .drawer-icon");
     if (icon.length === 0) return;
     icon.addClass("cfm-custom-icon");
     icon.css("background-image", cssUrl);
+    // 如果图标来源是 .drawer-toggle，还需要将样式复制到插件的 .drawer-toggle
+    if (targetCls === ".drawer-toggle" && extraStyles) {
+      const toggle = $("#cfm-topbar-button .drawer-toggle");
+      if (toggle.length > 0) {
+        toggle.addClass("cfm-custom-toggle-icon");
+        toggle.css({
+          "background-image": cssUrl,
+          "background-repeat": extraStyles.backgroundRepeat || "no-repeat",
+          "background-position": extraStyles.backgroundPosition || "center",
+          "background-size": extraStyles.backgroundSize || "contain",
+          width: extraStyles.width || "27px",
+          height: extraStyles.height || "27px",
+          color: "transparent",
+        });
+      }
+    }
   }
 
   /**
@@ -2002,6 +2050,20 @@ jQuery(async () => {
     if (icon.length === 0) return;
     icon.removeClass("cfm-custom-icon");
     icon.css("background-image", "");
+    // 清除 .drawer-toggle 上的自定义样式
+    const toggle = $("#cfm-topbar-button .drawer-toggle");
+    if (toggle.length > 0) {
+      toggle.removeClass("cfm-custom-toggle-icon");
+      toggle.css({
+        "background-image": "",
+        "background-repeat": "",
+        "background-position": "",
+        "background-size": "",
+        width: "",
+        height: "",
+        color: "",
+      });
+    }
   }
 
   /**
@@ -2017,9 +2079,9 @@ jQuery(async () => {
       return;
     }
     // 自动检测：直接读取邻居按钮的实际样式
-    const neighborBg = detectNeighborIcon();
-    if (neighborBg) {
-      applyCustomIcon(neighborBg);
+    const result = detectNeighborIcon();
+    if (result) {
+      applyCustomIcon(result.cssUrl, result.target, result.styles);
       return;
     }
     // 没有美化主题或没有图标替换，保持默认FA图标
@@ -2090,9 +2152,11 @@ jQuery(async () => {
     }
 
     // --- 策略3: 轮询检测邻居按钮样式变化（兜底） ---
-    _lastNeighborBg = detectNeighborIcon();
+    const initResult = detectNeighborIcon();
+    _lastNeighborBg = initResult ? initResult.cssUrl : null;
     _themeCheckTimer = setInterval(() => {
-      const currentBg = detectNeighborIcon();
+      const result = detectNeighborIcon();
+      const currentBg = result ? result.cssUrl : null;
       if (currentBg !== _lastNeighborBg) {
         _lastNeighborBg = currentBg;
         onThemeStyleChange();
@@ -2111,10 +2175,10 @@ jQuery(async () => {
       return;
     }
     // 自动模式：重新检测邻居图标
-    const neighborBg = detectNeighborIcon();
-    _lastNeighborBg = neighborBg;
-    if (neighborBg) {
-      applyCustomIcon(neighborBg);
+    const result = detectNeighborIcon();
+    _lastNeighborBg = result ? result.cssUrl : null;
+    if (result) {
+      applyCustomIcon(result.cssUrl, result.target, result.styles);
     } else {
       clearCustomIcon();
     }
