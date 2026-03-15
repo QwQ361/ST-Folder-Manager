@@ -40,6 +40,11 @@
   display: none !important;
   content: "" !important;
 }
+/* 当主题对 .drawer-toggle 设置了自定义图标时，确保可点击 */
+#cfm-topbar-button .drawer-toggle.cfm-custom-toggle-icon {
+  cursor: pointer;
+  pointer-events: auto !important;
+}
 
 /* ========== 弹窗遮罩 ========== */
 #cfm-overlay {

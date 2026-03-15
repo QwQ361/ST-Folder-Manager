@@ -1874,7 +1874,7 @@ jQuery(async () => {
     const rightNav = $("#rightNavHolder");
     if (rightNav.length > 0) rightNav.before(btn);
     else $("#top-settings-holder").append(btn);
-    btn.find(".drawer-icon").on("click touchend", (e) => {
+    btn.find(".drawer-toggle").on("click touchend", (e) => {
       e.preventDefault();
       e.stopPropagation();
       showMainPopup();
