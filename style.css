@@ -621,6 +621,43 @@
 .cfm-icon-status-dot.cfm-status-inactive {
   background-color: #6c7086;
 }
+/* 默认打开页面配置区域 */
+.cfm-default-page-section {
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--SmartThemeBorderColor, #45475a);
+}
+.cfm-default-page-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.cfm-default-page-option {
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--SmartThemeBorderColor, #45475a);
+  background-color: rgba(255, 255, 255, 0.04);
+  color: var(--SmartThemeBodyColor, #cdd6f4);
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.15s;
+  user-select: none;
+}
+.cfm-default-page-option:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+.cfm-default-page-option.cfm-default-page-active {
+  background-color: rgba(137, 180, 250, 0.2);
+  border-color: #89b4fa;
+  color: #89b4fa;
+  font-weight: 600;
+}
+.cfm-default-page-option i {
+  font-size: 11px;
+}
 .cfm-mode-toggle {
   display: flex;
   gap: 8px;
