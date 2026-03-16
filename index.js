@@ -16773,7 +16773,9 @@ jQuery(async () => {
             ? "presets"
             : type === "themes"
               ? "themes"
-              : "worldinfo";
+              : type === "backgrounds"
+                ? "backgrounds"
+                : "worldinfo";
         const groups = getResourceGroups(resType);
         const tree = getResFolderTree(resType);
         let allItems;
