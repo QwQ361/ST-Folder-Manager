@@ -27,6 +27,13 @@ jQuery(async () => {
       extension_settings[extensionName].worldInfoNotes = {};
     if (!extension_settings[extensionName].bgNotes)
       extension_settings[extensionName].bgNotes = {};
+    if (!extension_settings[extensionName].bgOrientations)
+      extension_settings[extensionName].bgOrientations = {};
+    if (!extension_settings[extensionName].themeBackgroundBindings)
+      extension_settings[extensionName].themeBackgroundBindings = {};
+    // 默认背景图（切换到没有绑定背景的主题时使用，空字符串=不设置）
+    if (extension_settings[extensionName].defaultBackground === undefined)
+      extension_settings[extensionName].defaultBackground = "";
     // 迁移旧的 flat resourceFolders 到 tree 结构
     if (!extension_settings[extensionName].resourceFolderTree) {
       extension_settings[extensionName].resourceFolderTree = {
@@ -1133,7 +1140,7 @@ jQuery(async () => {
         "touchstart",
         (e) => {
           if (mgr.active) return;
-          if (e.target.closest(".cfm-row-star, .cfm-tnode-arrow")) return;
+          if (e.target.closest(".cfm-row-star, .cfm-tnode-arrow, .cfm-row-bglink-btn, .cfm-row-note-btn, .cfm-row-rename-btn, .cfm-row-edit-btn")) return;
           const t = e.touches[0];
           sx = t.clientX;
           sy = t.clientY;
@@ -1436,7 +1443,9 @@ jQuery(async () => {
               return;
             }
             reorderResFolder(resType, d.id, targetId, null);
-            toastr.success(`「${d.name}」已移入「${targetId}」`);
+            toastr.success(
+              `「${d.name}」已移入「${getResFolderDisplayName(resType, targetId)}」`,
+            );
           } else {
             const pId = resTree[targetId]?.parentId || null;
             if (wouldCreateResCycle(resType, d.id, pId)) {
@@ -1483,7 +1492,9 @@ jQuery(async () => {
           ) {
             if (!wouldCreateResCycle(resType, d.id, selFolder)) {
               reorderResFolder(resType, d.id, selFolder, null);
-              toastr.success(`「${d.name}」已移入「${selFolder}」`);
+              toastr.success(
+                `「${d.name}」已移入「${getResFolderDisplayName(resType, selFolder)}」`,
+              );
               if (resType === "presets") renderPresetsView();
               else if (resType === "worldinfo") renderWorldInfoView();
               else if (resType === "themes") renderThemesView();
@@ -1508,8 +1519,8 @@ jQuery(async () => {
           presetNames.forEach((n) => setItemGroup("presets", n, targetId));
           toastr.success(
             pCount > 1
-              ? `已将 ${pCount} 个预设移入「${targetId}」`
-              : `已将「${d.name}」移入「${targetId}」`,
+              ? `已将 ${pCount} 个预设移入「${getResFolderDisplayName("presets", targetId)}」`
+              : `已将「${d.name}」移入「${getResFolderDisplayName("presets", targetId)}」`,
           );
           if (d.multiSelect) clearMultiSelect();
           renderPresetsView();
@@ -1525,8 +1536,8 @@ jQuery(async () => {
           );
           toastr.success(
             pCount > 1
-              ? `已将 ${pCount} 个预设移入「${selectedPresetFolder}」`
-              : `已将「${d.name}」移入「${selectedPresetFolder}」`,
+              ? `已将 ${pCount} 个预设移入「${getResFolderDisplayName("presets", selectedPresetFolder)}」`
+              : `已将「${d.name}」移入「${getResFolderDisplayName("presets", selectedPresetFolder)}」`,
           );
           if (d.multiSelect) clearMultiSelect();
           renderPresetsView();
@@ -1548,8 +1559,8 @@ jQuery(async () => {
           wiNames.forEach((n) => setItemGroup("worldinfo", n, targetId));
           toastr.success(
             wCount > 1
-              ? `已将 ${wCount} 个世界书移入「${targetId}」`
-              : `已将「${d.name}」移入「${targetId}」`,
+              ? `已将 ${wCount} 个世界书移入「${getResFolderDisplayName("worldinfo", targetId)}」`
+              : `已将「${d.name}」移入「${getResFolderDisplayName("worldinfo", targetId)}」`,
           );
           if (d.multiSelect) clearMultiSelect();
           renderWorldInfoView();
@@ -1565,8 +1576,8 @@ jQuery(async () => {
           );
           toastr.success(
             wCount > 1
-              ? `已将 ${wCount} 个世界书移入「${selectedWorldInfoFolder}」`
-              : `已将「${d.name}」移入「${selectedWorldInfoFolder}」`,
+              ? `已将 ${wCount} 个世界书移入「${getResFolderDisplayName("worldinfo", selectedWorldInfoFolder)}」`
+              : `已将「${d.name}」移入「${getResFolderDisplayName("worldinfo", selectedWorldInfoFolder)}」`,
           );
           if (d.multiSelect) clearMultiSelect();
           renderWorldInfoView();
@@ -1588,8 +1599,8 @@ jQuery(async () => {
           renderThemesView();
           toastr.success(
             names.length > 1
-              ? `已将 ${names.length} 个主题移入「${targetId}」`
-              : `已将「${d.name}」移入「${targetId}」`,
+              ? `已将 ${names.length} 个主题移入「${getResFolderDisplayName("themes", targetId)}」`
+              : `已将「${d.name}」移入「${getResFolderDisplayName("themes", targetId)}」`,
           );
         } else if (
           !target &&
@@ -1603,8 +1614,8 @@ jQuery(async () => {
           renderThemesView();
           toastr.success(
             names.length > 1
-              ? `已将 ${names.length} 个主题移入「${selectedThemeFolder}」`
-              : `已将「${d.name}」移入「${selectedThemeFolder}」`,
+              ? `已将 ${names.length} 个主题移入「${getResFolderDisplayName("themes", selectedThemeFolder)}」`
+              : `已将「${d.name}」移入「${getResFolderDisplayName("themes", selectedThemeFolder)}」`,
           );
         }
       } else if (d.type === "background") {
@@ -1624,8 +1635,8 @@ jQuery(async () => {
           renderBackgroundsView();
           toastr.success(
             names.length > 1
-              ? `已将 ${names.length} 个背景移入「${targetId}」`
-              : `已将「${getBackgroundDisplayName(d.name)}」移入「${targetId}」`,
+              ? `已将 ${names.length} 个背景移入「${getResFolderDisplayName("backgrounds", targetId)}」`
+              : `已将「${getBackgroundDisplayName(d.name)}」移入「${getResFolderDisplayName("backgrounds", targetId)}」`,
           );
         } else if (
           !target &&
@@ -1641,8 +1652,8 @@ jQuery(async () => {
           renderBackgroundsView();
           toastr.success(
             names.length > 1
-              ? `已将 ${names.length} 个背景移入「${selectedBgFolder}」`
-              : `已将「${getBackgroundDisplayName(d.name)}」移入「${selectedBgFolder}」`,
+              ? `已将 ${names.length} 个背景移入「${getResFolderDisplayName("backgrounds", selectedBgFolder)}」`
+              : `已将「${getBackgroundDisplayName(d.name)}」移入「${getResFolderDisplayName("backgrounds", selectedBgFolder)}」`,
           );
         }
       }
@@ -1994,6 +2005,8 @@ jQuery(async () => {
       applyTopbarIconFromConfig();
       // 启动主题切换自动监听
       setupThemeChangeObserver();
+      // 监听主题切换，自动切换绑定的背景
+      setupThemeBgBindingListener();
     }, 500);
   }
 
@@ -2328,6 +2341,43 @@ jQuery(async () => {
     } else {
       clearCustomIcon();
     }
+  }
+
+  // ==================== 美化主题绑定背景 - 自动切换监听 ====================
+  let _lastThemeForBgBinding = null;
+  function setupThemeBgBindingListener() {
+    const themesSelect = document.getElementById("themes");
+    if (!themesSelect) return;
+    // 记录初始主题
+    _lastThemeForBgBinding = themesSelect.value || null;
+    // 监听 #themes 下拉框的 change 事件
+    $(themesSelect).on("change.cfmBgBinding", function () {
+      const newTheme = this.value;
+      if (!newTheme || newTheme === _lastThemeForBgBinding) return;
+      _lastThemeForBgBinding = newTheme;
+      // 检查是否有绑定的背景
+      const boundBg = getThemeBgBinding(newTheme);
+      const defaultBg = extension_settings[extensionName].defaultBackground || "";
+      if (boundBg) {
+        // 延迟一点执行，等主题样式应用完成
+        setTimeout(() => {
+          const currentBg = getCurrentBackgroundFile();
+          if (currentBg !== boundBg) {
+            applyBackground(boundBg);
+            toastr.info(`已自动切换背景为「${getBackgroundDisplayName(boundBg)}」`, "主题绑定背景", { timeOut: 2000 });
+          }
+        }, 500);
+      } else if (defaultBg) {
+        // 没有绑定背景但设置了默认背景，应用默认背景
+        setTimeout(() => {
+          const currentBg = getCurrentBackgroundFile();
+          if (currentBg !== defaultBg) {
+            applyBackground(defaultBg);
+            toastr.info(`已自动切换为默认背景「${getBackgroundDisplayName(defaultBg)}」`, "默认背景", { timeOut: 2000 });
+          }
+        }, 500);
+      }
+    });
   }
 
   function createFloatingButton() {
@@ -2743,59 +2793,20 @@ jQuery(async () => {
   let cfmMultiSelectLastClicked = null; // 框选：上次点击的标识符
   let cfmMultiSelectRangeMode = false; // 框选模式开关
 
-  // 双击移入文件夹检测状态（解决非角色卡资源类型 click 导致 DOM 重建后 dblclick 无法触发的问题）
-  let _dblClickFolderId = null;
-  let _dblClickTime = 0;
-  const DBL_CLICK_THRESHOLD = 500; // ms
-
   /**
-   * 检测文件夹双击并在多选模式下执行移入操作。
-   * 在 click 事件中调用，返回 true 表示检测到双击并已处理（调用方应 return 跳过后续逻辑）。
-   * @param {string} folderId - 被点击的文件夹 ID
+   * 靶子按钮点击：在多选模式下将选中的资源移入目标文件夹。
    * @param {Function} moveAction - 执行移入的回调 (selectedItems: string[]) => void
    * @param {Function} renderAction - 移入后的渲染回调
    * @param {Function} toastAction - 移入后的 toast 回调 (count: number, firstName: string) => void
-   * @param {Event} e - 原始事件对象，用于排除三角箭头
-   * @returns {boolean} 是否检测到双击并已处理
    */
-  function handleFolderDblClickMove(
-    folderId,
-    moveAction,
-    renderAction,
-    toastAction,
-    e,
-  ) {
-    if (!cfmMultiSelectMode || cfmMultiSelected.size === 0) {
-      _dblClickFolderId = null;
-      _dblClickTime = 0;
-      return false;
-    }
-    // 排除三角箭头区域
-    if (e && $(e.target).closest(".cfm-tnode-arrow").length) {
-      _dblClickFolderId = null;
-      _dblClickTime = 0;
-      return false;
-    }
-    const now = Date.now();
-    if (
-      _dblClickFolderId === folderId &&
-      now - _dblClickTime < DBL_CLICK_THRESHOLD
-    ) {
-      // 检测到双击
-      _dblClickFolderId = null;
-      _dblClickTime = 0;
-      const items = Array.from(cfmMultiSelected);
-      const count = items.length;
-      moveAction(items);
-      clearMultiSelect();
-      renderAction();
-      toastAction(count, items[0]);
-      return true;
-    }
-    // 记录第一次点击
-    _dblClickFolderId = folderId;
-    _dblClickTime = now;
-    return false;
+  function handleFolderTargetMove(moveAction, renderAction, toastAction) {
+    if (!cfmMultiSelectMode || cfmMultiSelected.size === 0) return;
+    const items = Array.from(cfmMultiSelected);
+    const count = items.length;
+    moveAction(items);
+    clearMultiSelect();
+    renderAction();
+    toastAction(count, items[0]);
   }
 
   // PC端拖拽数据备份（解决HTML5 dataTransfer可靠性问题）
@@ -2877,6 +2888,35 @@ jQuery(async () => {
   let cfmExportMode = false;
   let cfmExportSelected = new Set(); // 导出模式下选中的资源标识符
 
+  // 收集当前活跃模式的选中集合（用于模式切换时保留选中状态）
+  function collectCurrentSelection() {
+    if (cfmExportMode && cfmExportSelected.size > 0)
+      return new Set(cfmExportSelected);
+    if (cfmResDeleteMode && cfmResDeleteSelected.size > 0)
+      return new Set(cfmResDeleteSelected);
+    if (cfmEditMode && cfmEditSelected.size > 0)
+      return new Set(cfmEditSelected);
+    if (cfmThemeNoteMode && cfmThemeNoteSelected.size > 0)
+      return new Set(cfmThemeNoteSelected);
+    if (cfmThemeRenameMode && cfmThemeRenameSelected.size > 0)
+      return new Set(cfmThemeRenameSelected);
+    if (cfmBgNoteMode && cfmBgNoteSelected.size > 0)
+      return new Set(cfmBgNoteSelected);
+    if (cfmBgRenameMode && cfmBgRenameSelected.size > 0)
+      return new Set(cfmBgRenameSelected);
+    if (cfmPresetNoteMode && cfmPresetNoteSelected.size > 0)
+      return new Set(cfmPresetNoteSelected);
+    if (cfmPresetRenameMode && cfmPresetRenameSelected.size > 0)
+      return new Set(cfmPresetRenameSelected);
+    if (cfmWorldInfoNoteMode && cfmWorldInfoNoteSelected.size > 0)
+      return new Set(cfmWorldInfoNoteSelected);
+    if (cfmWorldInfoRenameMode && cfmWorldInfoRenameSelected.size > 0)
+      return new Set(cfmWorldInfoRenameSelected);
+    if (cfmMultiSelectMode && cfmMultiSelected.size > 0)
+      return new Set(cfmMultiSelected);
+    return null;
+  }
+
   // 统一清理所有互斥模式的状态和 DOM（不触发渲染）
   function clearAllExclusiveModes() {
     // 多选模式
@@ -2885,6 +2925,7 @@ jQuery(async () => {
       clearMultiSelect();
       cfmMultiSelectRangeMode = false;
       $(".cfm-multisel-toggle").removeClass("cfm-multisel-active");
+      $("#cfm-popup").removeClass("cfm-multisel-on");
     }
     // 导出模式
     if (cfmExportMode) {
@@ -3021,10 +3062,11 @@ jQuery(async () => {
   }
 
   function enterExportMode() {
+    const prev = collectCurrentSelection();
     clearAllExclusiveModes();
     // 设置导出模式状态
     cfmExportMode = true;
-    cfmExportSelected.clear();
+    cfmExportSelected = prev || new Set();
     // 更新导出按钮外观
     $(".cfm-export-btn").addClass("cfm-export-active");
     $(".cfm-export-btn")
@@ -3476,10 +3518,11 @@ jQuery(async () => {
   let cfmResDeleteLastClicked = null;
 
   function enterResDeleteMode() {
+    const prev = collectCurrentSelection();
     clearAllExclusiveModes();
     // 设置删除模式状态
     cfmResDeleteMode = true;
-    cfmResDeleteSelected.clear();
+    cfmResDeleteSelected = prev || new Set();
     cfmResDeleteRangeMode = false;
     cfmResDeleteLastClicked = null;
     // 更新删除按钮外观
@@ -3687,6 +3730,12 @@ jQuery(async () => {
               // 清理文件夹分配
               const groups = extension_settings[extensionName].themeGroups;
               if (groups && groups[name]) delete groups[name];
+              // 清理备注
+              if (extension_settings[extensionName].themeNotes?.[name])
+                delete extension_settings[extensionName].themeNotes[name];
+              // 清理背景绑定
+              if (extension_settings[extensionName].themeBackgroundBindings?.[name])
+                delete extension_settings[extensionName].themeBackgroundBindings[name];
               // 从酒馆原生DOM中移除对应option
               $("#themes option")
                 .filter(function () {
@@ -3727,9 +3776,22 @@ jQuery(async () => {
               // 清理文件夹分配
               const groups = extension_settings[extensionName].bgGroups;
               if (groups && groups[name]) delete groups[name];
-              // 清理备注
+              // 清理备注和方向
               const notes = extension_settings[extensionName].bgNotes;
               if (notes && notes[name]) delete notes[name];
+              const orients = extension_settings[extensionName].bgOrientations;
+              if (orients && orients[name]) delete orients[name];
+              // 清理所有主题中绑定该背景的记录
+              const bindings = extension_settings[extensionName].themeBackgroundBindings;
+              if (bindings) {
+                for (const [theme, bg] of Object.entries(bindings)) {
+                  if (bg === name) delete bindings[theme];
+                }
+              }
+              // 如果删除的是默认背景，清除默认背景设置
+              if (extension_settings[extensionName].defaultBackground === name) {
+                extension_settings[extensionName].defaultBackground = "";
+              }
               // 从酒馆原生DOM中移除对应背景元素
               $("#bg_menu_content .bg_example")
                 .filter(function () {
@@ -3824,10 +3886,221 @@ jQuery(async () => {
     getContext().saveSettingsDebounced();
   }
 
+  // ==================== 美化主题绑定背景 ====================
+  function getThemeBgBinding(themeName) {
+    return (
+      extension_settings[extensionName].themeBackgroundBindings?.[themeName] ||
+      ""
+    );
+  }
+  function setThemeBgBinding(themeName, bgfile) {
+    if (!extension_settings[extensionName].themeBackgroundBindings)
+      extension_settings[extensionName].themeBackgroundBindings = {};
+    if (bgfile) {
+      extension_settings[extensionName].themeBackgroundBindings[themeName] =
+        bgfile;
+    } else {
+      delete extension_settings[extensionName].themeBackgroundBindings[
+        themeName
+      ];
+    }
+    getContext().saveSettingsDebounced();
+  }
+  function removeThemeBgBinding(themeName) {
+    setThemeBgBinding(themeName, "");
+  }
+  /**
+   * 获取当前正在使用的背景文件名
+   * @returns {string} 当前背景文件名，如果无法获取则返回空字符串
+   */
+  function getCurrentBackgroundFile() {
+    const bg1 = document.getElementById("bg1");
+    if (!bg1) return "";
+    const style = bg1.getAttribute("style") || "";
+    // 从 style 中提取 url(...) 中的文件名
+    const match = style.match(/url\(["']?\/?backgrounds\/([^"')]+)["']?\)/);
+    if (match && match[1]) {
+      try {
+        return decodeURIComponent(match[1]);
+      } catch {
+        return match[1];
+      }
+    }
+    return "";
+  }
+  /**
+   * 点击锁链按钮的处理逻辑
+   */
+  function handleThemeBgLink(themeName) {
+    // 检查该主题是否是当前应用的主题
+    // 同时检查多个来源，因为 power_user.theme 和 #themes 下拉框的更新可能有延迟
+    const themesSelect = document.getElementById("themes");
+    const selectValue = themesSelect ? themesSelect.value : null;
+    const powerUserTheme =
+      typeof power_user !== "undefined" ? power_user.theme : null;
+    const isCurrentTheme =
+      themeName === selectValue || themeName === powerUserTheme;
+    if (!isCurrentTheme) {
+      toastr.warning("请先应用该美化主题，再点击锁链绑定背景", "提示", {
+        timeOut: 3000,
+      });
+      return;
+    }
+    const existingBinding = getThemeBgBinding(themeName);
+    const currentBg = getCurrentBackgroundFile();
+    if (existingBinding) {
+      // 已有绑定，弹出选择：更新绑定 / 解除绑定 / 取消
+      $("#cfm-bglink-overlay").remove();
+      const bgDisplayName = getBackgroundDisplayName(existingBinding);
+      const currentBgDisplay = currentBg
+        ? getBackgroundDisplayName(currentBg)
+        : "无";
+      const updateDisabled = !currentBg || currentBg === existingBinding;
+      const overlay = $('<div id="cfm-bglink-overlay" class="cfm-batch-overlay"></div>');
+      const dialog = $(`
+        <div class="cfm-batch-popup" style="max-width:420px;">
+          <div class="cfm-config-header"><h3>🔗 主题背景绑定</h3><button class="cfm-btn-close" id="cfm-bglink-close">&times;</button></div>
+          <div style="padding:16px;text-align:center;">
+            <p style="margin-bottom:8px;font-size:13px;">当前绑定背景：<b style="color:#f5c542;">${escapeHtml(bgDisplayName)}</b></p>
+            <p style="margin-bottom:12px;font-size:13px;">当前使用背景：<b style="color:#5dade2;">${escapeHtml(currentBgDisplay)}</b></p>
+            <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
+              <button class="cfm-btn" id="cfm-bglink-update" ${updateDisabled ? 'disabled style="opacity:0.4;pointer-events:none;"' : 'style="background:rgba(166,227,161,0.15);border-color:rgba(166,227,161,0.4);"'}>更新为当前背景</button>
+              <button class="cfm-btn" id="cfm-bglink-unbind" style="background:rgba(237,66,69,0.15);border-color:rgba(237,66,69,0.4);color:#e74c3c;">解除绑定</button>
+              <button class="cfm-btn" id="cfm-bglink-cancel" style="opacity:0.7;">取消</button>
+            </div>
+          </div>
+        </div>
+      `);
+      overlay.append(dialog);
+      $("body").append(overlay);
+      const closeOverlay = () => overlay.remove();
+      dialog.find("#cfm-bglink-close, #cfm-bglink-cancel").on("click touchend", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        closeOverlay();
+      });
+      dialog.find("#cfm-bglink-update").on("click touchend", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setThemeBgBinding(themeName, currentBg);
+        toastr.success(`已更新「${themeName}」绑定背景为「${getBackgroundDisplayName(currentBg)}」`);
+        closeOverlay();
+        if (currentResourceType === "themes") renderThemesView();
+      });
+      dialog.find("#cfm-bglink-unbind").on("click touchend", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        removeThemeBgBinding(themeName);
+        toastr.info(`已解除「${themeName}」的背景绑定`);
+        closeOverlay();
+        if (currentResourceType === "themes") renderThemesView();
+      });
+      overlay.on("click", (e) => {
+        if ($(e.target).is(overlay)) closeOverlay();
+      });
+    } else {
+      // 没有绑定，直接绑定当前背景
+      if (!currentBg) {
+        toastr.warning("当前没有使用任何背景，无法绑定", "提示");
+        return;
+      }
+      setThemeBgBinding(themeName, currentBg);
+      toastr.success(
+        `已将「${themeName}」绑定背景「${getBackgroundDisplayName(currentBg)}」`,
+      );
+      if (currentResourceType === "themes") renderThemesView();
+    }
+  }
+
+  /**
+   * 设置/清除默认背景图
+   */
+  function handleDefaultBgSetting() {
+    // 移除已有的弹窗
+    $("#cfm-defbg-overlay").remove();
+    const currentDefault =
+      extension_settings[extensionName].defaultBackground || "";
+    const currentBg = getCurrentBackgroundFile();
+    const currentDefaultDisplay = currentDefault
+      ? getBackgroundDisplayName(currentDefault)
+      : "未设置";
+    const currentBgDisplay = currentBg
+      ? getBackgroundDisplayName(currentBg)
+      : "无";
+    const setDisabled = !currentBg || currentBg === currentDefault;
+    const clearDisabled = !currentDefault;
+    const overlay = $('<div id="cfm-defbg-overlay" class="cfm-batch-overlay"></div>');
+    const dialog = $(`
+      <div class="cfm-batch-popup" style="max-width:420px;">
+        <div class="cfm-config-header"><h3>🖼️ 默认背景设置</h3><button class="cfm-btn-close" id="cfm-defbg-close">&times;</button></div>
+        <div style="padding:16px;text-align:center;">
+          <p style="margin-bottom:8px;font-size:13px;">当前默认背景：<b style="color:#f5c542;">${escapeHtml(currentDefaultDisplay)}</b></p>
+          <p style="margin-bottom:12px;font-size:13px;">当前使用背景：<b style="color:#5dade2;">${escapeHtml(currentBgDisplay)}</b></p>
+          <p style="font-size:12px;opacity:0.7;margin-bottom:16px;">切换到没有绑定背景的美化主题时，将自动应用默认背景</p>
+          <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
+            <button class="cfm-btn" id="cfm-defbg-set" ${setDisabled ? 'disabled style="opacity:0.4;pointer-events:none;"' : 'style="background:rgba(166,227,161,0.15);border-color:rgba(166,227,161,0.4);"'}>设为当前背景</button>
+            <button class="cfm-btn" id="cfm-defbg-clear" ${clearDisabled ? 'disabled style="opacity:0.4;pointer-events:none;"' : 'style="background:rgba(237,66,69,0.15);border-color:rgba(237,66,69,0.4);color:#e74c3c;"'}>清除默认背景</button>
+            <button class="cfm-btn" id="cfm-defbg-cancel" style="opacity:0.7;">取消</button>
+          </div>
+        </div>
+      </div>
+    `);
+    overlay.append(dialog);
+    $("body").append(overlay);
+    const closeOverlay = () => overlay.remove();
+    dialog.find("#cfm-defbg-close, #cfm-defbg-cancel").on("click touchend", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      closeOverlay();
+    });
+    dialog.find("#cfm-defbg-set").on("click touchend", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      extension_settings[extensionName].defaultBackground = currentBg;
+      getContext().saveSettingsDebounced();
+      toastr.success(`已将默认背景设为「${getBackgroundDisplayName(currentBg)}」`);
+      closeOverlay();
+      updateDefaultBgBtnState();
+    });
+    dialog.find("#cfm-defbg-clear").on("click touchend", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      extension_settings[extensionName].defaultBackground = "";
+      getContext().saveSettingsDebounced();
+      toastr.info("已清除默认背景");
+      closeOverlay();
+      updateDefaultBgBtnState();
+    });
+    // 点击遮罩层关闭
+    overlay.on("click", (e) => {
+      if ($(e.target).is(overlay)) closeOverlay();
+    });
+  }
+
+  /**
+   * 更新默认背景按钮的视觉状态
+   */
+  function updateDefaultBgBtnState() {
+    const btn = $("#cfm-bg-default-btn");
+    if (!btn.length) return;
+    const hasDefault = !!extension_settings[extensionName].defaultBackground;
+    if (hasDefault) {
+      btn.addClass("cfm-edit-active");
+      btn.attr(
+        "title",
+        `默认背景: ${getBackgroundDisplayName(extension_settings[extensionName].defaultBackground)} (点击管理)`,
+      );
+    } else {
+      btn.removeClass("cfm-edit-active");
+      btn.attr("title", "设置默认背景");
+    }
+  }
+
   function enterThemeNoteMode() {
+    const prev = collectCurrentSelection();
     clearAllExclusiveModes();
     cfmThemeNoteMode = true;
-    cfmThemeNoteSelected.clear();
+    cfmThemeNoteSelected = prev || new Set();
     cfmThemeNoteRangeMode = false;
     cfmThemeNoteLastClicked = null;
     $("#cfm-theme-note-btn").addClass("cfm-edit-active");
@@ -4013,6 +4286,80 @@ jQuery(async () => {
     }
   }
 
+  // ==================== 背景方向识别 ====================
+  const BG_ORIENT_LANDSCAPE = "landscape";
+  const BG_ORIENT_PORTRAIT = "portrait";
+  const BG_ORIENT_OTHER = "other";
+  const BG_ORIENT_LABELS = {
+    [BG_ORIENT_LANDSCAPE]: "横屏",
+    [BG_ORIENT_PORTRAIT]: "竖屏",
+    [BG_ORIENT_OTHER]: "其它",
+  };
+  const BG_ORIENT_ICONS = {
+    [BG_ORIENT_LANDSCAPE]: "fa-display",
+    [BG_ORIENT_PORTRAIT]: "fa-mobile-screen",
+    [BG_ORIENT_OTHER]: "fa-expand",
+  };
+
+  function getBgOrientation(name) {
+    return extension_settings[extensionName].bgOrientations?.[name] || null;
+  }
+  function setBgOrientation(name, orient) {
+    if (!extension_settings[extensionName].bgOrientations)
+      extension_settings[extensionName].bgOrientations = {};
+    if (orient) {
+      extension_settings[extensionName].bgOrientations[name] = orient;
+    } else {
+      delete extension_settings[extensionName].bgOrientations[name];
+    }
+    getContext().saveSettingsDebounced();
+  }
+
+  /**
+   * 自动检测背景图片方向（通过加载图片获取宽高比）
+   * @param {string} name - 背景文件名
+   * @returns {Promise<string>} 'landscape' | 'portrait' | 'other'
+   */
+  function detectBgOrientation(name) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const ratio = img.naturalWidth / img.naturalHeight;
+        if (ratio > 1.15) resolve(BG_ORIENT_LANDSCAPE);
+        else if (ratio < 0.87) resolve(BG_ORIENT_PORTRAIT);
+        else resolve(BG_ORIENT_OTHER);
+      };
+      img.onerror = () => resolve(BG_ORIENT_OTHER);
+      img.src = getBackgroundThumbnailUrl(name);
+    });
+  }
+
+  /**
+   * 批量自动检测并保存背景方向（仅对未检测过的背景执行）
+   * @param {string[]} bgNames - 背景文件名列表
+   * @param {boolean} force - 是否强制重新检测
+   */
+  async function autoDetectBgOrientations(bgNames, force = false) {
+    const toDetect = force
+      ? bgNames
+      : bgNames.filter((n) => !getBgOrientation(n));
+    if (toDetect.length === 0) return;
+    // 并发检测，但限制并发数避免卡顿
+    const batchSize = 8;
+    for (let i = 0; i < toDetect.length; i += batchSize) {
+      const batch = toDetect.slice(i, i + batchSize);
+      const results = await Promise.all(
+        batch.map(async (name) => {
+          const orient = await detectBgOrientation(name);
+          return { name, orient };
+        }),
+      );
+      for (const { name, orient } of results) {
+        setBgOrientation(name, orient);
+      }
+    }
+  }
+
   // ==================== 背景备注编辑模式 ====================
   let cfmBgNoteMode = false;
   let cfmBgNoteSelected = new Set();
@@ -4034,9 +4381,10 @@ jQuery(async () => {
   }
 
   function enterBgNoteMode() {
+    const prev = collectCurrentSelection();
     clearAllExclusiveModes();
     cfmBgNoteMode = true;
-    cfmBgNoteSelected.clear();
+    cfmBgNoteSelected = prev || new Set();
     cfmBgNoteRangeMode = false;
     cfmBgNoteLastClicked = null;
     $("#cfm-bg-note-btn").addClass("cfm-edit-active");
@@ -4122,8 +4470,10 @@ jQuery(async () => {
   async function showBgNotePopup(bgNames) {
     if (!bgNames || bgNames.length === 0) return;
     let defaultNote = "";
+    let defaultOrient = "";
     if (bgNames.length === 1) {
       defaultNote = getBgNote(bgNames[0]);
+      defaultOrient = getBgOrientation(bgNames[0]) || "";
     }
     const nameListHtml =
       bgNames.length <= 5
@@ -4142,11 +4492,40 @@ jQuery(async () => {
             .join("") +
           `<div class="cfm-edit-name-item cfm-edit-name-more">...等共 ${bgNames.length} 个背景</div>`;
 
+    const orientOptions = [
+      { value: "", label: "不修改", icon: "fa-minus" },
+      {
+        value: BG_ORIENT_LANDSCAPE,
+        label: "横屏",
+        icon: BG_ORIENT_ICONS[BG_ORIENT_LANDSCAPE],
+      },
+      {
+        value: BG_ORIENT_PORTRAIT,
+        label: "竖屏",
+        icon: BG_ORIENT_ICONS[BG_ORIENT_PORTRAIT],
+      },
+      {
+        value: BG_ORIENT_OTHER,
+        label: "其它",
+        icon: BG_ORIENT_ICONS[BG_ORIENT_OTHER],
+      },
+    ];
+    const orientHtml = orientOptions
+      .map(
+        (o) =>
+          `<label class="cfm-orient-option ${defaultOrient === o.value ? "cfm-orient-active" : ""}"><input type="radio" name="cfm-bg-orient" value="${o.value}" ${defaultOrient === o.value ? "checked" : ""}><i class="fa-solid ${o.icon}"></i> ${o.label}</label>`,
+      )
+      .join("");
+
     const popupHtml = `
       <div class="cfm-edit-popup-overlay">
         <div class="cfm-edit-popup">
           <div class="cfm-edit-popup-title">编辑背景备注</div>
           <div class="cfm-edit-popup-names">${nameListHtml}</div>
+          <div class="cfm-edit-popup-field cfm-orient-field">
+            <label>屏幕方向</label>
+            <div class="cfm-orient-group">${orientHtml}</div>
+          </div>
           <div class="cfm-edit-popup-field">
             <label>备注</label>
             <input type="text" class="cfm-edit-input" id="cfm-bg-note-input" value="${escapeHtml(defaultNote)}" placeholder="${bgNames.length > 1 ? "留空则不修改，点击清除可批量清空" : "输入备注内容"}">
@@ -4161,6 +4540,13 @@ jQuery(async () => {
     `;
     const overlay = $(popupHtml);
     $("body").append(overlay);
+
+    // 方向选项点击高亮
+    overlay.find(".cfm-orient-option").on("click", function () {
+      overlay.find(".cfm-orient-option").removeClass("cfm-orient-active");
+      $(this).addClass("cfm-orient-active");
+    });
+
     overlay.find("#cfm-bg-note-input").focus();
 
     return new Promise((resolve) => {
@@ -4176,12 +4562,14 @@ jQuery(async () => {
       });
       overlay.find(".cfm-edit-popup-clear").on("click", () => {
         overlay.remove();
-        resolve({ note: "", clear: true });
+        resolve({ note: "", orient: "", clear: true });
       });
       overlay.find(".cfm-edit-popup-confirm").on("click", () => {
         const note = overlay.find("#cfm-bg-note-input").val().trim();
+        const orient =
+          overlay.find('input[name="cfm-bg-orient"]:checked').val() || "";
         overlay.remove();
-        resolve({ note, clear: false });
+        resolve({ note, orient, clear: false });
       });
       overlay.find(".cfm-edit-input").on("keydown", (e) => {
         if (e.key === "Enter") {
@@ -4198,24 +4586,32 @@ jQuery(async () => {
   async function executeBgNoteEdit(names) {
     const result = await showBgNotePopup(names);
     if (!result) return;
-    const { note, clear } = result;
+    const { note, orient, clear } = result;
     const isBatch = names.length > 1;
-    if (isBatch && !note && !clear) {
-      toastr.warning("请输入备注内容");
+    if (isBatch && !note && !orient && !clear) {
+      toastr.warning("请输入备注内容或选择屏幕方向");
       return;
     }
     let count = 0;
     for (const name of names) {
+      let changed = false;
+      // 处理方向
+      if (orient) {
+        setBgOrientation(name, orient);
+        changed = true;
+      }
+      // 处理备注
       if (clear) {
         setBgNote(name, "");
-        count++;
+        changed = true;
       } else if (note) {
         setBgNote(name, note);
-        count++;
+        changed = true;
       } else if (!isBatch) {
         setBgNote(name, "");
-        count++;
+        changed = true;
       }
+      if (changed) count++;
     }
     if (count > 0) {
       toastr.success(`已更新 ${count} 个背景的备注`);
@@ -4230,9 +4626,10 @@ jQuery(async () => {
   let cfmThemeRenameLastClicked = null;
 
   function enterThemeRenameMode() {
+    const prev = collectCurrentSelection();
     clearAllExclusiveModes();
     cfmThemeRenameMode = true;
-    cfmThemeRenameSelected.clear();
+    cfmThemeRenameSelected = prev || new Set();
     cfmThemeRenameRangeMode = false;
     cfmThemeRenameLastClicked = null;
     $("#cfm-theme-rename-btn").addClass("cfm-edit-active");
@@ -4604,9 +5001,10 @@ jQuery(async () => {
   let cfmBgRenameLastClicked = null;
 
   function enterBgRenameMode() {
+    const prev = collectCurrentSelection();
     clearAllExclusiveModes();
     cfmBgRenameMode = true;
-    cfmBgRenameSelected.clear();
+    cfmBgRenameSelected = prev || new Set();
     cfmBgRenameRangeMode = false;
     cfmBgRenameLastClicked = null;
     $("#cfm-bg-rename-btn").addClass("cfm-edit-active");
@@ -4956,9 +5354,10 @@ jQuery(async () => {
   }
 
   function enterPresetNoteMode() {
+    const prev = collectCurrentSelection();
     clearAllExclusiveModes();
     cfmPresetNoteMode = true;
-    cfmPresetNoteSelected.clear();
+    cfmPresetNoteSelected = prev || new Set();
     cfmPresetNoteRangeMode = false;
     cfmPresetNoteLastClicked = null;
     $("#cfm-preset-note-btn").addClass("cfm-edit-active");
@@ -5166,9 +5565,10 @@ jQuery(async () => {
   }
 
   function enterWorldInfoNoteMode() {
+    const prev = collectCurrentSelection();
     clearAllExclusiveModes();
     cfmWorldInfoNoteMode = true;
-    cfmWorldInfoNoteSelected.clear();
+    cfmWorldInfoNoteSelected = prev || new Set();
     cfmWorldInfoNoteRangeMode = false;
     cfmWorldInfoNoteLastClicked = null;
     $("#cfm-worldinfo-note-btn").addClass("cfm-edit-active");
@@ -5365,9 +5765,10 @@ jQuery(async () => {
   let cfmPresetRenameLastClicked = null;
 
   function enterPresetRenameMode() {
+    const prev = collectCurrentSelection();
     clearAllExclusiveModes();
     cfmPresetRenameMode = true;
-    cfmPresetRenameSelected.clear();
+    cfmPresetRenameSelected = prev || new Set();
     cfmPresetRenameRangeMode = false;
     cfmPresetRenameLastClicked = null;
     $("#cfm-preset-rename-btn").addClass("cfm-edit-active");
@@ -5967,11 +6368,36 @@ jQuery(async () => {
         notes[newName] = notes[oldName];
         delete notes[oldName];
       }
+      // 同步背景绑定数据
+      const bindings = extension_settings[extensionName].themeBackgroundBindings;
+      if (bindings && bindings[oldName]) {
+        bindings[newName] = bindings[oldName];
+        delete bindings[oldName];
+      }
     } else if (resType === "backgrounds") {
       const notes = extension_settings[extensionName].bgNotes;
       if (notes && notes[oldName]) {
         notes[newName] = notes[oldName];
         delete notes[oldName];
+      }
+      // 同步方向数据
+      const orients = extension_settings[extensionName].bgOrientations;
+      if (orients && orients[oldName]) {
+        orients[newName] = orients[oldName];
+        delete orients[oldName];
+      }
+      // 同步主题绑定背景数据（背景重命名时更新所有引用该背景的绑定）
+      const bindings = extension_settings[extensionName].themeBackgroundBindings;
+      if (bindings) {
+        for (const [theme, bg] of Object.entries(bindings)) {
+          if (bg === oldName) {
+            bindings[theme] = newName;
+          }
+        }
+      }
+      // 同步默认背景设置
+      if (extension_settings[extensionName].defaultBackground === oldName) {
+        extension_settings[extensionName].defaultBackground = newName;
       }
     }
     getContext().saveSettingsDebounced();
@@ -5984,9 +6410,10 @@ jQuery(async () => {
   let cfmWorldInfoRenameLastClicked = null;
 
   function enterWorldInfoRenameMode() {
+    const prev = collectCurrentSelection();
     clearAllExclusiveModes();
     cfmWorldInfoRenameMode = true;
-    cfmWorldInfoRenameSelected.clear();
+    cfmWorldInfoRenameSelected = prev || new Set();
     cfmWorldInfoRenameRangeMode = false;
     cfmWorldInfoRenameLastClicked = null;
     $("#cfm-worldinfo-rename-btn").addClass("cfm-edit-active");
@@ -6462,9 +6889,10 @@ jQuery(async () => {
   let cfmEditLastClicked = null;
 
   function enterEditMode() {
+    const prev = collectCurrentSelection();
     clearAllExclusiveModes();
     cfmEditMode = true;
-    cfmEditSelected.clear();
+    cfmEditSelected = prev || new Set();
     cfmEditRangeMode = false;
     cfmEditLastClicked = null;
     // 更新按钮外观
@@ -6737,9 +7165,11 @@ jQuery(async () => {
     }
   }
 
-  // PC端dragend辅助：清除全局拖拽数据
+  // PC端dragend辅助：清除全局拖拽数据和视觉反馈
   function pcDragEnd() {
     _pcDragData = null;
+    // 清除所有右栏拖放高亮
+    $(".cfm-right-list-drop-target").removeClass("cfm-right-list-drop-target");
   }
 
   function showMainPopup() {
@@ -7044,6 +7474,7 @@ jQuery(async () => {
                             <button class="cfm-import-btn" id="cfm-import-bg-btn" title="导入背景"><i class="fa-solid fa-file-import"></i></button>
                             <button class="cfm-edit-char-btn" id="cfm-bg-note-btn" title="编辑备注"><i class="fa-solid fa-pen-to-square"></i></button>
                             <button class="cfm-edit-char-btn" id="cfm-bg-rename-btn" title="重命名背景"><i class="fa-solid fa-i-cursor"></i></button>
+                            <button class="cfm-edit-char-btn" id="cfm-bg-default-btn" title="设置默认背景"><i class="fa-solid fa-image"></i></button>
                             <input type="file" id="cfm-import-bg-file" multiple accept="image/*" style="display:none;">
                             <button class="cfm-export-btn" id="cfm-export-bg-btn" title="导出背景"><i class="fa-solid fa-file-export"></i></button>
                             <button class="cfm-res-delete-btn" id="cfm-res-delete-bg-btn" title="删除背景"><i class="fa-solid fa-trash-can"></i></button>
@@ -7850,22 +8281,38 @@ jQuery(async () => {
     popup.find(".cfm-multisel-toggle").on("click touchend", function (e) {
       e.preventDefault();
       e.stopPropagation();
-      // 导出/删除/重命名模式下不允许切换多选
-      if (
+      // 检查是否有其他互斥模式激活
+      const hasExclusiveMode =
         cfmExportMode ||
         cfmResDeleteMode ||
+        cfmEditMode ||
         cfmPresetRenameMode ||
-        cfmWorldInfoRenameMode
-      )
-        return;
-      cfmMultiSelectMode = !cfmMultiSelectMode;
-      clearMultiSelect();
-      cfmMultiSelectRangeMode = false;
+        cfmWorldInfoRenameMode ||
+        cfmThemeRenameMode ||
+        cfmBgRenameMode ||
+        cfmPresetNoteMode ||
+        cfmWorldInfoNoteMode ||
+        cfmThemeNoteMode ||
+        cfmBgNoteMode;
+      if (hasExclusiveMode) {
+        // 收集选中并退出互斥模式，进入多选
+        const prev = collectCurrentSelection();
+        clearAllExclusiveModes();
+        cfmMultiSelectMode = true;
+        cfmMultiSelected = prev || new Set();
+        cfmMultiSelectRangeMode = false;
+      } else {
+        cfmMultiSelectMode = !cfmMultiSelectMode;
+        clearMultiSelect();
+        cfmMultiSelectRangeMode = false;
+      }
       // 更新所有多选按钮的视觉状态
       $(".cfm-multisel-toggle").toggleClass(
         "cfm-multisel-active",
         cfmMultiSelectMode,
       );
+      // 在 popup 容器上标记多选模式，用于 CSS 控制靶子图标显隐
+      $("#cfm-popup").toggleClass("cfm-multisel-on", cfmMultiSelectMode);
       // 重新渲染当前视图
       if (currentResourceType === "chars") renderRightPane();
       else if (currentResourceType === "presets") renderPresetsView();
@@ -8011,66 +8458,25 @@ jQuery(async () => {
           try {
             const bookName =
               ch.data.character_book.name || `${ch.name}'s Lorebook`;
-            const characterBook = ch.data.character_book;
-            const formData = new FormData();
-            const blob = new Blob([JSON.stringify(characterBook)], {
-              type: "application/json",
-            });
-            formData.append(
-              "avatar",
-              new File([blob], bookName + ".json", {
-                type: "application/json",
-              }),
+            // 使用酒馆原生的 convertCharacterBook 将 V2 格式转换为 ST 内部格式
+            const ctx = getContext();
+            const convertedBook = ctx.convertCharacterBook(
+              ch.data.character_book,
             );
-            formData.append("convertedData", JSON.stringify(characterBook));
-            const result = await fetch("/api/worldinfo/import", {
-              method: "POST",
-              headers: getContext().getRequestHeaders({
-                omitContentType: true,
-              }),
-              body: formData,
-              cache: "no-cache",
-            });
-            if (result.ok) {
-              const data = await result.json();
-              if (data.name) {
-                setItemGroup("worldinfo", data.name, charBookSetting);
-                embImported++;
-              }
-            }
+            await ctx.saveWorldInfo(bookName, convertedBook, true);
+            setItemGroup("worldinfo", bookName, charBookSetting);
+            embImported++;
           } catch (err) {
             console.error("[CFM] 自动提取内嵌世界书失败:", avatar, err);
           }
         }
         if (embImported > 0) {
           _worldInfoNamesCache = null;
-          // 强制从 API 刷新世界书名称列表，并同步到 DOM 和 world_names
+          // 使用酒馆原生的 updateWorldInfoList 刷新世界书列表和 DOM
           try {
-            const freshNames = await getWorldInfoNames(true);
-            const wiModule = await import("../../../world-info.js");
-            const wNames = wiModule.world_names;
-            const editorSelect = $("#world_editor_select");
-            const globalSelect = $("#world_info");
-            for (const fn of freshNames) {
-              // 同步到 #world_editor_select
-              if (
-                !editorSelect.find(`option[value="${CSS.escape(fn)}"]`).length
-              ) {
-                editorSelect.append($("<option>").val(fn).text(fn));
-              }
-              // 同步到 #world_info
-              if (
-                !globalSelect.find(`option[value="${CSS.escape(fn)}"]`).length
-              ) {
-                globalSelect.append($("<option>").val(fn).text(fn));
-              }
-              // 同步到 world_names 数组
-              if (Array.isArray(wNames) && !wNames.includes(fn)) {
-                wNames.push(fn);
-              }
-            }
+            await getContext().updateWorldInfoList();
           } catch (syncErr) {
-            console.warn("[CFM] 同步世界书名称到DOM失败", syncErr);
+            console.warn("[CFM] 刷新世界书列表失败", syncErr);
           }
           toastr.info(`自动提取了 ${embImported} 个内嵌世界书`, "角色世界书");
         }
@@ -8341,6 +8747,13 @@ jQuery(async () => {
       } else {
         enterBgRenameMode();
       }
+    });
+
+    // 默认背景设置按钮
+    popup.find("#cfm-bg-default-btn").on("click touchend", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      handleDefaultBgSetting();
     });
 
     // 主题导入按钮
@@ -8950,6 +9363,72 @@ jQuery(async () => {
     });
   }
 
+  // ==================== 模糊搜索辅助 ====================
+  /**
+   * 模糊匹配：将查询按空格拆分为多个关键词，每个关键词必须在 textPool 中至少一项里出现
+   * @param {string} query - 用户输入的搜索词（已 toLowerCase）
+   * @param {string[]} textPool - 待匹配的文本池（每项已 toLowerCase）
+   * @returns {boolean}
+   */
+  function fuzzyMatch(query, textPool) {
+    const tokens = query.split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) return false;
+    const poolStr = textPool.join("\n");
+    return tokens.every((token) => poolStr.includes(token));
+  }
+
+  /**
+   * 获取角色卡所在文件夹的路径显示名数组（从根到叶）
+   */
+  function getCharFolderPathNames(char) {
+    const tagMap = getTagMap();
+    const charTags = tagMap[char.avatar] || [];
+    const folderTagIds = getFolderTagIds();
+    const names = [];
+    for (const fid of charTags) {
+      if (folderTagIds.includes(fid)) {
+        const path = getFolderPath(fid);
+        for (const pid of path) {
+          const n = getTagName(pid);
+          if (n && !names.includes(n)) names.push(n);
+        }
+      }
+    }
+    return names;
+  }
+
+  /**
+   * 获取资源所在文件夹的路径显示名数组（从根到叶）
+   * @param {string} type - 'presets' | 'themes' | 'backgrounds' | 'worldinfo'
+   * @param {string} itemName - 资源名称
+   */
+  function getResFolderPathNames(type, itemName) {
+    const groups = getResourceGroups(type);
+    const folderId = groups[itemName];
+    if (!folderId) return [];
+    const path = getResFolderPath(type, folderId);
+    return path
+      .map((pid) => getResFolderDisplayName(type, pid))
+      .filter(Boolean);
+  }
+
+  /**
+   * 获取文件夹自身路径的显示名数组（用于文件夹搜索）
+   * @param {string} mode - 'chars' | 'presets' | 'themes' | 'backgrounds' | 'worldinfo'
+   * @param {string} folderId
+   */
+  function getFolderSelfPathNames(mode, folderId) {
+    if (mode === "chars") {
+      const path = getFolderPath(folderId);
+      return path.map((pid) => getTagName(pid)).filter(Boolean);
+    } else {
+      const path = getResFolderPath(mode, folderId);
+      return path
+        .map((pid) => getResFolderDisplayName(mode, pid))
+        .filter(Boolean);
+    }
+  }
+
   // ==================== 全局搜索功能 ====================
   function executeGlobalSearch() {
     const q = $("#cfm-global-search").val().toLowerCase().trim();
@@ -8987,11 +9466,17 @@ jQuery(async () => {
         };
         const descendants = collectDescendants(selectedTreeNode);
         matchedIds = descendants.filter((id) =>
-          getTagName(id).toLowerCase().includes(q),
+          fuzzyMatch(
+            q,
+            getFolderSelfPathNames("chars", id).map((s) => s.toLowerCase()),
+          ),
         );
       } else {
         matchedIds = allFolderIds.filter((id) =>
-          getTagName(id).toLowerCase().includes(q),
+          fuzzyMatch(
+            q,
+            getFolderSelfPathNames("chars", id).map((s) => s.toLowerCase()),
+          ),
         );
       }
 
@@ -9051,9 +9536,15 @@ jQuery(async () => {
         chars = getCharacters();
       }
 
-      const matched = chars.filter((c) =>
-        (c.name || "").toLowerCase().includes(q),
-      );
+      const matched = chars.filter((c) => {
+        const pool = [
+          (c.name || "").toLowerCase(),
+          (c.data?.creator || "").toLowerCase(),
+          (c.data?.character_version || "").toLowerCase(),
+          ...getCharFolderPathNames(c).map((s) => s.toLowerCase()),
+        ];
+        return fuzzyMatch(q, pool);
+      });
 
       pathEl.text(`搜索角色: "${q}"`);
       countEl.text(`${matched.length} 个结果`);
@@ -9144,11 +9635,17 @@ jQuery(async () => {
         };
         const descendants = collectDesc(selectedPresetFolder);
         matchedIds = descendants.filter((f) =>
-          getResFolderDisplayName("presets", f).toLowerCase().includes(q),
+          fuzzyMatch(
+            q,
+            getFolderSelfPathNames("presets", f).map((s) => s.toLowerCase()),
+          ),
         );
       } else {
         matchedIds = folders.filter((f) =>
-          getResFolderDisplayName("presets", f).toLowerCase().includes(q),
+          fuzzyMatch(
+            q,
+            getFolderSelfPathNames("presets", f).map((s) => s.toLowerCase()),
+          ),
         );
       }
       rightList.empty();
@@ -9203,10 +9700,14 @@ jQuery(async () => {
         }
       }
       const matched = searchPool.filter((p) => {
-        if (p.name.toLowerCase().includes(q)) return true;
-        const note = getPresetNote(p.name);
-        if (note && note.toLowerCase().includes(q)) return true;
-        return false;
+        const pool = [
+          p.name.toLowerCase(),
+          (getPresetNote(p.name) || "").toLowerCase(),
+          ...getResFolderPathNames("presets", p.name).map((s) =>
+            s.toLowerCase(),
+          ),
+        ];
+        return fuzzyMatch(q, pool);
       });
       rightList.empty();
       pathEl.text(`搜索预设: "${q}"`);
@@ -9431,11 +9932,17 @@ jQuery(async () => {
         };
         const descendants = collectDesc(selectedWorldInfoFolder);
         matchedIds = descendants.filter((f) =>
-          getResFolderDisplayName("worldinfo", f).toLowerCase().includes(q),
+          fuzzyMatch(
+            q,
+            getFolderSelfPathNames("worldinfo", f).map((s) => s.toLowerCase()),
+          ),
         );
       } else {
         matchedIds = folders.filter((f) =>
-          getResFolderDisplayName("worldinfo", f).toLowerCase().includes(q),
+          fuzzyMatch(
+            q,
+            getFolderSelfPathNames("worldinfo", f).map((s) => s.toLowerCase()),
+          ),
         );
       }
       rightList.empty();
@@ -9490,10 +9997,14 @@ jQuery(async () => {
           }
         }
         const matched = searchPool.filter((n) => {
-          if (n.toLowerCase().includes(q)) return true;
-          const note = getWorldInfoNote(n);
-          if (note && note.toLowerCase().includes(q)) return true;
-          return false;
+          const pool = [
+            n.toLowerCase(),
+            (getWorldInfoNote(n) || "").toLowerCase(),
+            ...getResFolderPathNames("worldinfo", n).map((s) =>
+              s.toLowerCase(),
+            ),
+          ];
+          return fuzzyMatch(q, pool);
         });
         rightList.empty();
         pathEl.text(`搜索世界书: "${q}"`);
@@ -9709,10 +10220,12 @@ jQuery(async () => {
       }
     }
     const matched = searchPool.filter((n) => {
-      if (n.toLowerCase().includes(q)) return true;
-      const note = getThemeNote(n);
-      if (note && note.toLowerCase().includes(q)) return true;
-      return false;
+      const pool = [
+        n.toLowerCase(),
+        (getThemeNote(n) || "").toLowerCase(),
+        ...getResFolderPathNames("themes", n).map((s) => s.toLowerCase()),
+      ];
+      return fuzzyMatch(q, pool);
     });
     rightList.empty();
     pathEl.text(`搜索主题: "${q}"`);
@@ -9760,6 +10273,16 @@ jQuery(async () => {
       const singleRenameBtn = noModeActive
         ? `<div class="cfm-row-edit-btn cfm-row-rename-btn" title="重命名"><i class="fa-solid fa-i-cursor"></i></div>`
         : "";
+      // 绑定背景按钮
+      const bgBinding = getThemeBgBinding(name);
+      const bgLinkBtn = noModeActive
+        ? `<div class="cfm-row-edit-btn cfm-row-bglink-btn ${bgBinding ? "cfm-bglink-active" : ""}" title="${bgBinding ? "已绑定背景: " + escapeHtml(getBackgroundDisplayName(bgBinding)) : "绑定背景"}">
+            <i class="fa-solid fa-link"></i>
+          </div>`
+        : "";
+      const bgBindHtml = bgBinding
+        ? `<span class="cfm-theme-bgbind-tag" title="绑定背景: ${escapeHtml(getBackgroundDisplayName(bgBinding))}"><i class="fa-solid fa-image"></i>${escapeHtml(getBackgroundDisplayName(bgBinding))}</span>`
+        : "";
       const isNoteSel = cfmThemeNoteMode && cfmThemeNoteSelected.has(name);
       const isRenameSel =
         cfmThemeRenameMode && cfmThemeRenameSelected.has(name);
@@ -9779,9 +10302,10 @@ jQuery(async () => {
         <div class="cfm-row cfm-row-char cfm-search-result ${isActive ? "cfm-rv-item-active" : ""} ${isDelSel ? "cfm-res-delete-row-selected" : ""} ${isExpSel ? "cfm-export-row-selected" : ""} ${isNoteSel ? "cfm-edit-row-selected" : ""} ${isRenameSel ? "cfm-edit-row-selected" : ""} ${isMSel ? "cfm-multisel-row-selected" : ""}" data-res-id="${escapeHtml(name)}" draggable="true">
           ${finalCheckHtml}
           <div class="cfm-row-icon"><i class="fa-solid fa-palette" style="font-size:20px;color:#cba6f7;"></i></div>
-          <div class="cfm-row-name"><span class="cfm-theme-name-text">${escapeHtml(name)}</span>${noteHtml}<div class="cfm-row-folder-path">${escapeHtml(tFolderPath)}</div></div>
+          <div class="cfm-row-name"><span class="cfm-theme-name-text">${escapeHtml(name)}</span>${noteHtml}${bgBindHtml}<div class="cfm-row-folder-path">${escapeHtml(tFolderPath)}</div></div>
           ${singleRenameBtn}
           ${singleNoteBtn}
+          ${bgLinkBtn}
           <div class="cfm-row-star ${fav ? "cfm-star-active" : ""}" title="${fav ? "取消收藏" : "添加收藏"}"><i class="fa-${fav ? "solid" : "regular"} fa-star"></i></div>
         </div>
       `);
@@ -9808,10 +10332,16 @@ jQuery(async () => {
         e.stopPropagation();
         executeThemeRename([name]);
       });
+      // 绑定背景按钮
+      row.find(".cfm-row-bglink-btn").on("click touchend", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        handleThemeBgLink(name);
+      });
       row.on("click", (e) => {
         if (
           $(e.target).closest(
-            ".cfm-row-star, .cfm-row-note-btn, .cfm-row-rename-btn",
+            ".cfm-row-star, .cfm-row-note-btn, .cfm-row-rename-btn, .cfm-row-bglink-btn",
           ).length
         )
           return;
@@ -9923,10 +10453,15 @@ jQuery(async () => {
       }
     }
     const matched = searchPool.filter((n) => {
-      if (getBackgroundDisplayName(n).toLowerCase().includes(q)) return true;
-      const note = getBgNote(n);
-      if (note && note.toLowerCase().includes(q)) return true;
-      return false;
+      const orientLabel = BG_ORIENT_LABELS[getBgOrientation(n)] || "";
+      const pool = [
+        getBackgroundDisplayName(n).toLowerCase(),
+        n.toLowerCase(),
+        (getBgNote(n) || "").toLowerCase(),
+        orientLabel.toLowerCase(),
+        ...getResFolderPathNames("backgrounds", n).map((s) => s.toLowerCase()),
+      ];
+      return fuzzyMatch(q, pool);
     });
     rightList.empty();
     pathEl.text(`搜索背景: "${q}"`);
@@ -9963,6 +10498,10 @@ jQuery(async () => {
         return "未归类";
       })();
       const bgNote = getBgNote(name);
+      const bgOrient = getBgOrientation(name);
+      const orientHtml = bgOrient
+        ? `<span class="cfm-bg-orient cfm-bg-orient-${bgOrient}" title="${BG_ORIENT_LABELS[bgOrient] || bgOrient}"><i class="fa-solid ${BG_ORIENT_ICONS[bgOrient] || "fa-expand"}"></i>${BG_ORIENT_LABELS[bgOrient] || bgOrient}</span>`
+        : "";
       const noteHtml = bgNote
         ? `<span class="cfm-theme-note" title="备注: ${escapeHtml(bgNote)}">${escapeHtml(bgNote)}</span>`
         : "";
@@ -9976,7 +10515,7 @@ jQuery(async () => {
         : "";
       const thumbUrl = getBackgroundThumbnailUrl(name);
       const row = $(
-        `<div class="cfm-row cfm-row-char cfm-row-bg cfm-search-result ${isActive ? "cfm-rv-item-active" : ""} ${isNoteSel ? "cfm-edit-row-selected" : ""} ${isRenameSel ? "cfm-edit-row-selected" : ""} ${isMSel ? "cfm-multisel-row-selected" : ""}" data-res-id="${escapeHtml(name)}" draggable="true">${msCheckHtml}<div class="cfm-row-icon cfm-bg-thumb" style="background-image:url('${thumbUrl}');background-size:cover;background-position:center;"></div><div class="cfm-row-name"><span class="cfm-theme-name-text">${escapeHtml(getBackgroundDisplayName(name))}</span>${noteHtml}<div class="cfm-row-folder-path">${escapeHtml(bFolderPath)}</div></div>${singleRenameBtn}${singleNoteBtn}<div class="cfm-row-star ${fav ? "cfm-star-active" : ""}" title="${fav ? "取消收藏" : "添加收藏"}"><i class="fa-${fav ? "solid" : "regular"} fa-star"></i></div></div>`,
+        `<div class="cfm-row cfm-row-char cfm-row-bg cfm-search-result ${isActive ? "cfm-rv-item-active" : ""} ${isNoteSel ? "cfm-edit-row-selected" : ""} ${isRenameSel ? "cfm-edit-row-selected" : ""} ${isMSel ? "cfm-multisel-row-selected" : ""}" data-res-id="${escapeHtml(name)}" draggable="true">${msCheckHtml}<div class="cfm-row-icon cfm-bg-thumb" style="background-image:url('${thumbUrl}');background-size:cover;background-position:center;"></div><div class="cfm-row-name"><span class="cfm-theme-name-text">${escapeHtml(getBackgroundDisplayName(name))}</span>${orientHtml}${noteHtml}<div class="cfm-row-folder-path">${escapeHtml(bFolderPath)}</div></div>${singleRenameBtn}${singleNoteBtn}<div class="cfm-row-star ${fav ? "cfm-star-active" : ""}" title="${fav ? "取消收藏" : "添加收藏"}"><i class="fa-${fav ? "solid" : "regular"} fa-star"></i></div></div>`,
       );
       row.find(".cfm-row-star").on("click touchend", (e) => {
         e.preventDefault();
@@ -10174,23 +10713,28 @@ jQuery(async () => {
                 <span class="cfm-tnode-arrow cfm-arrow-hidden"><i class="fa-solid fa-caret-right"></i></span>
                 <span class="cfm-tnode-icon"><i class="fa-solid fa-box-open"></i></span>
                 <span class="cfm-tnode-label">未归类角色</span>
+                <span class="cfm-tnode-target" title="移入此处"><i class="fa-solid fa-crosshairs"></i></span>
                 <span class="cfm-tnode-count">${uncatCount}</span>
             </div>
         `);
+    uncatNode.find(".cfm-tnode-target").on("click", (e) => {
+      e.stopPropagation();
+      handleFolderTargetMove(
+        (items) => items.forEach((av) => removeCharFromAllFolders(av)),
+        () => {
+          renderLeftTree();
+          renderRightPane();
+        },
+        (count, first) =>
+          toastr.success(
+            count > 1
+              ? `已将 ${count} 个角色移出所有文件夹`
+              : `已将「${first}」移出所有文件夹`,
+          ),
+      );
+    });
     uncatNode.on("click", (e) => {
       e.preventDefault();
-      const dblHandled = handleFolderDblClickMove(
-        "__uncategorized_char__",
-        (items) => items.forEach((av) => removeCharFromAllFolders(av)),
-        () => { renderLeftTree(); renderRightPane(); },
-        (count, first) => toastr.success(
-          count > 1
-            ? `已将 ${count} 个角色移出所有文件夹`
-            : `已将「${first}」移出所有文件夹`,
-        ),
-        e,
-      );
-      if (dblHandled) return;
       selectedTreeNode = "__uncategorized__";
       refreshSelection();
       renderRightPane();
@@ -10248,6 +10792,7 @@ jQuery(async () => {
                 <span class="cfm-tnode-arrow ${hasChildren ? (isExpanded ? "cfm-arrow-expanded" : "") : "cfm-arrow-hidden"}"><i class="fa-solid fa-caret-right"></i></span>
                 <span class="cfm-tnode-icon"><i class="fa-solid fa-folder${isSelected ? "-open" : ""}"></i></span>
                 <span class="cfm-tnode-label">${escapeHtml(getTagName(folderId))}${isNew ? ' <span class="cfm-new-badge">新</span>' : ""}</span>
+                <span class="cfm-tnode-target" title="移入此文件夹"><i class="fa-solid fa-crosshairs"></i></span>
                 <span class="cfm-tnode-rename" title="重命名文件夹"><i class="fa-solid fa-pen"></i></span>
                 <span class="cfm-tnode-count">${count}</span>
             </div>
@@ -10260,6 +10805,24 @@ jQuery(async () => {
         renderLeftTree();
         renderRightPane();
       });
+    });
+
+    // 点击靶子按钮：移入此文件夹
+    node.find(".cfm-tnode-target").on("click", (e) => {
+      e.stopPropagation();
+      handleFolderTargetMove(
+        (items) => items.forEach((av) => handleCharDropToFolder(av, folderId)),
+        () => {
+          renderLeftTree();
+          renderRightPane();
+        },
+        (count, first) =>
+          toastr.success(
+            count > 1
+              ? `已将 ${count} 个角色${cfmCopyMode ? "复制" : "移动"}到「${getTagName(folderId)}」`
+              : `已将「${first}」${cfmCopyMode ? "复制" : "移动"}到「${getTagName(folderId)}」`,
+          ),
+      );
     });
 
     // 点击箭头：展开/收起
@@ -10275,18 +10838,6 @@ jQuery(async () => {
     // 点击节点本身：选中并在右侧显示内容
     node.on("click", (e) => {
       e.preventDefault();
-      const dblHandled = handleFolderDblClickMove(
-        folderId,
-        (items) => items.forEach((av) => handleCharDropToFolder(av, folderId)),
-        () => { renderLeftTree(); renderRightPane(); },
-        (count, first) => toastr.success(
-          count > 1
-            ? `已将 ${count} 个角色${cfmCopyMode ? "复制" : "移动"}到「${getTagName(folderId)}」`
-            : `已将「${first}」${cfmCopyMode ? "复制" : "移动"}到「${getTagName(folderId)}」`,
-        ),
-        e,
-      );
-      if (dblHandled) return;
       selectedTreeNode = folderId;
       refreshSelection();
       // 如果搜索栏有内容，保持搜索模式
@@ -10619,10 +11170,28 @@ jQuery(async () => {
                 <div class="cfm-row cfm-row-folder" data-folder-id="${childId}" draggable="true">
                     <div class="cfm-row-icon"><i class="fa-solid fa-folder"></i></div>
                     <div class="cfm-row-name">${escapeHtml(getTagName(childId))}</div>
+                    <div class="cfm-row-target-btn" title="移入此文件夹"><i class="fa-solid fa-crosshairs"></i></div>
                     <div class="cfm-row-rename-btn" title="重命名文件夹"><i class="fa-solid fa-pen"></i></div>
                     <div class="cfm-row-meta">${childCount} 个角色</div>
                 </div>
             `);
+      // 点击靶子按钮：移入此文件夹
+      row.find(".cfm-row-target-btn").on("click", (e) => {
+        e.stopPropagation();
+        handleFolderTargetMove(
+          (items) => items.forEach((av) => handleCharDropToFolder(av, childId)),
+          () => {
+            renderLeftTree();
+            renderRightPane();
+          },
+          (count, first) =>
+            toastr.success(
+              count > 1
+                ? `已将 ${count} 个角色${cfmCopyMode ? "复制" : "移动"}到「${getTagName(childId)}」`
+                : `已将「${first}」${cfmCopyMode ? "复制" : "移动"}到「${getTagName(childId)}」`,
+            ),
+        );
+      });
       // 点击重命名按钮
       row.find(".cfm-row-rename-btn").on("click", (e) => {
         e.stopPropagation();
@@ -10634,18 +11203,6 @@ jQuery(async () => {
       // 点击子文件夹：左侧树展开并选中
       row.on("click", (e) => {
         e.preventDefault();
-        const dblHandled = handleFolderDblClickMove(
-          childId,
-          (items) => items.forEach((av) => handleCharDropToFolder(av, childId)),
-          () => { renderLeftTree(); renderRightPane(); },
-          (count, first) => toastr.success(
-            count > 1
-              ? `已将 ${count} 个角色${cfmCopyMode ? "复制" : "移动"}到「${getTagName(childId)}」`
-              : `已将「${first}」${cfmCopyMode ? "复制" : "移动"}到「${getTagName(childId)}」`,
-          ),
-          e,
-        );
-        if (dblHandled) return;
         // 展开路径上所有节点
         const fullPath = getFolderPath(childId);
         for (const pid of fullPath) expandedNodes.add(pid);
@@ -10808,6 +11365,7 @@ jQuery(async () => {
     }
 
     // 右侧列表本身也是拖放目标（拖到空白区域 = 放入当前文件夹）
+    list.off("dragover dragleave drop");
     list.on("dragover", (e) => {
       // 仅在拖到空白区域时触发（不在子行上）
       if ($(e.target).closest(".cfm-row").length > 0) return;
@@ -11002,7 +11560,7 @@ jQuery(async () => {
   }
 
   // ==================== 标签管理配置弹窗 ====================
-  let configSelectedFolderId = null;
+  let configSelectedFolderIds = new Set();
   let cfmDeleteMode = false;
   let cfmDeleteSelected = new Set();
   let cfmDeleteCascade = false; // 级联删除模式
@@ -11017,7 +11575,7 @@ jQuery(async () => {
   let resConfigDeleteLastClickedId = null;
   let resConfigDeleteRangeMode = false;
   let resConfigInvertScope = "all";
-  let resConfigSelectedFolderId = null;
+  let resConfigSelectedFolderIds = new Set();
 
   function showConfigPopup() {
     if ($("#cfm-config-overlay").length > 0) return;
@@ -11353,27 +11911,39 @@ jQuery(async () => {
         toastr.warning("请先选择一个标签");
         return;
       }
-      config.folders[tagId] = {
-        parentId: configSelectedFolderId || null,
-      };
-      // 从排除列表中移除（用户主动添加意味着重新纳入管理）
-      const _ex = extension_settings[extensionName].excludedTagIds;
-      const _exi = _ex.indexOf(tagId);
-      if (_exi >= 0) _ex.splice(_exi, 1);
+      const parentIds =
+        configSelectedFolderIds.size > 0
+          ? Array.from(configSelectedFolderIds)
+          : [null];
+      for (const parentId of parentIds) {
+        config.folders[tagId] = {
+          parentId: parentId,
+        };
+        // 从排除列表中移除（用户主动添加意味着重新纳入管理）
+        const _ex = extension_settings[extensionName].excludedTagIds;
+        const _exi = _ex.indexOf(tagId);
+        if (_exi >= 0) _ex.splice(_exi, 1);
+      }
       saveConfig(config);
-      const parentHint = configSelectedFolderId
-        ? `「${getTagName(configSelectedFolderId)}」的子级`
-        : "顶级文件夹";
+      const parentHint =
+        configSelectedFolderIds.size > 0
+          ? `「${Array.from(configSelectedFolderIds)
+              .map((id) => getTagName(id))
+              .join("、")}」的子级`
+          : "顶级文件夹";
       toastr.success(`已将「${getTagName(tagId)}」添加为${parentHint}`);
       renderConfigBody();
     });
     body.append(addSection);
 
-    const selectedHintText = configSelectedFolderId
-      ? "当前将添加到「" +
-        escapeHtml(getTagName(configSelectedFolderId)) +
-        "」下。"
-      : "当前将添加为顶级文件夹。";
+    const selectedHintText =
+      configSelectedFolderIds.size > 0
+        ? "当前将添加到「" +
+          Array.from(configSelectedFolderIds)
+            .map((id) => escapeHtml(getTagName(id)))
+            .join("、") +
+          "」下。"
+        : "当前将添加为顶级文件夹。";
     const createSection = $(`
             <div class="cfm-config-section">
                 <label>创建新标签并添加为文件夹</label>
@@ -11395,7 +11965,19 @@ jQuery(async () => {
         toastr.warning("请输入标签名称");
         return;
       }
-      createTagsSiblings(input, configSelectedFolderId);
+      const cParentIds =
+        configSelectedFolderIds.size > 0
+          ? Array.from(configSelectedFolderIds)
+          : [null];
+      let totalCreated = 0;
+      for (const cPid of cParentIds) {
+        totalCreated += createTagsSiblings(input, cPid, cParentIds.length > 1);
+      }
+      if (cParentIds.length > 1 && totalCreated > 0) {
+        toastr.success(
+          `已在 ${cParentIds.length} 个父级下创建共 ${totalCreated} 个文件夹`,
+        );
+      }
       createSection.find("#cfm-create-tag-input").val("");
       renderConfigBody();
     });
@@ -11442,9 +12024,12 @@ jQuery(async () => {
       // 计算反选范围描述
       let invertScopeLabel = "全部文件夹";
       if (cfmInvertScope === "parent") {
-        invertScopeLabel = configSelectedFolderId
-          ? `「${getTagName(configSelectedFolderId)}」的子级`
-          : "顶级文件夹";
+        invertScopeLabel =
+          configSelectedFolderIds.size > 0
+            ? `「${Array.from(configSelectedFolderIds)
+                .map((id) => getTagName(id))
+                .join("、")}」的子级`
+            : "顶级文件夹";
       }
 
       const deleteBar = $(`
@@ -11461,7 +12046,15 @@ jQuery(async () => {
                             <button class="cfm-btn cfm-btn-sm" id="cfm-invert-select" title="反选：将已选和未选状态互换"><i class="fa-solid fa-right-left"></i> 反选</button>
                             <select id="cfm-invert-scope" class="cfm-invert-scope-select" title="选择反选的范围">
                                 <option value="all" ${cfmInvertScope === "all" ? "selected" : ""}>全部文件夹</option>
-                                <option value="parent" ${cfmInvertScope === "parent" ? "selected" : ""}>${configSelectedFolderId ? "「" + escapeHtml(getTagName(configSelectedFolderId)) + "」的子级" : "顶级文件夹"}</option>
+                                <option value="parent" ${cfmInvertScope === "parent" ? "selected" : ""}>${
+                                  configSelectedFolderIds.size > 0
+                                    ? "「" +
+                                      Array.from(configSelectedFolderIds)
+                                        .map((id) => escapeHtml(getTagName(id)))
+                                        .join("、") +
+                                      "」的子级"
+                                    : "顶级文件夹"
+                                }</option>
                             </select>
                         </div>
                         <span class="cfm-delete-bar-hint">${cfmDeleteRangeMode ? "🎯 框选模式已开启：点击起点文件夹，再点击终点文件夹" : "Shift+点击 或开启「框选」按钮可范围选择"}</span>
@@ -11530,13 +12123,16 @@ jQuery(async () => {
 
     const treeContainer = treeSection.find("#cfm-folder-tree");
 
-    if (configSelectedFolderId) {
+    if (configSelectedFolderIds.size > 0) {
+      const selectedNames = Array.from(configSelectedFolderIds)
+        .map((id) => escapeHtml(getTagName(id)))
+        .join("、");
       const selectedHint = $(
-        `<div class="cfm-selected-hint"><i class="fa-solid fa-crosshairs"></i> 已选中：<strong>${escapeHtml(getTagName(configSelectedFolderId))}</strong><button class="cfm-btn-deselect" title="取消选中"><i class="fa-solid fa-xmark"></i></button></div>`,
+        `<div class="cfm-selected-hint"><i class="fa-solid fa-crosshairs"></i> 已选中 ${configSelectedFolderIds.size} 个：<strong>${selectedNames}</strong><button class="cfm-btn-deselect" title="全部取消选中"><i class="fa-solid fa-xmark"></i></button></div>`,
       );
       selectedHint.find(".cfm-btn-deselect").on("click touchend", (e) => {
         e.preventDefault();
-        configSelectedFolderId = null;
+        configSelectedFolderIds.clear();
         renderConfigBody();
       });
       treeContainer.append(selectedHint);
@@ -11608,11 +12204,14 @@ jQuery(async () => {
     renderDefaultPageConfigSection(body);
 
     // 1. 创建新文件夹（支持空格分隔批量创建）
-    const resSelectedHintText = resConfigSelectedFolderId
-      ? "当前将添加到「" +
-        escapeHtml(getResFolderDisplayName(type, resConfigSelectedFolderId)) +
-        "」下。"
-      : "当前将添加为顶级文件夹。";
+    const resSelectedHintText =
+      resConfigSelectedFolderIds.size > 0
+        ? "当前将添加到「" +
+          Array.from(resConfigSelectedFolderIds)
+            .map((id) => escapeHtml(getResFolderDisplayName(type, id)))
+            .join("、") +
+          "」下。"
+        : "当前将添加为顶级文件夹。";
     const createSection = $(`
       <div class="cfm-config-section">
         <label>创建新文件夹</label>
@@ -11630,24 +12229,25 @@ jQuery(async () => {
         toastr.warning("请输入文件夹名称");
         return;
       }
-      const parentId = resConfigSelectedFolderId || null;
+      const parentIds =
+        resConfigSelectedFolderIds.size > 0
+          ? Array.from(resConfigSelectedFolderIds)
+          : [null];
       const names = input.split(/\s+/).filter((s) => s.length > 0);
-      const created = [];
-      const skipped = [];
-      for (const name of names) {
-        let folderName = name;
-        if (parentId) folderName = parentId + "-" + name;
-        if (addResFolder(type, folderName, parentId, parentId ? name : null))
-          created.push(name);
-        else skipped.push(name);
+      let totalCreated = 0;
+      let totalSkipped = 0;
+      for (const parentId of parentIds) {
+        for (const name of names) {
+          let folderName = name;
+          if (parentId) folderName = parentId + "-" + name;
+          if (addResFolder(type, folderName, parentId, parentId ? name : null))
+            totalCreated++;
+          else totalSkipped++;
+        }
       }
-      const parentHint = parentId
-        ? `「${getResFolderDisplayName(type, parentId)}」下`
-        : "顶级";
-      if (created.length > 0)
-        toastr.success(`已创建 ${created.length} 个文件夹`);
-      if (skipped.length > 0)
-        toastr.warning(`${skipped.length} 个文件夹已存在（跳过）`);
+      if (totalCreated > 0) toastr.success(`已创建 ${totalCreated} 个文件夹`);
+      if (totalSkipped > 0)
+        toastr.warning(`${totalSkipped} 个文件夹已存在（跳过）`);
       createSection.find("#cfm-res-create-input").val("");
       renderResourceConfigBody(body.empty(), type);
     });
@@ -11704,7 +12304,17 @@ jQuery(async () => {
               <button class="cfm-btn cfm-btn-sm" id="cfm-res-invert-select"><i class="fa-solid fa-right-left"></i> 反选</button>
               <select id="cfm-res-invert-scope" class="cfm-invert-scope-select" title="反选范围">
                 <option value="all" ${resConfigInvertScope === "all" ? "selected" : ""}>全部文件夹</option>
-                <option value="parent" ${resConfigInvertScope === "parent" ? "selected" : ""}>${resConfigSelectedFolderId ? "「" + escapeHtml(getResFolderDisplayName(type, resConfigSelectedFolderId)) + "」的子级" : "顶级文件夹"}</option>
+                <option value="parent" ${resConfigInvertScope === "parent" ? "selected" : ""}>${
+                  resConfigSelectedFolderIds.size > 0
+                    ? "「" +
+                      Array.from(resConfigSelectedFolderIds)
+                        .map((id) =>
+                          escapeHtml(getResFolderDisplayName(type, id)),
+                        )
+                        .join("、") +
+                      "」的子级"
+                    : "顶级文件夹"
+                }</option>
               </select>
             </div>
             <span class="cfm-delete-bar-hint">${resConfigDeleteRangeMode ? "🎯 框选模式已开启：点击起点文件夹，再点击终点文件夹" : "Shift+点击 或开启「框选」按钮可范围选择"}</span>
@@ -11796,13 +12406,16 @@ jQuery(async () => {
 
     const treeContainer = treeSection.find("#cfm-res-folder-tree");
 
-    if (resConfigSelectedFolderId) {
+    if (resConfigSelectedFolderIds.size > 0) {
+      const selectedNames = Array.from(resConfigSelectedFolderIds)
+        .map((id) => escapeHtml(getResFolderDisplayName(type, id)))
+        .join("、");
       const selectedHint = $(
-        `<div class="cfm-selected-hint"><i class="fa-solid fa-crosshairs"></i> 已选中：<strong>${escapeHtml(getResFolderDisplayName(type, resConfigSelectedFolderId))}</strong><button class="cfm-btn-deselect" title="取消选中"><i class="fa-solid fa-xmark"></i></button></div>`,
+        `<div class="cfm-selected-hint"><i class="fa-solid fa-crosshairs"></i> 已选中 ${resConfigSelectedFolderIds.size} 个：<strong>${selectedNames}</strong><button class="cfm-btn-deselect" title="全部取消选中"><i class="fa-solid fa-xmark"></i></button></div>`,
       );
       selectedHint.find(".cfm-btn-deselect").on("click touchend", (e) => {
         e.preventDefault();
-        resConfigSelectedFolderId = null;
+        resConfigSelectedFolderIds.clear();
         renderResourceConfigBody(body.empty(), type);
       });
       treeContainer.append(selectedHint);
@@ -11831,7 +12444,7 @@ jQuery(async () => {
         }
         const arrowHtml = `<span class="cfm-tnode-arrow cfm-config-arrow ${hasChildren ? (isExpanded ? "cfm-arrow-expanded" : "") : "cfm-arrow-hidden"}"><i class="fa-solid fa-caret-right"></i></span>`;
 
-        const isResSelected = resConfigSelectedFolderId === folderId;
+        const isResSelected = resConfigSelectedFolderIds.has(folderId);
         const item = $(`
           <div class="cfm-tree-item ${isResSelected ? "cfm-tree-selected" : ""}" data-folder-name="${escapeHtml(folderId)}" style="padding-left:${indent}px;">
             ${checkboxHtml}
@@ -11913,8 +12526,11 @@ jQuery(async () => {
             )
               return;
             e.preventDefault();
-            resConfigSelectedFolderId =
-              resConfigSelectedFolderId === folderId ? null : folderId;
+            if (resConfigSelectedFolderIds.has(folderId)) {
+              resConfigSelectedFolderIds.delete(folderId);
+            } else {
+              resConfigSelectedFolderIds.add(folderId);
+            }
             renderResourceConfigBody(body.empty(), type);
           });
           item.find(".cfm-res-remove-folder").on("click touchend", (e) => {
@@ -11922,8 +12538,7 @@ jQuery(async () => {
             e.stopPropagation();
             showResDeleteConfirmDialog(type, [folderId], () => {
               removeResFolder(type, folderId);
-              if (resConfigSelectedFolderId === folderId)
-                resConfigSelectedFolderId = null;
+              resConfigSelectedFolderIds.delete(folderId);
               toastr.success(`已删除${typeLabel}文件夹「${folderId}」`);
               renderResourceConfigBody(body.empty(), type);
             });
@@ -12169,8 +12784,13 @@ jQuery(async () => {
         else skipped++;
         for (const child of node.children) processResNode(child, folderName);
       }
-      const batchParentId = resConfigSelectedFolderId || null;
-      for (const node of treeData) processResNode(node, batchParentId);
+      const batchParentIds =
+        resConfigSelectedFolderIds.size > 0
+          ? Array.from(resConfigSelectedFolderIds)
+          : [null];
+      for (const batchParentId of batchParentIds) {
+        for (const node of treeData) processResNode(node, batchParentId);
+      }
       overlay.remove();
       toastr.success(
         `已创建 ${created} 个文件夹${skipped > 0 ? `，${skipped} 个跳过` : ""}`,
@@ -12182,7 +12802,7 @@ jQuery(async () => {
   function renderConfigTreeItem(container, folderId, depth) {
     const indent = depth * 24;
     const name = getTagName(folderId);
-    const isSelected = configSelectedFolderId === folderId;
+    const isSelected = configSelectedFolderIds.has(folderId);
     const isDelChecked = cfmDeleteSelected.has(folderId);
     const hasChildren = getChildFolders(folderId).length > 0;
     const isExpanded = configExpandedNodes.has(folderId);
@@ -12288,8 +12908,11 @@ jQuery(async () => {
       if ($(e.target).closest(".cfm-remove-folder, .cfm-config-arrow").length)
         return;
       e.preventDefault();
-      configSelectedFolderId =
-        configSelectedFolderId === folderId ? null : folderId;
+      if (configSelectedFolderIds.has(folderId)) {
+        configSelectedFolderIds.delete(folderId);
+      } else {
+        configSelectedFolderIds.add(folderId);
+      }
       renderConfigBody();
     });
     // 删除（带确认弹窗）
@@ -12317,7 +12940,7 @@ jQuery(async () => {
           recursiveRebuildTagNames(childId);
         }
         getContext().saveSettingsDebounced();
-        if (configSelectedFolderId === folderId) configSelectedFolderId = null;
+        configSelectedFolderIds.delete(folderId);
         const suffix = alsoDeleteTags ? "（标签已同步删除）" : "";
         toastr.info(`已移除文件夹「${name}」${suffix}`);
         renderConfigBody();
@@ -12340,8 +12963,11 @@ jQuery(async () => {
     let targetIds = [];
     if (cfmInvertScope === "parent") {
       // 在指定父级下的直接子文件夹范围内反选
-      if (configSelectedFolderId) {
-        targetIds = getChildFolders(configSelectedFolderId);
+      if (configSelectedFolderIds.size > 0) {
+        targetIds = [];
+        for (const sid of configSelectedFolderIds) {
+          targetIds.push(...getChildFolders(sid));
+        }
       } else {
         // 没有选中父级时，范围为所有顶级文件夹
         targetIds = getTopLevelFolders();
@@ -12478,7 +13104,7 @@ jQuery(async () => {
           if (!excluded.includes(folderId)) excluded.push(folderId);
         }
         delete config.folders[folderId];
-        if (configSelectedFolderId === folderId) configSelectedFolderId = null;
+        configSelectedFolderIds.delete(folderId);
       }
       saveConfig(config);
       for (const childId of allReparented) {
@@ -12497,11 +13123,11 @@ jQuery(async () => {
   }
 
   // ==================== 空格分隔批量创建同级标签 ====================
-  function createTagsSiblings(input, parentFolderId) {
+  function createTagsSiblings(input, parentFolderId, silent) {
     const names = input.split(/\s+/).filter((s) => s.length > 0);
     if (names.length === 0) {
-      toastr.warning("标签名称不能为空");
-      return;
+      if (!silent) toastr.warning("标签名称不能为空");
+      return 0;
     }
     const created = [];
     let prefixCount = 0;
@@ -12525,10 +13151,13 @@ jQuery(async () => {
     }
     saveConfig(config);
     getContext().saveSettingsDebounced();
-    const parentHint = parentFolderId
-      ? `「${getTagName(parentFolderId)}」下`
-      : "顶级";
-    toastr.success(`已创建 ${created.length} 个文件夹`);
+    if (!silent) {
+      const parentHint = parentFolderId
+        ? `「${getTagName(parentFolderId)}」下`
+        : "顶级";
+      toastr.success(`已创建 ${created.length} 个文件夹`);
+    }
+    return created.length;
   }
 
   // ==================== 批量创建弹窗（多行缩进格式） ====================
@@ -12599,7 +13228,19 @@ jQuery(async () => {
         toastr.warning("无法解析，请检查格式");
         return;
       }
-      executeBatchCreate(tree, configSelectedFolderId || null);
+      const batchParentIds =
+        configSelectedFolderIds.size > 0
+          ? Array.from(configSelectedFolderIds)
+          : [null];
+      let batchTotal = 0;
+      for (const bpId of batchParentIds) {
+        batchTotal += executeBatchCreate(tree, bpId, batchParentIds.length > 1);
+      }
+      if (batchParentIds.length > 1 && batchTotal > 0) {
+        toastr.success(
+          `已在 ${batchParentIds.length} 个父级下创建共 ${batchTotal} 个文件夹`,
+        );
+      }
       overlay.remove();
       renderConfigBody();
     });
@@ -12684,7 +13325,7 @@ jQuery(async () => {
     }
   }
 
-  function executeBatchCreate(nodes, parentId) {
+  function executeBatchCreate(nodes, parentId, silent) {
     let count = 0;
     let prefixCount = 0;
     function processNode(node, parentTagId) {
@@ -12706,7 +13347,8 @@ jQuery(async () => {
     for (const node of nodes) processNode(node, parentId);
     saveConfig(config);
     getContext().saveSettingsDebounced();
-    toastr.success(`已创建 ${count} 个文件夹`);
+    if (!silent) toastr.success(`已创建 ${count} 个文件夹`);
+    return count;
   }
 
   // ==================== 预设视图渲染（双栏 + 树形嵌套） ====================
@@ -12805,11 +13447,25 @@ jQuery(async () => {
           <span class="cfm-tnode-arrow ${hasChildren ? (isExpanded ? "cfm-arrow-expanded" : "") : "cfm-arrow-hidden"}"><i class="fa-solid fa-caret-right"></i></span>
           <span class="cfm-tnode-icon"><i class="fa-solid fa-folder${isSelected ? "-open" : ""}"></i></span>
           <span class="cfm-tnode-label">${escapeHtml(getResFolderDisplayName("presets", folderId))}</span>
+          <span class="cfm-tnode-target" title="移入此文件夹"><i class="fa-solid fa-crosshairs"></i></span>
           <span class="cfm-tnode-rename" title="重命名文件夹"><i class="fa-solid fa-pen"></i></span>
           <span class="cfm-tnode-count">${count}</span>
         </div>
       `);
 
+      node.find(".cfm-tnode-target").on("click", (e) => {
+        e.stopPropagation();
+        handleFolderTargetMove(
+          (items) => items.forEach((n) => setItemGroup("presets", n, folderId)),
+          () => renderPresetsView(),
+          (count, first) =>
+            toastr.success(
+              count > 1
+                ? `已将 ${count} 个预设移入「${getResFolderDisplayName("presets", folderId)}」`
+                : `已将「${first}」移入「${getResFolderDisplayName("presets", folderId)}」`,
+            ),
+        );
+      });
       node.find(".cfm-tnode-rename").on("click", (e) => {
         e.stopPropagation();
         promptRenameFolder("presets", folderId, () => renderPresetsView());
@@ -12825,22 +13481,9 @@ jQuery(async () => {
         renderPresetsView();
       });
 
-      // 点击选中（含双击移入检测）
+      // 点击选中
       node.on("click", (e) => {
         e.preventDefault();
-        const dblHandled = handleFolderDblClickMove(
-          folderId,
-          (items) => items.forEach((n) => setItemGroup("presets", n, folderId)),
-          () => renderPresetsView(),
-          (count, first) =>
-            toastr.success(
-              count > 1
-                ? `已将 ${count} 个预设移入「${folderId}」`
-                : `已将「${first}」移入「${folderId}」`,
-            ),
-          e,
-        );
-        if (dblHandled) return;
         selectedPresetFolder = folderId;
         renderPresetsView();
       });
@@ -12919,7 +13562,9 @@ jQuery(async () => {
               return;
             }
             reorderResFolder("presets", data.id, folderId, null);
-            toastr.success(`「${data.id}」已移入「${folderId}」`);
+            toastr.success(
+              `「${getResFolderDisplayName("presets", data.id)}」已移入「${getResFolderDisplayName("presets", folderId)}」`,
+            );
           } else {
             const pId = tree[folderId]?.parentId || null;
             if (wouldCreateResCycle("presets", data.id, pId)) {
@@ -12955,8 +13600,8 @@ jQuery(async () => {
           renderPresetsView();
           toastr.success(
             pCount > 1
-              ? `已将 ${pCount} 个预设移入「${folderId}」`
-              : `已将「${data.name}」移入「${folderId}」`,
+              ? `已将 ${pCount} 个预设移入「${getResFolderDisplayName("presets", folderId)}」`
+              : `已将「${data.name}」移入「${getResFolderDisplayName("presets", folderId)}」`,
           );
         }
       });
@@ -12994,23 +13639,25 @@ jQuery(async () => {
         <span class="cfm-tnode-arrow cfm-arrow-hidden"><i class="fa-solid fa-caret-right"></i></span>
         <span class="cfm-tnode-icon"><i class="fa-solid fa-box-open"></i></span>
         <span class="cfm-tnode-label">未归类预设</span>
+        <span class="cfm-tnode-target" title="移入此处"><i class="fa-solid fa-crosshairs"></i></span>
         <span class="cfm-tnode-count">${ungrouped.length}</span>
       </div>
     `);
-    uncatNode.on("click", (e) => {
-      e.preventDefault();
-      const dblHandled = handleFolderDblClickMove(
-        "__ungrouped_preset__",
+    uncatNode.find(".cfm-tnode-target").on("click", (e) => {
+      e.stopPropagation();
+      handleFolderTargetMove(
         (items) => items.forEach((n) => setItemGroup("presets", n, null)),
         () => renderPresetsView(),
-        (count, first) => toastr.success(
-          count > 1
-            ? `已将 ${count} 个预设移出文件夹`
-            : `已将「${first}」移出文件夹`,
-        ),
-        e,
+        (count, first) =>
+          toastr.success(
+            count > 1
+              ? `已将 ${count} 个预设移出文件夹`
+              : `已将「${first}」移出文件夹`,
+          ),
       );
-      if (dblHandled) return;
+    });
+    uncatNode.on("click", (e) => {
+      e.preventDefault();
       selectedPresetFolder = "__ungrouped__";
       renderPresetsView();
     });
@@ -13121,28 +13768,31 @@ jQuery(async () => {
           <div class="cfm-row cfm-row-folder" data-folder-id="${escapeHtml(childId)}" draggable="true">
             <div class="cfm-row-icon"><i class="fa-solid fa-folder"></i></div>
             <div class="cfm-row-name">${escapeHtml(getResFolderDisplayName("presets", childId))}</div>
+            <div class="cfm-row-target-btn" title="移入此文件夹"><i class="fa-solid fa-crosshairs"></i></div>
             <div class="cfm-row-rename-btn" title="重命名文件夹"><i class="fa-solid fa-pen"></i></div>
             <div class="cfm-row-meta">${childCount} 个预设</div>
           </div>
         `);
+        row.find(".cfm-row-target-btn").on("click", (e) => {
+          e.stopPropagation();
+          handleFolderTargetMove(
+            (items) =>
+              items.forEach((n) => setItemGroup("presets", n, childId)),
+            () => renderPresetsView(),
+            (count, first) =>
+              toastr.success(
+                count > 1
+                  ? `已将 ${count} 个预设移入「${getResFolderDisplayName("presets", childId)}」`
+                  : `已将「${first}」移入「${getResFolderDisplayName("presets", childId)}」`,
+              ),
+          );
+        });
         row.find(".cfm-row-rename-btn").on("click", (e) => {
           e.stopPropagation();
           promptRenameFolder("presets", childId, () => renderPresetsView());
         });
         row.on("click", (e) => {
           e.preventDefault();
-          const dblHandled = handleFolderDblClickMove(
-            childId,
-            (items) => items.forEach((n) => setItemGroup("presets", n, childId)),
-            () => renderPresetsView(),
-            (count, first) => toastr.success(
-              count > 1
-                ? `已将 ${count} 个预设移入「${childId}」`
-                : `已将「${first}」移入「${childId}」`,
-            ),
-            e,
-          );
-          if (dblHandled) return;
           const path = getResFolderPath("presets", childId);
           for (const pid of path) presetExpandedNodes.add(pid);
           selectedPresetFolder = childId;
@@ -13217,7 +13867,9 @@ jQuery(async () => {
                 return;
               }
               reorderResFolder("presets", data.id, childId, null);
-              toastr.success(`「${data.id}」已移入「${childId}」`);
+              toastr.success(
+                `「${getResFolderDisplayName("presets", data.id)}」已移入「${getResFolderDisplayName("presets", childId)}」`,
+              );
             } else {
               const pId = tree[childId]?.parentId || null;
               if (wouldCreateResCycle("presets", data.id, pId)) {
@@ -13252,8 +13904,8 @@ jQuery(async () => {
             if (data.multiSelect) clearMultiSelect();
             toastr.success(
               pCount > 1
-                ? `已将 ${pCount} 个预设移入「${childId}」`
-                : `已将「${data.name}」移入「${childId}」`,
+                ? `已将 ${pCount} 个预设移入「${getResFolderDisplayName("presets", childId)}」`
+                : `已将「${data.name}」移入「${getResFolderDisplayName("presets", childId)}」`,
             );
             renderPresetsView();
           }
@@ -13447,6 +14099,7 @@ jQuery(async () => {
       tree[selectedPresetFolder]
     ) {
       const currentFolder = selectedPresetFolder;
+      rightList.off("dragover dragleave drop");
       rightList.on("dragover", (e) => {
         if ($(e.target).closest(".cfm-row").length > 0) return;
         e.preventDefault();
@@ -13475,7 +14128,9 @@ jQuery(async () => {
             return;
           }
           reorderResFolder("presets", data.id, currentFolder, null);
-          toastr.success(`「${data.id}」已移入「${currentFolder}」`);
+          toastr.success(
+            `「${getResFolderDisplayName("presets", data.id)}」已移入「${getResFolderDisplayName("presets", currentFolder)}」`,
+          );
           renderPresetsView();
         } else if (data.type === "preset") {
           const presetNames =
@@ -13487,8 +14142,8 @@ jQuery(async () => {
           if (data.multiSelect) clearMultiSelect();
           toastr.success(
             pCount > 1
-              ? `已将 ${pCount} 个预设移入「${currentFolder}」`
-              : `已将「${data.name}」移入「${currentFolder}」`,
+              ? `已将 ${pCount} 个预设移入「${getResFolderDisplayName("presets", currentFolder)}」`
+              : `已将「${data.name}」移入「${getResFolderDisplayName("presets", currentFolder)}」`,
           );
           renderPresetsView();
         }
@@ -13581,10 +14236,24 @@ jQuery(async () => {
           <span class="cfm-tnode-arrow ${hasChildren ? (isExpanded ? "cfm-arrow-expanded" : "") : "cfm-arrow-hidden"}"><i class="fa-solid fa-caret-right"></i></span>
           <span class="cfm-tnode-icon"><i class="fa-solid fa-folder${isSelected ? "-open" : ""}"></i></span>
           <span class="cfm-tnode-label">${escapeHtml(getResFolderDisplayName("themes", folderId))}</span>
+          <span class="cfm-tnode-target" title="移入此文件夹"><i class="fa-solid fa-crosshairs"></i></span>
           <span class="cfm-tnode-rename" title="重命名文件夹"><i class="fa-solid fa-pen"></i></span>
           <span class="cfm-tnode-count">${count}</span>
         </div>
       `);
+      node.find(".cfm-tnode-target").on("click", (e) => {
+        e.stopPropagation();
+        handleFolderTargetMove(
+          (items) => items.forEach((n) => setItemGroup("themes", n, folderId)),
+          () => renderThemesView(),
+          (count, first) =>
+            toastr.success(
+              count > 1
+                ? `已将 ${count} 个主题移入「${getResFolderDisplayName("themes", folderId)}」`
+                : `已将「${first}」移入「${getResFolderDisplayName("themes", folderId)}」`,
+            ),
+        );
+      });
       node.find(".cfm-tnode-rename").on("click", (e) => {
         e.stopPropagation();
         promptRenameFolder("themes", folderId, () => renderThemesView());
@@ -13599,19 +14268,6 @@ jQuery(async () => {
       });
       node.on("click", (e) => {
         e.preventDefault();
-        const dblHandled = handleFolderDblClickMove(
-          folderId,
-          (items) => items.forEach((n) => setItemGroup("themes", n, folderId)),
-          () => renderThemesView(),
-          (count, first) =>
-            toastr.success(
-              count > 1
-                ? `已将 ${count} 个主题移入「${folderId}」`
-                : `已将「${first}」移入「${folderId}」`,
-            ),
-          e,
-        );
-        if (dblHandled) return;
         selectedThemeFolder = folderId;
         renderThemesView();
       });
@@ -13678,7 +14334,9 @@ jQuery(async () => {
               return;
             }
             reorderResFolder("themes", data.id, folderId, null);
-            toastr.success(`「${data.id}」已移入「${folderId}」`);
+            toastr.success(
+              `「${getResFolderDisplayName("themes", data.id)}」已移入「${getResFolderDisplayName("themes", folderId)}」`,
+            );
           } else {
             const pId = tree[folderId]?.parentId || null;
             if (wouldCreateResCycle("themes", data.id, pId)) {
@@ -13713,8 +14371,8 @@ jQuery(async () => {
           renderThemesView();
           toastr.success(
             names.length > 1
-              ? `已将 ${names.length} 个主题移入「${folderId}」`
-              : `已将「${data.name}」移入「${folderId}」`,
+              ? `已将 ${names.length} 个主题移入「${getResFolderDisplayName("themes", folderId)}」`
+              : `已将「${data.name}」移入「${getResFolderDisplayName("themes", folderId)}」`,
           );
         }
       });
@@ -13747,23 +14405,25 @@ jQuery(async () => {
         <span class="cfm-tnode-arrow cfm-arrow-hidden"><i class="fa-solid fa-caret-right"></i></span>
         <span class="cfm-tnode-icon"><i class="fa-solid fa-box-open"></i></span>
         <span class="cfm-tnode-label">未归类主题</span>
+        <span class="cfm-tnode-target" title="移入此处"><i class="fa-solid fa-crosshairs"></i></span>
         <span class="cfm-tnode-count">${ungrouped.length}</span>
       </div>
     `);
-    uncatNode.on("click", (e) => {
-      e.preventDefault();
-      const dblHandled = handleFolderDblClickMove(
-        "__ungrouped_theme__",
+    uncatNode.find(".cfm-tnode-target").on("click", (e) => {
+      e.stopPropagation();
+      handleFolderTargetMove(
         (items) => items.forEach((n) => setItemGroup("themes", n, null)),
         () => renderThemesView(),
-        (count, first) => toastr.success(
-          count > 1
-            ? `已将 ${count} 个主题移出文件夹`
-            : `已将「${first}」移出文件夹`,
-        ),
-        e,
+        (count, first) =>
+          toastr.success(
+            count > 1
+              ? `已将 ${count} 个主题移出文件夹`
+              : `已将「${first}」移出文件夹`,
+          ),
       );
-      if (dblHandled) return;
+    });
+    uncatNode.on("click", (e) => {
+      e.preventDefault();
       selectedThemeFolder = "__ungrouped__";
       renderThemesView();
     });
@@ -13865,28 +14525,30 @@ jQuery(async () => {
           <div class="cfm-row cfm-row-folder" data-folder-id="${escapeHtml(childId)}" draggable="true">
             <div class="cfm-row-icon"><i class="fa-solid fa-folder"></i></div>
             <div class="cfm-row-name">${escapeHtml(getResFolderDisplayName("themes", childId))}</div>
+            <div class="cfm-row-target-btn" title="移入此文件夹"><i class="fa-solid fa-crosshairs"></i></div>
             <div class="cfm-row-rename-btn" title="重命名文件夹"><i class="fa-solid fa-pen"></i></div>
             <div class="cfm-row-meta">${childCount} 个主题</div>
           </div>
         `);
+        row.find(".cfm-row-target-btn").on("click", (e) => {
+          e.stopPropagation();
+          handleFolderTargetMove(
+            (items) => items.forEach((n) => setItemGroup("themes", n, childId)),
+            () => renderThemesView(),
+            (count, first) =>
+              toastr.success(
+                count > 1
+                  ? `已将 ${count} 个主题移入「${getResFolderDisplayName("themes", childId)}」`
+                  : `已将「${first}」移入「${getResFolderDisplayName("themes", childId)}」`,
+              ),
+          );
+        });
         row.find(".cfm-row-rename-btn").on("click", (e) => {
           e.stopPropagation();
           promptRenameFolder("themes", childId, () => renderThemesView());
         });
         row.on("click", (e) => {
           e.preventDefault();
-          const dblHandled = handleFolderDblClickMove(
-            childId,
-            (items) => items.forEach((n) => setItemGroup("themes", n, childId)),
-            () => renderThemesView(),
-            (count, first) => toastr.success(
-              count > 1
-                ? `已将 ${count} 个主题移入「${childId}」`
-                : `已将「${first}」移入「${childId}」`,
-            ),
-            e,
-          );
-          if (dblHandled) return;
           const path = getResFolderPath("themes", childId);
           for (const pid of path) themeExpandedNodes.add(pid);
           selectedThemeFolder = childId;
@@ -13960,7 +14622,9 @@ jQuery(async () => {
                 return;
               }
               reorderResFolder("themes", data.id, childId, null);
-              toastr.success(`「${data.id}」已移入「${childId}」`);
+              toastr.success(
+                `「${getResFolderDisplayName("themes", data.id)}」已移入「${getResFolderDisplayName("themes", childId)}」`,
+              );
             } else {
               const pId = tree[childId]?.parentId || null;
               if (wouldCreateResCycle("themes", data.id, pId)) {
@@ -13994,8 +14658,8 @@ jQuery(async () => {
             if (data.multiSelect) clearMultiSelect();
             toastr.success(
               names.length > 1
-                ? `已将 ${names.length} 个主题移入「${childId}」`
-                : `已将「${data.name}」移入「${childId}」`,
+                ? `已将 ${names.length} 个主题移入「${getResFolderDisplayName("themes", childId)}」`
+                : `已将「${data.name}」移入「${getResFolderDisplayName("themes", childId)}」`,
             );
             renderThemesView();
           }
@@ -14047,13 +14711,25 @@ jQuery(async () => {
         const singleRenameBtn = noModeActive
           ? `<div class="cfm-row-edit-btn cfm-row-rename-btn" title="重命名"><i class="fa-solid fa-i-cursor"></i></div>`
           : "";
+        // 绑定背景按钮
+        const bgBinding = getThemeBgBinding(name);
+        const bgLinkBtn = noModeActive
+          ? `<div class="cfm-row-edit-btn cfm-row-bglink-btn ${bgBinding ? "cfm-bglink-active" : ""}" title="${bgBinding ? "已绑定背景: " + escapeHtml(getBackgroundDisplayName(bgBinding)) : "绑定背景"}">
+              <i class="fa-solid fa-link"></i>
+            </div>`
+          : "";
+        // 绑定背景标签
+        const bgBindHtml = bgBinding
+          ? `<span class="cfm-theme-bgbind-tag" title="绑定背景: ${escapeHtml(getBackgroundDisplayName(bgBinding))}"><i class="fa-solid fa-image"></i>${escapeHtml(getBackgroundDisplayName(bgBinding))}</span>`
+          : "";
         const row = $(`
           <div class="cfm-row cfm-row-char ${isActive ? "cfm-rv-item-active" : ""} ${isDelSel ? "cfm-res-delete-row-selected" : ""} ${isExpSel ? "cfm-export-row-selected" : ""} ${isNoteSel ? "cfm-edit-row-selected" : ""} ${isRenameSel ? "cfm-edit-row-selected" : ""} ${isMSel ? "cfm-multisel-row-selected" : ""}" data-res-id="${escapeHtml(name)}" draggable="true">
             ${msCheckHtml}
             <div class="cfm-row-icon"><i class="fa-solid fa-palette" style="font-size:20px;color:#cba6f7;"></i></div>
-            <div class="cfm-row-name"><span class="cfm-theme-name-text">${escapeHtml(name)}</span>${noteHtml}</div>
+            <div class="cfm-row-name"><span class="cfm-theme-name-text">${escapeHtml(name)}</span>${noteHtml}${bgBindHtml}</div>
             ${singleRenameBtn}
             ${singleNoteBtn}
+            ${bgLinkBtn}
             <div class="cfm-row-star ${fav ? "cfm-star-active" : ""}" title="${fav ? "取消收藏" : "添加收藏"}"><i class="fa-${fav ? "solid" : "regular"} fa-star"></i></div>
           </div>
         `);
@@ -14090,10 +14766,16 @@ jQuery(async () => {
           e.stopPropagation();
           executeThemeRename([name]);
         });
+        // 绑定背景按钮
+        row.find(".cfm-row-bglink-btn").on("click touchend", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          handleThemeBgLink(name);
+        });
         row.on("click", (e) => {
           if (
             $(e.target).closest(
-              ".cfm-row-star, .cfm-row-note-btn, .cfm-row-rename-btn",
+              ".cfm-row-star, .cfm-row-note-btn, .cfm-row-rename-btn, .cfm-row-bglink-btn",
             ).length
           )
             return;
@@ -14187,6 +14869,7 @@ jQuery(async () => {
       tree[selectedThemeFolder]
     ) {
       const currentFolder = selectedThemeFolder;
+      rightList.off("dragover dragleave drop");
       rightList.on("dragover", (e) => {
         if ($(e.target).closest(".cfm-row").length > 0) return;
         e.preventDefault();
@@ -14214,7 +14897,9 @@ jQuery(async () => {
             return;
           }
           reorderResFolder("themes", data.id, currentFolder, null);
-          toastr.success(`「${data.id}」已移入「${currentFolder}」`);
+          toastr.success(
+            `「${getResFolderDisplayName("themes", data.id)}」已移入「${getResFolderDisplayName("themes", currentFolder)}」`,
+          );
           renderThemesView();
         } else if (data.type === "theme") {
           const names =
@@ -14225,8 +14910,8 @@ jQuery(async () => {
           if (data.multiSelect) clearMultiSelect();
           toastr.success(
             names.length > 1
-              ? `已将 ${names.length} 个主题移入「${currentFolder}」`
-              : `已将「${data.name}」移入「${currentFolder}」`,
+              ? `已将 ${names.length} 个主题移入「${getResFolderDisplayName("themes", currentFolder)}」`
+              : `已将「${data.name}」移入「${getResFolderDisplayName("themes", currentFolder)}」`,
           );
           renderThemesView();
         }
@@ -14258,6 +14943,13 @@ jQuery(async () => {
       return;
     }
     renderBackgroundsView._retryCount = 0;
+    // 自动检测背景方向（异步，不阻塞渲染，仅对未检测过的执行）
+    const undetected = bgNames.filter((n) => !getBgOrientation(n));
+    if (undetected.length > 0) {
+      autoDetectBgOrientations(undetected).then(() => {
+        if (currentResourceType === "backgrounds") renderBackgroundsView();
+      });
+    }
     const groups = getResourceGroups("backgrounds");
     const existingBgNames = new Set(bgNames);
     let bgGroupsCleaned = false;
@@ -14302,8 +14994,22 @@ jQuery(async () => {
       const count = countResItemsRecursive("backgrounds", folderId);
       const indent = 10 + depth * 16;
       const node = $(
-        `<div class="cfm-tnode ${isSelected ? "cfm-tnode-selected" : ""}" data-id="${escapeHtml(folderId)}" style="padding-left:${indent}px;" draggable="true"><span class="cfm-tnode-arrow ${hasChildren ? (isExpanded ? "cfm-arrow-expanded" : "") : "cfm-arrow-hidden"}"><i class="fa-solid fa-caret-right"></i></span><span class="cfm-tnode-icon"><i class="fa-solid fa-folder${isSelected ? "-open" : ""}"></i></span><span class="cfm-tnode-label">${escapeHtml(getResFolderDisplayName("backgrounds", folderId))}</span><span class="cfm-tnode-rename" title="重命名文件夹"><i class="fa-solid fa-pen"></i></span><span class="cfm-tnode-count">${count}</span></div>`,
+        `<div class="cfm-tnode ${isSelected ? "cfm-tnode-selected" : ""}" data-id="${escapeHtml(folderId)}" style="padding-left:${indent}px;" draggable="true"><span class="cfm-tnode-arrow ${hasChildren ? (isExpanded ? "cfm-arrow-expanded" : "") : "cfm-arrow-hidden"}"><i class="fa-solid fa-caret-right"></i></span><span class="cfm-tnode-icon"><i class="fa-solid fa-folder${isSelected ? "-open" : ""}"></i></span><span class="cfm-tnode-label">${escapeHtml(getResFolderDisplayName("backgrounds", folderId))}</span><span class="cfm-tnode-target" title="移入此文件夹"><i class="fa-solid fa-crosshairs"></i></span><span class="cfm-tnode-rename" title="重命名文件夹"><i class="fa-solid fa-pen"></i></span><span class="cfm-tnode-count">${count}</span></div>`,
       );
+      node.find(".cfm-tnode-target").on("click", (e) => {
+        e.stopPropagation();
+        handleFolderTargetMove(
+          (items) =>
+            items.forEach((n) => setItemGroup("backgrounds", n, folderId)),
+          () => renderBackgroundsView(),
+          (count, first) =>
+            toastr.success(
+              count > 1
+                ? `已将 ${count} 个背景移入「${getResFolderDisplayName("backgrounds", folderId)}」`
+                : `已将「${getBackgroundDisplayName(first)}」移入「${getResFolderDisplayName("backgrounds", folderId)}」`,
+            ),
+        );
+      });
       node.find(".cfm-tnode-rename").on("click", (e) => {
         e.stopPropagation();
         promptRenameFolder("backgrounds", folderId, () =>
@@ -14319,20 +15025,6 @@ jQuery(async () => {
       });
       node.on("click", (e) => {
         e.preventDefault();
-        const dblHandled = handleFolderDblClickMove(
-          folderId,
-          (items) =>
-            items.forEach((n) => setItemGroup("backgrounds", n, folderId)),
-          () => renderBackgroundsView(),
-          (count, first) =>
-            toastr.success(
-              count > 1
-                ? `已将 ${count} 个背景移入「${folderId}」`
-                : `已将「${getBackgroundDisplayName(first)}」移入「${folderId}」`,
-            ),
-          e,
-        );
-        if (dblHandled) return;
         selectedBgFolder = folderId;
         renderBackgroundsView();
       });
@@ -14403,7 +15095,9 @@ jQuery(async () => {
               return;
             }
             reorderResFolder("backgrounds", data.id, folderId, null);
-            toastr.success(`「${data.id}」已移入「${folderId}」`);
+            toastr.success(
+              `「${getResFolderDisplayName("backgrounds", data.id)}」已移入「${getResFolderDisplayName("backgrounds", folderId)}」`,
+            );
           } else {
             const pId = tree[folderId]?.parentId || null;
             if (wouldCreateResCycle("backgrounds", data.id, pId)) {
@@ -14438,8 +15132,8 @@ jQuery(async () => {
           renderBackgroundsView();
           toastr.success(
             names.length > 1
-              ? `已将 ${names.length} 个背景移入「${folderId}」`
-              : `已将「${getBackgroundDisplayName(data.name)}」移入「${folderId}」`,
+              ? `已将 ${names.length} 个背景移入「${getResFolderDisplayName("backgrounds", folderId)}」`
+              : `已将「${getBackgroundDisplayName(data.name)}」移入「${getResFolderDisplayName("backgrounds", folderId)}」`,
           );
         }
       });
@@ -14465,22 +15159,23 @@ jQuery(async () => {
     );
     for (const fid of topFolders) renderBgTreeNode(leftTree, fid, 0);
     const uncatNode = $(
-      `<div class="cfm-tnode cfm-tnode-uncategorized ${selectedBgFolder === "__ungrouped__" ? "cfm-tnode-selected" : ""}" data-id="__ungrouped__" style="padding-left:10px;"><span class="cfm-tnode-arrow cfm-arrow-hidden"><i class="fa-solid fa-caret-right"></i></span><span class="cfm-tnode-icon"><i class="fa-solid fa-box-open"></i></span><span class="cfm-tnode-label">未归类背景</span><span class="cfm-tnode-count">${ungrouped.length}</span></div>`,
+      `<div class="cfm-tnode cfm-tnode-uncategorized ${selectedBgFolder === "__ungrouped__" ? "cfm-tnode-selected" : ""}" data-id="__ungrouped__" style="padding-left:10px;"><span class="cfm-tnode-arrow cfm-arrow-hidden"><i class="fa-solid fa-caret-right"></i></span><span class="cfm-tnode-icon"><i class="fa-solid fa-box-open"></i></span><span class="cfm-tnode-label">未归类背景</span><span class="cfm-tnode-target" title="移入此处"><i class="fa-solid fa-crosshairs"></i></span><span class="cfm-tnode-count">${ungrouped.length}</span></div>`,
     );
-    uncatNode.on("click", (e) => {
-      e.preventDefault();
-      const dblHandled = handleFolderDblClickMove(
-        "__ungrouped_bg__",
+    uncatNode.find(".cfm-tnode-target").on("click", (e) => {
+      e.stopPropagation();
+      handleFolderTargetMove(
         (items) => items.forEach((n) => setItemGroup("backgrounds", n, null)),
         () => renderBackgroundsView(),
-        (count, first) => toastr.success(
-          count > 1
-            ? `已将 ${count} 个背景移出文件夹`
-            : `已将「${getBackgroundDisplayName(first)}」移出文件夹`,
-        ),
-        e,
+        (count, first) =>
+          toastr.success(
+            count > 1
+              ? `已将 ${count} 个背景移出文件夹`
+              : `已将「${getBackgroundDisplayName(first)}」移出文件夹`,
+          ),
       );
-      if (dblHandled) return;
+    });
+    uncatNode.on("click", (e) => {
+      e.preventDefault();
       selectedBgFolder = "__ungrouped__";
       renderBackgroundsView();
     });
@@ -14570,8 +15265,22 @@ jQuery(async () => {
       for (const childId of childFolders) {
         const childCount = countResItemsRecursive("backgrounds", childId);
         const row = $(
-          `<div class="cfm-row cfm-row-folder" data-folder-id="${escapeHtml(childId)}" draggable="true"><div class="cfm-row-icon"><i class="fa-solid fa-folder"></i></div><div class="cfm-row-name">${escapeHtml(getResFolderDisplayName("backgrounds", childId))}</div><div class="cfm-row-rename-btn" title="重命名文件夹"><i class="fa-solid fa-pen"></i></div><div class="cfm-row-meta">${childCount} 个背景</div></div>`,
+          `<div class="cfm-row cfm-row-folder" data-folder-id="${escapeHtml(childId)}" draggable="true"><div class="cfm-row-icon"><i class="fa-solid fa-folder"></i></div><div class="cfm-row-name">${escapeHtml(getResFolderDisplayName("backgrounds", childId))}</div><div class="cfm-row-target-btn" title="移入此文件夹"><i class="fa-solid fa-crosshairs"></i></div><div class="cfm-row-rename-btn" title="重命名文件夹"><i class="fa-solid fa-pen"></i></div><div class="cfm-row-meta">${childCount} 个背景</div></div>`,
         );
+        row.find(".cfm-row-target-btn").on("click", (e) => {
+          e.stopPropagation();
+          handleFolderTargetMove(
+            (items) =>
+              items.forEach((n) => setItemGroup("backgrounds", n, childId)),
+            () => renderBackgroundsView(),
+            (count, first) =>
+              toastr.success(
+                count > 1
+                  ? `已将 ${count} 个背景移入「${getResFolderDisplayName("backgrounds", childId)}」`
+                  : `已将「${getBackgroundDisplayName(first)}」移入「${getResFolderDisplayName("backgrounds", childId)}」`,
+              ),
+          );
+        });
         row.find(".cfm-row-rename-btn").on("click", (e) => {
           e.stopPropagation();
           promptRenameFolder("backgrounds", childId, () =>
@@ -14580,18 +15289,6 @@ jQuery(async () => {
         });
         row.on("click", (e) => {
           e.preventDefault();
-          const dblHandled = handleFolderDblClickMove(
-            childId,
-            (items) => items.forEach((n) => setItemGroup("backgrounds", n, childId)),
-            () => renderBackgroundsView(),
-            (count, first) => toastr.success(
-              count > 1
-                ? `已将 ${count} 个背景移入「${childId}」`
-                : `已将「${getBackgroundDisplayName(first)}」移入「${childId}」`,
-            ),
-            e,
-          );
-          if (dblHandled) return;
           const path = getResFolderPath("backgrounds", childId);
           for (const pid of path) bgExpandedNodes.add(pid);
           selectedBgFolder = childId;
@@ -14665,7 +15362,9 @@ jQuery(async () => {
                 return;
               }
               reorderResFolder("backgrounds", data.id, childId, null);
-              toastr.success(`「${data.id}」已移入「${childId}」`);
+              toastr.success(
+                `「${getResFolderDisplayName("backgrounds", data.id)}」已移入「${getResFolderDisplayName("backgrounds", childId)}」`,
+              );
             } else {
               const pId = tree[childId]?.parentId || null;
               if (wouldCreateResCycle("backgrounds", data.id, pId)) {
@@ -14699,8 +15398,8 @@ jQuery(async () => {
             if (data.multiSelect) clearMultiSelect();
             toastr.success(
               names.length > 1
-                ? `已将 ${names.length} 个背景移入「${childId}」`
-                : `已将「${getBackgroundDisplayName(data.name)}」移入「${childId}」`,
+                ? `已将 ${names.length} 个背景移入「${getResFolderDisplayName("backgrounds", childId)}」`
+                : `已将「${getBackgroundDisplayName(data.name)}」移入「${getResFolderDisplayName("backgrounds", childId)}」`,
             );
             renderBackgroundsView();
           }
@@ -14735,6 +15434,10 @@ jQuery(async () => {
                   ? `<div class="cfm-multisel-checkbox ${isMSel ? "cfm-multisel-checked" : ""}"><i class="fa-${isMSel ? "solid" : "regular"} fa-square${isMSel ? "-check" : ""}"></i></div>`
                   : "";
         const bgNote = getBgNote(name);
+        const bgOrient = getBgOrientation(name);
+        const orientHtml = bgOrient
+          ? `<span class="cfm-bg-orient cfm-bg-orient-${bgOrient}" title="${BG_ORIENT_LABELS[bgOrient] || bgOrient}"><i class="fa-solid ${BG_ORIENT_ICONS[bgOrient] || "fa-expand"}"></i>${BG_ORIENT_LABELS[bgOrient] || bgOrient}</span>`
+          : "";
         const noteHtml = bgNote
           ? `<span class="cfm-theme-note" title="备注: ${escapeHtml(bgNote)}">${escapeHtml(bgNote)}</span>`
           : "";
@@ -14752,7 +15455,7 @@ jQuery(async () => {
           : "";
         const thumbUrl = getBackgroundThumbnailUrl(name);
         const row = $(
-          `<div class="cfm-row cfm-row-char cfm-row-bg ${isActive ? "cfm-rv-item-active" : ""} ${isDelSel ? "cfm-res-delete-row-selected" : ""} ${isExpSel ? "cfm-export-row-selected" : ""} ${isNoteSel ? "cfm-edit-row-selected" : ""} ${isRenameSel ? "cfm-edit-row-selected" : ""} ${isMSel ? "cfm-multisel-row-selected" : ""}" data-res-id="${escapeHtml(name)}" draggable="true">${msCheckHtml}<div class="cfm-row-icon cfm-bg-thumb" style="background-image:url('${thumbUrl}');background-size:cover;background-position:center;"></div><div class="cfm-row-name"><span class="cfm-theme-name-text">${escapeHtml(getBackgroundDisplayName(name))}</span>${noteHtml}</div>${singleRenameBtn}${singleNoteBtn}<div class="cfm-row-star ${fav ? "cfm-star-active" : ""}" title="${fav ? "取消收藏" : "添加收藏"}"><i class="fa-${fav ? "solid" : "regular"} fa-star"></i></div></div>`,
+          `<div class="cfm-row cfm-row-char cfm-row-bg ${isActive ? "cfm-rv-item-active" : ""} ${isDelSel ? "cfm-res-delete-row-selected" : ""} ${isExpSel ? "cfm-export-row-selected" : ""} ${isNoteSel ? "cfm-edit-row-selected" : ""} ${isRenameSel ? "cfm-edit-row-selected" : ""} ${isMSel ? "cfm-multisel-row-selected" : ""}" data-res-id="${escapeHtml(name)}" draggable="true">${msCheckHtml}<div class="cfm-row-icon cfm-bg-thumb" style="background-image:url('${thumbUrl}');background-size:cover;background-position:center;"></div><div class="cfm-row-name"><span class="cfm-theme-name-text">${escapeHtml(getBackgroundDisplayName(name))}</span>${orientHtml}${noteHtml}</div>${singleRenameBtn}${singleNoteBtn}<div class="cfm-row-star ${fav ? "cfm-star-active" : ""}" title="${fav ? "取消收藏" : "添加收藏"}"><i class="fa-${fav ? "solid" : "regular"} fa-star"></i></div></div>`,
         );
         row.find(".cfm-row-star").on("click touchend", (e) => {
           e.preventDefault();
@@ -14873,6 +15576,7 @@ jQuery(async () => {
       tree[selectedBgFolder]
     ) {
       const currentFolder = selectedBgFolder;
+      rightList.off("dragover dragleave drop");
       rightList.on("dragover", (e) => {
         if ($(e.target).closest(".cfm-row").length > 0) return;
         e.preventDefault();
@@ -14900,7 +15604,9 @@ jQuery(async () => {
             return;
           }
           reorderResFolder("backgrounds", data.id, currentFolder, null);
-          toastr.success(`「${data.id}」已移入「${currentFolder}」`);
+          toastr.success(
+            `「${getResFolderDisplayName("backgrounds", data.id)}」已移入「${getResFolderDisplayName("backgrounds", currentFolder)}」`,
+          );
           renderBackgroundsView();
         } else if (data.type === "background") {
           const names =
@@ -14911,13 +15617,15 @@ jQuery(async () => {
           if (data.multiSelect) clearMultiSelect();
           toastr.success(
             names.length > 1
-              ? `已将 ${names.length} 个背景移入「${currentFolder}」`
-              : `已将「${getBackgroundDisplayName(data.name)}」移入「${currentFolder}」`,
+              ? `已将 ${names.length} 个背景移入「${getResFolderDisplayName("backgrounds", currentFolder)}」`
+              : `已将「${getBackgroundDisplayName(data.name)}」移入「${getResFolderDisplayName("backgrounds", currentFolder)}」`,
           );
           renderBackgroundsView();
         }
       });
     }
+    // 更新默认背景按钮状态
+    updateDefaultBgBtnState();
   }
 
   // ==================== 角色世界书归类 ====================
@@ -15155,6 +15863,9 @@ jQuery(async () => {
       let movedCount = 0;
       let importedCount = 0;
       let failCount = 0;
+      let skippedCount = 0;
+      const alreadyProcessed = new Set(); // 去重：防止关联和内嵌重复归类同一个世界书
+      const wiGroups_ = getResourceGroups("worldinfo");
 
       // 1. 处理关联世界书归类
       overlay.find(".cfm-cb-linked-list .cfm-cb-row").each(function () {
@@ -15162,6 +15873,12 @@ jQuery(async () => {
         if (!checked) return;
         const wiName = $(this).data("wi-name");
         if (wiName) {
+          alreadyProcessed.add(wiName);
+          // 如果已经在目标文件夹中，跳过
+          if (wiGroups_[wiName] === targetFolder) {
+            skippedCount++;
+            return;
+          }
           setItemGroup("worldinfo", wiName, targetFolder);
           movedCount++;
         }
@@ -15177,9 +15894,26 @@ jQuery(async () => {
         if (!info) continue;
 
         if (info.alreadyImported) {
-          // 已导入的直接归类
+          // 已导入的直接归类（但需要去重，避免和关联世界书重复计数）
+          const bookWiName = info.bookName;
+          // 尝试用关联的 world 名称匹配
+          const ch = getCharacters().find((c) => c.avatar === avatar);
+          const linkedName = ch?.data?.extensions?.world;
+          if (linkedName && alreadyProcessed.has(linkedName)) {
+            skippedCount++;
+            continue; // 已在关联世界书中处理过
+          }
+          if (alreadyProcessed.has(bookWiName)) {
+            skippedCount++;
+            continue;
+          }
+          alreadyProcessed.add(bookWiName);
           if (targetFolder) {
-            setItemGroup("worldinfo", info.bookName, targetFolder);
+            if (wiGroups_[bookWiName] === targetFolder) {
+              skippedCount++;
+              continue;
+            }
+            setItemGroup("worldinfo", bookWiName, targetFolder);
             movedCount++;
           }
         } else {
@@ -15188,37 +15922,21 @@ jQuery(async () => {
             const ch = getCharacters().find((c) => c.avatar === avatar);
             if (!ch?.data?.character_book) continue;
             const bookName = info.bookName;
-            // 使用酒馆的 convertCharacterBook 和 saveWorldInfo
-            // 由于这些函数可能不在全局作用域，我们通过API方式导入
-            const characterBook = ch.data.character_book;
-            const formData = new FormData();
-            const blob = new Blob([JSON.stringify(characterBook)], {
-              type: "application/json",
-            });
-            formData.append(
-              "avatar",
-              new File([blob], bookName + ".json", {
-                type: "application/json",
-              }),
-            );
-            formData.append("convertedData", JSON.stringify(characterBook));
-            const result = await fetch("/api/worldinfo/import", {
-              method: "POST",
-              headers: getContext().getRequestHeaders({
-                omitContentType: true,
-              }),
-              body: formData,
-              cache: "no-cache",
-            });
-            if (result.ok) {
-              const data = await result.json();
-              if (data.name && targetFolder) {
-                setItemGroup("worldinfo", data.name, targetFolder);
-              }
-              importedCount++;
-            } else {
-              failCount++;
+            if (alreadyProcessed.has(bookName)) {
+              skippedCount++;
+              continue;
             }
+            alreadyProcessed.add(bookName);
+            // 使用酒馆原生的 convertCharacterBook 将 V2 格式转换为 ST 内部格式
+            const ctx = getContext();
+            const convertedBook = ctx.convertCharacterBook(
+              ch.data.character_book,
+            );
+            await ctx.saveWorldInfo(bookName, convertedBook, true);
+            if (targetFolder) {
+              setItemGroup("worldinfo", bookName, targetFolder);
+            }
+            importedCount++;
           } catch (err) {
             console.error("[CFM] 提取内嵌世界书失败:", avatar, err);
             failCount++;
@@ -15231,42 +15949,9 @@ jQuery(async () => {
       // 刷新缓存和视图
       _worldInfoNamesCache = null;
       if (importedCount > 0) {
-        // 有新导入的世界书时，需要先同步DOM和world_names
-        // 通过API获取最新的世界书列表并更新DOM
+        // 使用酒馆原生的 updateWorldInfoList 刷新世界书列表和 DOM
         try {
-          const resp = await fetch("/api/settings/get", {
-            method: "POST",
-            headers: getContext().getRequestHeaders(),
-            body: JSON.stringify({}),
-          });
-          if (resp.ok) {
-            const settingsData = await resp.json();
-            const latestNames = settingsData.world_names || [];
-            // 更新DOM中的world_editor_select
-            const $editorSelect = $("#world_editor_select");
-            const existingOptions = new Set();
-            $editorSelect.find("option").each(function () {
-              existingOptions.add($(this).text());
-            });
-            for (const wn of latestNames) {
-              if (!existingOptions.has(wn)) {
-                $editorSelect.append($(`<option></option>`).val(wn).text(wn));
-              }
-            }
-            // 同步更新内存中的world_names
-            try {
-              const wiModule = await import("../../../world-info.js");
-              const wNames = wiModule.world_names;
-              if (Array.isArray(wNames)) {
-                for (const wn of latestNames) {
-                  if (!wNames.includes(wn)) wNames.push(wn);
-                }
-              }
-            } catch (e) {
-              console.warn("[CFM] 同步 world_names 失败", e);
-            }
-            _worldInfoNamesCache = latestNames;
-          }
+          await getContext().updateWorldInfoList();
         } catch (e) {
           console.warn("[CFM] 刷新世界书列表失败", e);
         }
@@ -15278,6 +15963,8 @@ jQuery(async () => {
       if (movedCount > 0) msg += `归类了 ${movedCount} 个世界书`;
       if (importedCount > 0)
         msg += `${msg ? "，" : ""}提取并导入了 ${importedCount} 个内嵌世界书`;
+      if (skippedCount > 0)
+        msg += `${msg ? "，" : ""}${skippedCount} 个已在目标文件夹或重复`;
       if (failCount > 0) msg += `${msg ? "，" : ""}${failCount} 个失败`;
       if (!msg) msg = "未选择任何世界书";
       if (failCount > 0) toastr.warning(msg, "角色世界书归类");
@@ -15389,10 +16076,26 @@ jQuery(async () => {
           <span class="cfm-tnode-arrow ${hasChildren ? (isExpanded ? "cfm-arrow-expanded" : "") : "cfm-arrow-hidden"}"><i class="fa-solid fa-caret-right"></i></span>
           <span class="cfm-tnode-icon"><i class="fa-solid fa-folder${isSelected ? "-open" : ""}"></i></span>
           <span class="cfm-tnode-label">${escapeHtml(getResFolderDisplayName("worldinfo", folderId))}</span>
+          <span class="cfm-tnode-target" title="移入此文件夹"><i class="fa-solid fa-crosshairs"></i></span>
           <span class="cfm-tnode-rename" title="重命名文件夹"><i class="fa-solid fa-pen"></i></span>
           <span class="cfm-tnode-count">${count}</span>
         </div>
       `);
+
+      node.find(".cfm-tnode-target").on("click", (e) => {
+        e.stopPropagation();
+        handleFolderTargetMove(
+          (items) =>
+            items.forEach((n) => setItemGroup("worldinfo", n, folderId)),
+          () => renderWorldInfoView(),
+          (count, first) =>
+            toastr.success(
+              count > 1
+                ? `已将 ${count} 个世界书移入「${getResFolderDisplayName("worldinfo", folderId)}」`
+                : `已将「${first}」移入「${getResFolderDisplayName("worldinfo", folderId)}」`,
+            ),
+        );
+      });
 
       node.find(".cfm-tnode-rename").on("click", (e) => {
         e.stopPropagation();
@@ -15410,18 +16113,6 @@ jQuery(async () => {
 
       node.on("click", (e) => {
         e.preventDefault();
-        const dblHandled = handleFolderDblClickMove(
-          folderId,
-          (items) => items.forEach((n) => setItemGroup("worldinfo", n, folderId)),
-          () => renderWorldInfoView(),
-          (count, first) => toastr.success(
-            count > 1
-              ? `已将 ${count} 个世界书移入「${folderId}」`
-              : `已将「${first}」移入「${folderId}」`,
-          ),
-          e,
-        );
-        if (dblHandled) return;
         selectedWorldInfoFolder = folderId;
         renderWorldInfoView();
       });
@@ -15500,7 +16191,9 @@ jQuery(async () => {
               return;
             }
             reorderResFolder("worldinfo", data.id, folderId, null);
-            toastr.success(`「${data.id}」已移入「${folderId}」`);
+            toastr.success(
+              `「${getResFolderDisplayName("worldinfo", data.id)}」已移入「${getResFolderDisplayName("worldinfo", folderId)}」`,
+            );
           } else {
             const pId = tree[folderId]?.parentId || null;
             if (wouldCreateResCycle("worldinfo", data.id, pId)) {
@@ -15536,8 +16229,8 @@ jQuery(async () => {
           renderWorldInfoView();
           toastr.success(
             wCount > 1
-              ? `已将 ${wCount} 个世界书移入「${folderId}」`
-              : `已将「${data.name}」移入「${folderId}」`,
+              ? `已将 ${wCount} 个世界书移入「${getResFolderDisplayName("worldinfo", folderId)}」`
+              : `已将「${data.name}」移入「${getResFolderDisplayName("worldinfo", folderId)}」`,
           );
         }
       });
@@ -15591,23 +16284,25 @@ jQuery(async () => {
         <span class="cfm-tnode-arrow cfm-arrow-hidden"><i class="fa-solid fa-caret-right"></i></span>
         <span class="cfm-tnode-icon"><i class="fa-solid fa-box-open"></i></span>
         <span class="cfm-tnode-label">未归类世界书</span>
+        <span class="cfm-tnode-target" title="移出所有文件夹"><i class="fa-solid fa-crosshairs"></i></span>
         <span class="cfm-tnode-count">${ungrouped.length}</span>
       </div>
     `);
-    uncatNode.on("click", (e) => {
-      e.preventDefault();
-      const dblHandled = handleFolderDblClickMove(
-        "__ungrouped_wi__",
+    uncatNode.find(".cfm-tnode-target").on("click", (e) => {
+      e.stopPropagation();
+      handleFolderTargetMove(
         (items) => items.forEach((n) => setItemGroup("worldinfo", n, null)),
         () => renderWorldInfoView(),
-        (count, first) => toastr.success(
-          count > 1
-            ? `已将 ${count} 个世界书移出文件夹`
-            : `已将「${first}」移出文件夹`,
-        ),
-        e,
+        (count, first) =>
+          toastr.success(
+            count > 1
+              ? `已将 ${count} 个世界书移出文件夹`
+              : `已将「${first}」移出文件夹`,
+          ),
       );
-      if (dblHandled) return;
+    });
+    uncatNode.on("click", (e) => {
+      e.preventDefault();
       selectedWorldInfoFolder = "__ungrouped__";
       renderWorldInfoView();
     });
@@ -15721,28 +16416,31 @@ jQuery(async () => {
           <div class="cfm-row cfm-row-folder" data-folder-id="${escapeHtml(childId)}" draggable="true">
             <div class="cfm-row-icon"><i class="fa-solid fa-folder"></i></div>
             <div class="cfm-row-name">${escapeHtml(getResFolderDisplayName("worldinfo", childId))}</div>
+            <div class="cfm-row-target-btn" title="移入此文件夹"><i class="fa-solid fa-crosshairs"></i></div>
             <div class="cfm-row-rename-btn" title="重命名文件夹"><i class="fa-solid fa-pen"></i></div>
             <div class="cfm-row-meta">${childCount} 个世界书</div>
           </div>
         `);
+        row.find(".cfm-row-target-btn").on("click", (e) => {
+          e.stopPropagation();
+          handleFolderTargetMove(
+            (items) =>
+              items.forEach((n) => setItemGroup("worldinfo", n, childId)),
+            () => renderWorldInfoView(),
+            (count, first) =>
+              toastr.success(
+                count > 1
+                  ? `已将 ${count} 个世界书移入「${getResFolderDisplayName("worldinfo", childId)}」`
+                  : `已将「${first}」移入「${getResFolderDisplayName("worldinfo", childId)}」`,
+              ),
+          );
+        });
         row.find(".cfm-row-rename-btn").on("click", (e) => {
           e.stopPropagation();
           promptRenameFolder("worldinfo", childId, () => renderWorldInfoView());
         });
         row.on("click", (e) => {
           e.preventDefault();
-          const dblHandled = handleFolderDblClickMove(
-            childId,
-            (items) => items.forEach((n) => setItemGroup("worldinfo", n, childId)),
-            () => renderWorldInfoView(),
-            (count, first) => toastr.success(
-              count > 1
-                ? `已将 ${count} 个世界书移入「${childId}」`
-                : `已将「${first}」移入「${childId}」`,
-            ),
-            e,
-          );
-          if (dblHandled) return;
           const path = getResFolderPath("worldinfo", childId);
           for (const pid of path) worldInfoExpandedNodes.add(pid);
           selectedWorldInfoFolder = childId;
@@ -15817,7 +16515,9 @@ jQuery(async () => {
                 return;
               }
               reorderResFolder("worldinfo", data.id, childId, null);
-              toastr.success(`「${data.id}」已移入「${childId}」`);
+              toastr.success(
+                `「${getResFolderDisplayName("worldinfo", data.id)}」已移入「${getResFolderDisplayName("worldinfo", childId)}」`,
+              );
             } else {
               const pId = tree[childId]?.parentId || null;
               if (wouldCreateResCycle("worldinfo", data.id, pId)) {
@@ -15852,8 +16552,8 @@ jQuery(async () => {
             if (data.multiSelect) clearMultiSelect();
             toastr.success(
               wCount > 1
-                ? `已将 ${wCount} 个世界书移入「${childId}」`
-                : `已将「${data.name}」移入「${childId}」`,
+                ? `已将 ${wCount} 个世界书移入「${getResFolderDisplayName("worldinfo", childId)}」`
+                : `已将「${data.name}」移入「${getResFolderDisplayName("worldinfo", childId)}」`,
             );
             renderWorldInfoView();
           }
@@ -16041,6 +16741,7 @@ jQuery(async () => {
       tree[selectedWorldInfoFolder]
     ) {
       const currentFolder = selectedWorldInfoFolder;
+      rightList.off("dragover dragleave drop");
       rightList.on("dragover", (e) => {
         if ($(e.target).closest(".cfm-row").length > 0) return;
         e.preventDefault();
@@ -16071,7 +16772,9 @@ jQuery(async () => {
             return;
           }
           reorderResFolder("worldinfo", data.id, currentFolder, null);
-          toastr.success(`「${data.id}」已移入「${currentFolder}」`);
+          toastr.success(
+            `「${getResFolderDisplayName("worldinfo", data.id)}」已移入「${getResFolderDisplayName("worldinfo", currentFolder)}」`,
+          );
           renderWorldInfoView();
         } else if (data.type === "worldinfo") {
           const wiNames =
@@ -16083,8 +16786,8 @@ jQuery(async () => {
           if (data.multiSelect) clearMultiSelect();
           toastr.success(
             wCount > 1
-              ? `已将 ${wCount} 个世界书移入「${currentFolder}」`
-              : `已将「${data.name}」移入「${currentFolder}」`,
+              ? `已将 ${wCount} 个世界书移入「${getResFolderDisplayName("worldinfo", currentFolder)}」`
+              : `已将「${data.name}」移入「${getResFolderDisplayName("worldinfo", currentFolder)}」`,
           );
           renderWorldInfoView();
         }
@@ -16195,6 +16898,10 @@ jQuery(async () => {
         notes: JSON.parse(
           JSON.stringify(extension_settings[extensionName].themeNotes || {}),
         ),
+        bgBindings: JSON.parse(
+          JSON.stringify(extension_settings[extensionName].themeBackgroundBindings || {}),
+        ),
+        defaultBackground: extension_settings[extensionName].defaultBackground || "",
       };
     }
 
@@ -16206,6 +16913,11 @@ jQuery(async () => {
         favorites: [...getResFavorites("backgrounds")],
         notes: JSON.parse(
           JSON.stringify(extension_settings[extensionName].bgNotes || {}),
+        ),
+        orientations: JSON.parse(
+          JSON.stringify(
+            extension_settings[extensionName].bgOrientations || {},
+          ),
         ),
       };
     }
@@ -16504,6 +17216,25 @@ jQuery(async () => {
           }
         }
       }
+
+      // 恢复背景绑定
+      const bgBindings = jsonData.themes.bgBindings;
+      if (bgBindings && typeof bgBindings === "object") {
+        const themeNameList = getThemeNames();
+        const themeNameSet = new Set(themeNameList);
+        for (const [name, bgfile] of Object.entries(bgBindings)) {
+          if (themeNameSet.has(name) && bgfile) {
+            setThemeBgBinding(name, bgfile);
+          }
+        }
+      }
+
+      // 恢复默认背景
+      if (jsonData.themes.defaultBackground) {
+        extension_settings[extensionName].defaultBackground =
+          jsonData.themes.defaultBackground;
+        getContext().saveSettingsDebounced();
+      }
     }
 
     if (jsonData.backgrounds) {
@@ -16554,6 +17285,17 @@ jQuery(async () => {
         for (const [name, note] of Object.entries(bgNotes)) {
           if (bgNameSet.has(name) && note) {
             setBgNote(name, note);
+          }
+        }
+      }
+      // 恢复方向数据
+      const bgOrients = jsonData.backgrounds.orientations;
+      if (bgOrients && typeof bgOrients === "object") {
+        const bgNameList = getBackgroundNames();
+        const bgNameSet = new Set(bgNameList);
+        for (const [name, orient] of Object.entries(bgOrients)) {
+          if (bgNameSet.has(name) && orient) {
+            setBgOrientation(name, orient);
           }
         }
       }

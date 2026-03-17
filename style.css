@@ -1290,6 +1290,112 @@
   flex-shrink: 0;
 }
 
+/* ========== 美化主题绑定背景标签 ========== */
+.cfm-theme-bgbind-tag {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+  flex-shrink: 1;
+  margin-left: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-weight: 500;
+  line-height: 1.4;
+  background: rgba(137, 180, 250, 0.2);
+  color: #89b4fa;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cfm-theme-bgbind-tag i {
+  font-size: 9px;
+  flex-shrink: 0;
+}
+/* 锁链按钮激活状态（已绑定） */
+.cfm-row-bglink-btn.cfm-bglink-active {
+  opacity: 0.8 !important;
+  color: #89b4fa !important;
+}
+.cfm-row-bglink-btn.cfm-bglink-active:hover {
+  opacity: 1 !important;
+  color: #f9e2af !important;
+  background-color: rgba(249, 226, 175, 0.15);
+}
+
+/* ========== 背景方向标签 ========== */
+.cfm-bg-orient {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-left: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+.cfm-bg-orient i {
+  font-size: 9px;
+}
+.cfm-bg-orient-landscape {
+  background: rgba(116, 199, 236, 0.15);
+  color: #74c7ec;
+  border: 1px solid rgba(116, 199, 236, 0.3);
+}
+.cfm-bg-orient-portrait {
+  background: rgba(203, 166, 247, 0.15);
+  color: #cba6f7;
+  border: 1px solid rgba(203, 166, 247, 0.3);
+}
+.cfm-bg-orient-other {
+  background: rgba(166, 227, 161, 0.15);
+  color: #a6e3a1;
+  border: 1px solid rgba(166, 227, 161, 0.3);
+}
+
+/* ========== 方向选择框（备注弹窗内） ========== */
+.cfm-orient-field {
+  margin-bottom: 4px;
+}
+.cfm-orient-group {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.cfm-orient-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.03);
+  transition: all 0.15s ease;
+  user-select: none;
+}
+.cfm-orient-option:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+.cfm-orient-option.cfm-orient-active {
+  background: rgba(137, 180, 250, 0.15);
+  border-color: rgba(137, 180, 250, 0.5);
+  color: #89b4fa;
+}
+.cfm-orient-option input[type="radio"] {
+  display: none;
+}
+.cfm-orient-option i {
+  font-size: 12px;
+}
+
 /* ========== 背景缩略图 ========== */
 .cfm-row-bg .cfm-row-icon.cfm-bg-thumb {
   width: 60px;
@@ -2353,6 +2459,11 @@
   background-color: rgba(137, 180, 250, 0.15) !important;
   border: 1px solid rgba(137, 180, 250, 0.4) !important;
 }
+#cfm-bg-default-btn.cfm-edit-active {
+  color: #a6e3a1 !important;
+  background-color: rgba(166, 227, 161, 0.15) !important;
+  border: 1px solid rgba(166, 227, 161, 0.4) !important;
+}
 
 /* 编辑模式遮罩 */
 .cfm-popup.cfm-edit-mode .cfm-left-pane {
@@ -2649,6 +2760,32 @@
   color: #a6e3a1 !important;
   border-color: #a6e3a1 !important;
   background-color: rgba(166, 227, 161, 0.15) !important;
+}
+
+/* 靶子图标（多选模式下的文件夹快速分类按钮） */
+.cfm-tnode-target,
+.cfm-row-target-btn {
+  display: none !important;
+}
+#cfm-popup.cfm-multisel-on .cfm-tnode-target,
+#cfm-popup.cfm-multisel-on .cfm-row-target-btn {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #a6e3a1;
+  opacity: 0.7;
+  font-size: 13px;
+  margin-left: 2px;
+  transition: opacity 0.15s, color 0.15s;
+}
+#cfm-popup.cfm-multisel-on .cfm-tnode-target:hover,
+#cfm-popup.cfm-multisel-on .cfm-row-target-btn:hover {
+  opacity: 1;
+  color: #57f287;
+}
+.cfm-row-target-btn {
+  padding: 2px 4px;
 }
 
 /* 多选工具栏 */
