@@ -19,6 +19,8 @@ jQuery(async () => {
       extension_settings[extensionName].themeGroups = {};
     if (!extension_settings[extensionName].bgGroups)
       extension_settings[extensionName].bgGroups = {};
+    if (!extension_settings[extensionName].personaGroups)
+      extension_settings[extensionName].personaGroups = {};
     if (!extension_settings[extensionName].themeNotes)
       extension_settings[extensionName].themeNotes = {};
     if (!extension_settings[extensionName].presetNotes)
@@ -27,6 +29,8 @@ jQuery(async () => {
       extension_settings[extensionName].worldInfoNotes = {};
     if (!extension_settings[extensionName].bgNotes)
       extension_settings[extensionName].bgNotes = {};
+    if (!extension_settings[extensionName].personaNotes)
+      extension_settings[extensionName].personaNotes = {};
     if (!extension_settings[extensionName].bgOrientations)
       extension_settings[extensionName].bgOrientations = {};
     if (!extension_settings[extensionName].themeBackgroundBindings)
@@ -41,6 +45,7 @@ jQuery(async () => {
         worldinfo: {},
         themes: {},
         backgrounds: {},
+        personas: {},
       };
       // 迁移旧数据
       const oldFolders = extension_settings[extensionName].resourceFolders;
@@ -66,6 +71,8 @@ jQuery(async () => {
       extension_settings[extensionName].resourceFolderTree.themes = {};
     if (!extension_settings[extensionName].resourceFolderTree.backgrounds)
       extension_settings[extensionName].resourceFolderTree.backgrounds = {};
+    if (!extension_settings[extensionName].resourceFolderTree.personas)
+      extension_settings[extensionName].resourceFolderTree.personas = {};
   }
 
   // ==================== 资源文件夹树模型 ====================
@@ -246,7 +253,9 @@ jQuery(async () => {
         ? extension_settings[extensionName].themeGroups
         : type === "backgrounds"
           ? extension_settings[extensionName].bgGroups
-          : extension_settings[extensionName].worldInfoGroups;
+          : type === "personas"
+            ? extension_settings[extensionName].personaGroups
+            : extension_settings[extensionName].worldInfoGroups;
   }
   function setItemGroup(type, itemName, folderName) {
     const groups = getResourceGroups(type);
@@ -1140,7 +1149,12 @@ jQuery(async () => {
         "touchstart",
         (e) => {
           if (mgr.active) return;
-          if (e.target.closest(".cfm-row-star, .cfm-tnode-arrow, .cfm-row-bglink-btn, .cfm-row-note-btn, .cfm-row-rename-btn, .cfm-row-edit-btn")) return;
+          if (
+            e.target.closest(
+              ".cfm-row-star, .cfm-tnode-arrow, .cfm-row-bglink-btn, .cfm-row-note-btn, .cfm-row-rename-btn, .cfm-row-edit-btn",
+            )
+          )
+            return;
           const t = e.touches[0];
           sx = t.clientX;
           sy = t.clientY;
@@ -1473,6 +1487,7 @@ jQuery(async () => {
           else if (resType === "worldinfo") renderWorldInfoView();
           else if (resType === "themes") renderThemesView();
           else if (resType === "backgrounds") renderBackgroundsView();
+          else if (resType === "personas") renderPersonasView();
         } else if (!target && rightList) {
           const selFolder =
             resType === "presets"
@@ -1483,7 +1498,9 @@ jQuery(async () => {
                   ? selectedThemeFolder
                   : resType === "backgrounds"
                     ? selectedBgFolder
-                    : null;
+                    : resType === "personas"
+                      ? selectedPersonaFolder
+                      : null;
           if (
             selFolder &&
             selFolder !== "__ungrouped__" &&
@@ -1499,6 +1516,7 @@ jQuery(async () => {
               else if (resType === "worldinfo") renderWorldInfoView();
               else if (resType === "themes") renderThemesView();
               else if (resType === "backgrounds") renderBackgroundsView();
+              else if (resType === "personas") renderPersonasView();
             }
           }
         }
@@ -1654,6 +1672,45 @@ jQuery(async () => {
             names.length > 1
               ? `已将 ${names.length} 个背景移入「${getResFolderDisplayName("backgrounds", selectedBgFolder)}」`
               : `已将「${getBackgroundDisplayName(d.name)}」移入「${getResFolderDisplayName("backgrounds", selectedBgFolder)}」`,
+          );
+        }
+      } else if (d.type === "persona") {
+        const names =
+          d.multiSelect && d.selectedIds ? d.selectedIds : [d.avatarId];
+        if (uncatNode) {
+          names.forEach((n) => setItemGroup("personas", n, null));
+          if (d.multiSelect) clearMultiSelect();
+          renderPersonasView();
+          toastr.success(
+            names.length > 1
+              ? `已将 ${names.length} 个User移出文件夹`
+              : `已将「${d.name}」移出文件夹`,
+          );
+        } else if (targetId) {
+          names.forEach((n) => setItemGroup("personas", n, targetId));
+          if (d.multiSelect) clearMultiSelect();
+          renderPersonasView();
+          toastr.success(
+            names.length > 1
+              ? `已将 ${names.length} 个User移入「${getResFolderDisplayName("personas", targetId)}」`
+              : `已将「${d.name}」移入「${getResFolderDisplayName("personas", targetId)}」`,
+          );
+        } else if (
+          !target &&
+          rightList &&
+          selectedPersonaFolder &&
+          selectedPersonaFolder !== "__ungrouped__" &&
+          selectedPersonaFolder !== "__favorites__"
+        ) {
+          names.forEach((n) =>
+            setItemGroup("personas", n, selectedPersonaFolder),
+          );
+          if (d.multiSelect) clearMultiSelect();
+          renderPersonasView();
+          toastr.success(
+            names.length > 1
+              ? `已将 ${names.length} 个User移入「${getResFolderDisplayName("personas", selectedPersonaFolder)}」`
+              : `已将「${d.name}」移入「${getResFolderDisplayName("personas", selectedPersonaFolder)}」`,
           );
         }
       }
@@ -2357,14 +2414,19 @@ jQuery(async () => {
       _lastThemeForBgBinding = newTheme;
       // 检查是否有绑定的背景
       const boundBg = getThemeBgBinding(newTheme);
-      const defaultBg = extension_settings[extensionName].defaultBackground || "";
+      const defaultBg =
+        extension_settings[extensionName].defaultBackground || "";
       if (boundBg) {
         // 延迟一点执行，等主题样式应用完成
         setTimeout(() => {
           const currentBg = getCurrentBackgroundFile();
           if (currentBg !== boundBg) {
             applyBackground(boundBg);
-            toastr.info(`已自动切换背景为「${getBackgroundDisplayName(boundBg)}」`, "主题绑定背景", { timeOut: 2000 });
+            toastr.info(
+              `已自动切换背景为「${getBackgroundDisplayName(boundBg)}」`,
+              "主题绑定背景",
+              { timeOut: 2000 },
+            );
           }
         }, 500);
       } else if (defaultBg) {
@@ -2373,7 +2435,11 @@ jQuery(async () => {
           const currentBg = getCurrentBackgroundFile();
           if (currentBg !== defaultBg) {
             applyBackground(defaultBg);
-            toastr.info(`已自动切换为默认背景「${getBackgroundDisplayName(defaultBg)}」`, "默认背景", { timeOut: 2000 });
+            toastr.info(
+              `已自动切换为默认背景「${getBackgroundDisplayName(defaultBg)}」`,
+              "默认背景",
+              { timeOut: 2000 },
+            );
           }
         }, 500);
       }
@@ -2610,14 +2676,17 @@ jQuery(async () => {
   let selectedWorldInfoFolder = null;
   let selectedThemeFolder = null;
   let selectedBgFolder = null;
+  let selectedPersonaFolder = null;
   let presetExpandedNodes = new Set();
   let worldInfoExpandedNodes = new Set();
   let themeExpandedNodes = new Set();
   let bgExpandedNodes = new Set();
+  let personaExpandedNodes = new Set();
   let presetConfigExpandedNodes = new Set();
   let worldInfoConfigExpandedNodes = new Set();
   let themeConfigExpandedNodes = new Set();
   let bgConfigExpandedNodes = new Set();
+  let personaConfigExpandedNodes = new Set();
 
   // 预设/世界书/主题/背景的收藏管理
   function ensureResFavorites() {
@@ -2629,6 +2698,8 @@ jQuery(async () => {
       extension_settings[extensionName].themeFavorites = [];
     if (!extension_settings[extensionName].bgFavorites)
       extension_settings[extensionName].bgFavorites = [];
+    if (!extension_settings[extensionName].personaFavorites)
+      extension_settings[extensionName].personaFavorites = [];
   }
   function getResFavorites(type) {
     ensureResFavorites();
@@ -2638,7 +2709,9 @@ jQuery(async () => {
         ? extension_settings[extensionName].themeFavorites
         : type === "backgrounds"
           ? extension_settings[extensionName].bgFavorites
-          : extension_settings[extensionName].worldInfoFavorites;
+          : type === "personas"
+            ? extension_settings[extensionName].personaFavorites
+            : extension_settings[extensionName].worldInfoFavorites;
   }
   function isResFavorite(type, name) {
     return getResFavorites(type).includes(name);
@@ -2664,14 +2737,18 @@ jQuery(async () => {
   let themeRightSortMode = null;
   let bgLeftSortMode = null;
   let bgRightSortMode = null;
+  let personaLeftSortMode = null;
+  let personaRightSortMode = null;
   let presetSortSnapshot = null;
   let worldInfoSortSnapshot = null;
   let themeSortSnapshot = null;
   let bgSortSnapshot = null;
+  let personaSortSnapshot = null;
   let presetSortDirty = false;
   let worldInfoSortDirty = false;
   let themeSortDirty = false;
   let bgSortDirty = false;
+  let personaSortDirty = false;
 
   // 资源排序辅助
   function takeResSortSnapshot(type) {
@@ -2679,6 +2756,7 @@ jQuery(async () => {
     if (type === "worldinfo" && worldInfoSortSnapshot) return;
     if (type === "themes" && themeSortSnapshot) return;
     if (type === "backgrounds" && bgSortSnapshot) return;
+    if (type === "personas" && personaSortSnapshot) return;
     const tree = getResFolderTree(type);
     const snap = {};
     for (const id of Object.keys(tree)) {
@@ -2687,6 +2765,7 @@ jQuery(async () => {
     if (type === "presets") presetSortSnapshot = snap;
     else if (type === "themes") themeSortSnapshot = snap;
     else if (type === "backgrounds") bgSortSnapshot = snap;
+    else if (type === "personas") personaSortSnapshot = snap;
     else worldInfoSortSnapshot = snap;
   }
   function applyResSortToFolders(type, folderIds, mode) {
@@ -2702,6 +2781,8 @@ jQuery(async () => {
     saveResTree(type);
     if (type === "presets") presetSortDirty = true;
     else if (type === "themes") themeSortDirty = true;
+    else if (type === "backgrounds") bgSortDirty = true;
+    else if (type === "personas") personaSortDirty = true;
     else worldInfoSortDirty = true;
   }
   function revertResSort(type) {
@@ -2710,7 +2791,11 @@ jQuery(async () => {
         ? presetSortSnapshot
         : type === "themes"
           ? themeSortSnapshot
-          : worldInfoSortSnapshot;
+          : type === "backgrounds"
+            ? bgSortSnapshot
+            : type === "personas"
+              ? personaSortSnapshot
+              : worldInfoSortSnapshot;
     if (!snap) return;
     const tree = getResFolderTree(type);
     for (const id of Object.keys(snap)) {
@@ -2725,6 +2810,14 @@ jQuery(async () => {
       themeSortSnapshot = null;
       themeSortDirty = false;
       themeRightSortMode = null;
+    } else if (type === "backgrounds") {
+      bgSortSnapshot = null;
+      bgSortDirty = false;
+      bgRightSortMode = null;
+    } else if (type === "personas") {
+      personaSortSnapshot = null;
+      personaSortDirty = false;
+      personaRightSortMode = null;
     } else {
       worldInfoSortSnapshot = null;
       worldInfoSortDirty = false;
@@ -2824,7 +2917,9 @@ jQuery(async () => {
             ? "#cfm-theme-right-list"
             : currentResourceType === "backgrounds"
               ? "#cfm-bg-right-list"
-              : "#cfm-worldinfo-right-list";
+              : currentResourceType === "personas"
+                ? "#cfm-persona-right-list"
+                : "#cfm-worldinfo-right-list";
     $(container)
       .find(".cfm-row-char[data-res-id]")
       .each(function () {
@@ -2912,6 +3007,8 @@ jQuery(async () => {
       return new Set(cfmWorldInfoNoteSelected);
     if (cfmWorldInfoRenameMode && cfmWorldInfoRenameSelected.size > 0)
       return new Set(cfmWorldInfoRenameSelected);
+    if (cfmPersonaNoteMode && cfmPersonaNoteSelected.size > 0)
+      return new Set(cfmPersonaNoteSelected);
     if (cfmMultiSelectMode && cfmMultiSelected.size > 0)
       return new Set(cfmMultiSelected);
     return null;
@@ -2943,6 +3040,7 @@ jQuery(async () => {
         if ($(this).attr("id") === "cfm-export-preset-btn") return "导出预设";
         if ($(this).attr("id") === "cfm-export-theme-btn") return "导出主题";
         if ($(this).attr("id") === "cfm-export-bg-btn") return "导出背景";
+        if ($(this).attr("id") === "cfm-export-persona-btn") return "导出User";
         return "导出世界书";
       });
       $(".cfm-popup").removeClass("cfm-export-mode");
@@ -2966,6 +3064,8 @@ jQuery(async () => {
         if ($(this).attr("id") === "cfm-res-delete-theme-btn")
           return "删除主题";
         if ($(this).attr("id") === "cfm-res-delete-bg-btn") return "删除背景";
+        if ($(this).attr("id") === "cfm-res-delete-persona-btn")
+          return "删除User";
         return "删除世界书";
       });
       $(".cfm-popup").removeClass("cfm-res-delete-mode");
@@ -3059,6 +3159,20 @@ jQuery(async () => {
       $("#cfm-preset-note-btn").attr("title", "编辑备注");
       $(".cfm-popup").removeClass("cfm-preset-note-mode");
     }
+    // User备注模式
+    if (cfmPersonaNoteMode) {
+      cfmPersonaNoteMode = false;
+      cfmPersonaNoteSelected.clear();
+      cfmPersonaNoteRangeMode = false;
+      cfmPersonaNoteLastClicked = null;
+      $("#cfm-persona-note-btn").removeClass("cfm-edit-active");
+      $("#cfm-persona-note-btn")
+        .find("i")
+        .removeClass("fa-check")
+        .addClass("fa-pen-to-square");
+      $("#cfm-persona-note-btn").attr("title", "编辑备注");
+      $(".cfm-popup").removeClass("cfm-persona-note-mode");
+    }
   }
 
   function enterExportMode() {
@@ -3095,6 +3209,7 @@ jQuery(async () => {
       if ($(this).attr("id") === "cfm-export-preset-btn") return "导出预设";
       if ($(this).attr("id") === "cfm-export-theme-btn") return "导出主题";
       if ($(this).attr("id") === "cfm-export-bg-btn") return "导出背景";
+      if ($(this).attr("id") === "cfm-export-persona-btn") return "导出User";
       return "导出世界书";
     });
     $(".cfm-popup").removeClass("cfm-export-mode");
@@ -3123,6 +3238,7 @@ jQuery(async () => {
     else if (currentResourceType === "presets") renderPresetsView();
     else if (currentResourceType === "themes") renderThemesView();
     else if (currentResourceType === "backgrounds") renderBackgroundsView();
+    else if (currentResourceType === "personas") renderPersonasView();
     else renderWorldInfoView();
   }
 
@@ -3186,6 +3302,8 @@ jQuery(async () => {
         await exportThemes(selected, headers);
       } else if (currentResourceType === "backgrounds") {
         await exportBackgrounds(selected, headers);
+      } else if (currentResourceType === "personas") {
+        await exportPersonas(selected, headers);
       } else {
         await exportWorldInfos(selected, headers);
       }
@@ -3511,6 +3629,63 @@ jQuery(async () => {
     }
   }
 
+  // User/Persona导出
+  async function exportPersonas(avatarIds, headers) {
+    const getThumbnailUrl =
+      window.getThumbnailUrl ||
+      ((type, file) => `/thumbnails/${type}/${encodeURIComponent(file)}`);
+    if (avatarIds.length === 1) {
+      const avatarId = avatarIds[0];
+      const url = `/User Avatars/${encodeURIComponent(avatarId)}`;
+      try {
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const blob = await resp.blob();
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = avatarId;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
+        toastr.success("User头像已导出");
+      } catch (e) {
+        throw new Error(`导出User头像失败: ${e.message}`);
+      }
+    } else {
+      if (!window.JSZip) {
+        await import("../../../../lib/jszip.min.js");
+      }
+      const zip = new JSZip();
+      let success = 0;
+      toastr.info(`正在导出 ${avatarIds.length} 个User头像...`);
+      for (const avatarId of avatarIds) {
+        try {
+          const resp = await fetch(
+            `/User Avatars/${encodeURIComponent(avatarId)}`,
+          );
+          if (resp.ok) {
+            const blob = await resp.blob();
+            zip.file(avatarId, blob);
+            success++;
+          }
+        } catch (e) {
+          console.warn(`[CFM] 导出User头像 ${avatarId} 失败`, e);
+        }
+      }
+      if (success === 0) throw new Error("没有成功导出任何User头像");
+      const content = await zip.generateAsync({ type: "blob" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(content);
+      a.download = "User头像.zip";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+      toastr.success(`已导出 ${success} 个User头像`);
+    }
+  }
+
   // ==================== 资源删除模式状态 ====================
   let cfmResDeleteMode = false;
   let cfmResDeleteSelected = new Set();
@@ -3551,6 +3726,8 @@ jQuery(async () => {
       if ($(this).attr("id") === "cfm-res-delete-preset-btn") return "删除预设";
       if ($(this).attr("id") === "cfm-res-delete-theme-btn") return "删除主题";
       if ($(this).attr("id") === "cfm-res-delete-bg-btn") return "删除背景";
+      if ($(this).attr("id") === "cfm-res-delete-persona-btn")
+        return "删除User";
       return "删除世界书";
     });
     $(".cfm-popup").removeClass("cfm-res-delete-mode");
@@ -3631,7 +3808,9 @@ jQuery(async () => {
             ? "主题"
             : currentResourceType === "backgrounds"
               ? "背景"
-              : "世界书";
+              : currentResourceType === "personas"
+                ? "User"
+                : "世界书";
 
     // 确认弹窗
     const confirmed = confirm(
@@ -3734,8 +3913,13 @@ jQuery(async () => {
               if (extension_settings[extensionName].themeNotes?.[name])
                 delete extension_settings[extensionName].themeNotes[name];
               // 清理背景绑定
-              if (extension_settings[extensionName].themeBackgroundBindings?.[name])
-                delete extension_settings[extensionName].themeBackgroundBindings[name];
+              if (
+                extension_settings[extensionName].themeBackgroundBindings?.[
+                  name
+                ]
+              )
+                delete extension_settings[extensionName]
+                  .themeBackgroundBindings[name];
               // 从酒馆原生DOM中移除对应option
               $("#themes option")
                 .filter(function () {
@@ -3782,14 +3966,17 @@ jQuery(async () => {
               const orients = extension_settings[extensionName].bgOrientations;
               if (orients && orients[name]) delete orients[name];
               // 清理所有主题中绑定该背景的记录
-              const bindings = extension_settings[extensionName].themeBackgroundBindings;
+              const bindings =
+                extension_settings[extensionName].themeBackgroundBindings;
               if (bindings) {
                 for (const [theme, bg] of Object.entries(bindings)) {
                   if (bg === name) delete bindings[theme];
                 }
               }
               // 如果删除的是默认背景，清除默认背景设置
-              if (extension_settings[extensionName].defaultBackground === name) {
+              if (
+                extension_settings[extensionName].defaultBackground === name
+              ) {
                 extension_settings[extensionName].defaultBackground = "";
               }
               // 从酒馆原生DOM中移除对应背景元素
@@ -3804,6 +3991,53 @@ jQuery(async () => {
             }
           } catch (e) {
             console.warn(`[CFM] 删除背景 ${name} 失败`, e);
+            fail++;
+          }
+        }
+      } else if (currentResourceType === "personas") {
+        for (const avatarId of selected) {
+          try {
+            const resp = await fetch("/api/avatars/delete", {
+              method: "POST",
+              headers: headers,
+              body: JSON.stringify({ avatar: avatarId }),
+            });
+            if (resp.ok) {
+              // 清理 personas 和 persona_descriptions
+              const pu = getContext().powerUserSettings;
+              if (pu) {
+                if (pu.personas && pu.personas[avatarId])
+                  delete pu.personas[avatarId];
+                if (
+                  pu.persona_descriptions &&
+                  pu.persona_descriptions[avatarId]
+                )
+                  delete pu.persona_descriptions[avatarId];
+              }
+              // 清理文件夹分配
+              const groups = extension_settings[extensionName].personaGroups;
+              if (groups && groups[avatarId]) delete groups[avatarId];
+              // 清理备注
+              const notes = extension_settings[extensionName].personaNotes;
+              if (notes && notes[avatarId]) delete notes[avatarId];
+              // 清理收藏
+              const favs = extension_settings[extensionName].personaFavorites;
+              if (favs && Array.isArray(favs)) {
+                const idx = favs.indexOf(avatarId);
+                if (idx !== -1) favs.splice(idx, 1);
+              }
+              // 从酒馆原生DOM中移除对应头像容器
+              $(".avatar-container")
+                .filter(function () {
+                  return $(this).attr("data-avatar-id") === avatarId;
+                })
+                .remove();
+              success++;
+            } else {
+              fail++;
+            }
+          } catch (e) {
+            console.warn(`[CFM] 删除User ${avatarId} 失败`, e);
             fail++;
           }
         }
@@ -3936,8 +4170,7 @@ jQuery(async () => {
     // 同时检查多个来源，因为 power_user.theme 和 #themes 下拉框的更新可能有延迟
     const themesSelect = document.getElementById("themes");
     const selectValue = themesSelect ? themesSelect.value : null;
-    const powerUserTheme =
-      typeof power_user !== "undefined" ? power_user.theme : null;
+    const powerUserTheme = (getContext().powerUserSettings || {}).theme || null;
     const isCurrentTheme =
       themeName === selectValue || themeName === powerUserTheme;
     if (!isCurrentTheme) {
@@ -3956,7 +4189,9 @@ jQuery(async () => {
         ? getBackgroundDisplayName(currentBg)
         : "无";
       const updateDisabled = !currentBg || currentBg === existingBinding;
-      const overlay = $('<div id="cfm-bglink-overlay" class="cfm-batch-overlay"></div>');
+      const overlay = $(
+        '<div id="cfm-bglink-overlay" class="cfm-batch-overlay"></div>',
+      );
       const dialog = $(`
         <div class="cfm-batch-popup" style="max-width:420px;">
           <div class="cfm-config-header"><h3>🔗 主题背景绑定</h3><button class="cfm-btn-close" id="cfm-bglink-close">&times;</button></div>
@@ -3974,16 +4209,20 @@ jQuery(async () => {
       overlay.append(dialog);
       $("body").append(overlay);
       const closeOverlay = () => overlay.remove();
-      dialog.find("#cfm-bglink-close, #cfm-bglink-cancel").on("click touchend", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        closeOverlay();
-      });
+      dialog
+        .find("#cfm-bglink-close, #cfm-bglink-cancel")
+        .on("click touchend", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          closeOverlay();
+        });
       dialog.find("#cfm-bglink-update").on("click touchend", (e) => {
         e.preventDefault();
         e.stopPropagation();
         setThemeBgBinding(themeName, currentBg);
-        toastr.success(`已更新「${themeName}」绑定背景为「${getBackgroundDisplayName(currentBg)}」`);
+        toastr.success(
+          `已更新「${themeName}」绑定背景为「${getBackgroundDisplayName(currentBg)}」`,
+        );
         closeOverlay();
         if (currentResourceType === "themes") renderThemesView();
       });
@@ -4029,7 +4268,9 @@ jQuery(async () => {
       : "无";
     const setDisabled = !currentBg || currentBg === currentDefault;
     const clearDisabled = !currentDefault;
-    const overlay = $('<div id="cfm-defbg-overlay" class="cfm-batch-overlay"></div>');
+    const overlay = $(
+      '<div id="cfm-defbg-overlay" class="cfm-batch-overlay"></div>',
+    );
     const dialog = $(`
       <div class="cfm-batch-popup" style="max-width:420px;">
         <div class="cfm-config-header"><h3>🖼️ 默认背景设置</h3><button class="cfm-btn-close" id="cfm-defbg-close">&times;</button></div>
@@ -4048,17 +4289,21 @@ jQuery(async () => {
     overlay.append(dialog);
     $("body").append(overlay);
     const closeOverlay = () => overlay.remove();
-    dialog.find("#cfm-defbg-close, #cfm-defbg-cancel").on("click touchend", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      closeOverlay();
-    });
+    dialog
+      .find("#cfm-defbg-close, #cfm-defbg-cancel")
+      .on("click touchend", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        closeOverlay();
+      });
     dialog.find("#cfm-defbg-set").on("click touchend", (e) => {
       e.preventDefault();
       e.stopPropagation();
       extension_settings[extensionName].defaultBackground = currentBg;
       getContext().saveSettingsDebounced();
-      toastr.success(`已将默认背景设为「${getBackgroundDisplayName(currentBg)}」`);
+      toastr.success(
+        `已将默认背景设为「${getBackgroundDisplayName(currentBg)}」`,
+      );
       closeOverlay();
       updateDefaultBgBtnState();
     });
@@ -5353,6 +5598,221 @@ jQuery(async () => {
     getContext().saveSettingsDebounced();
   }
 
+  function getPersonaNote(name) {
+    return extension_settings[extensionName].personaNotes?.[name] || "";
+  }
+  function setPersonaNote(name, note) {
+    if (!extension_settings[extensionName].personaNotes)
+      extension_settings[extensionName].personaNotes = {};
+    if (note) {
+      extension_settings[extensionName].personaNotes[name] = note;
+    } else {
+      delete extension_settings[extensionName].personaNotes[name];
+    }
+    getContext().saveSettingsDebounced();
+  }
+
+  // ==================== User备注编辑模式 ====================
+  let cfmPersonaNoteMode = false;
+  let cfmPersonaNoteSelected = new Set();
+  let cfmPersonaNoteRangeMode = false;
+  let cfmPersonaNoteLastClicked = null;
+
+  function enterPersonaNoteMode() {
+    const prev = collectCurrentSelection();
+    clearAllExclusiveModes();
+    cfmPersonaNoteMode = true;
+    cfmPersonaNoteSelected = prev || new Set();
+    cfmPersonaNoteRangeMode = false;
+    cfmPersonaNoteLastClicked = null;
+    $("#cfm-persona-note-btn").addClass("cfm-edit-active");
+    $("#cfm-persona-note-btn")
+      .find("i")
+      .removeClass("fa-pen-to-square")
+      .addClass("fa-check");
+    $("#cfm-persona-note-btn").attr("title", "确认编辑备注");
+    $(".cfm-popup").addClass("cfm-persona-note-mode");
+    renderPersonasView();
+  }
+
+  function exitPersonaNoteMode() {
+    cfmPersonaNoteMode = false;
+    cfmPersonaNoteSelected.clear();
+    cfmPersonaNoteRangeMode = false;
+    cfmPersonaNoteLastClicked = null;
+    $("#cfm-persona-note-btn").removeClass("cfm-edit-active");
+    $("#cfm-persona-note-btn")
+      .find("i")
+      .removeClass("fa-check")
+      .addClass("fa-pen-to-square");
+    $("#cfm-persona-note-btn").attr("title", "编辑备注");
+    $(".cfm-popup").removeClass("cfm-persona-note-mode");
+    renderPersonasView();
+  }
+
+  function togglePersonaNoteItem(id, shiftKey) {
+    if ((shiftKey || cfmPersonaNoteRangeMode) && cfmPersonaNoteLastClicked) {
+      const visible = getVisibleResourceIds();
+      const lastIdx = visible.indexOf(cfmPersonaNoteLastClicked);
+      const curIdx = visible.indexOf(id);
+      if (lastIdx !== -1 && curIdx !== -1) {
+        const [start, end] =
+          lastIdx < curIdx ? [lastIdx, curIdx] : [curIdx, lastIdx];
+        for (let i = start; i <= end; i++)
+          cfmPersonaNoteSelected.add(visible[i]);
+      }
+    } else {
+      if (cfmPersonaNoteSelected.has(id)) cfmPersonaNoteSelected.delete(id);
+      else cfmPersonaNoteSelected.add(id);
+    }
+    cfmPersonaNoteLastClicked = id;
+  }
+
+  function prependPersonaNoteToolbar(listContainer, renderFn) {
+    if (!cfmPersonaNoteMode) return;
+    const visible = getVisibleResourceIds();
+    const allSel =
+      visible.length > 0 &&
+      visible.every((id) => cfmPersonaNoteSelected.has(id));
+    const toolbar = $(`
+      <div class="cfm-edit-toolbar">
+        <button class="cfm-btn cfm-btn-sm cfm-edit-selectall"><i class="fa-solid fa-${allSel ? "square-minus" : "square-check"}"></i> ${allSel ? "全不选" : "全选"}</button>
+        <button class="cfm-btn cfm-btn-sm cfm-edit-range ${cfmPersonaNoteRangeMode ? "cfm-range-active" : ""}"><i class="fa-solid fa-arrow-down-short-wide"></i> 框选${cfmPersonaNoteRangeMode ? "(开)" : ""}</button>
+        <span class="cfm-edit-count">${cfmPersonaNoteSelected.size > 0 ? `已选 ${cfmPersonaNoteSelected.size} 项` : ""}</span>
+        <button class="cfm-btn cfm-btn-sm cfm-edit-cancel"><i class="fa-solid fa-xmark"></i> 取消</button>
+      </div>
+    `);
+    toolbar.find(".cfm-edit-selectall").on("click touchend", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (allSel) {
+        visible.forEach((id) => cfmPersonaNoteSelected.delete(id));
+      } else {
+        visible.forEach((id) => cfmPersonaNoteSelected.add(id));
+      }
+      renderFn();
+    });
+    toolbar.find(".cfm-edit-range").on("click touchend", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      cfmPersonaNoteRangeMode = !cfmPersonaNoteRangeMode;
+      if (cfmPersonaNoteRangeMode) cfmPersonaNoteLastClicked = null;
+      renderFn();
+    });
+    toolbar.find(".cfm-edit-cancel").on("click touchend", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      exitPersonaNoteMode();
+    });
+    listContainer.prepend(toolbar);
+  }
+
+  async function showPersonaNotePopup(personaIds) {
+    if (!personaIds || personaIds.length === 0) return;
+    let defaultNote = "";
+    if (personaIds.length === 1) {
+      defaultNote = getPersonaNote(personaIds[0]);
+    }
+    // 将 avatarId 转换为显示名称
+    const pu = getContext().powerUserSettings;
+    const getDisplayName = (id) => (pu && pu.personas && pu.personas[id]) || id;
+    const displayNames = personaIds.map(getDisplayName);
+    const nameListHtml =
+      displayNames.length <= 5
+        ? displayNames
+            .map(
+              (n) => `<div class="cfm-edit-name-item">${escapeHtml(n)}</div>`,
+            )
+            .join("")
+        : displayNames
+            .slice(0, 5)
+            .map(
+              (n) => `<div class="cfm-edit-name-item">${escapeHtml(n)}</div>`,
+            )
+            .join("") +
+          `<div class="cfm-edit-name-item cfm-edit-name-more">...等共 ${displayNames.length} 个User</div>`;
+
+    const popupHtml = `
+      <div class="cfm-edit-popup-overlay">
+        <div class="cfm-edit-popup">
+          <div class="cfm-edit-popup-title">编辑User备注</div>
+          <div class="cfm-edit-popup-names">${nameListHtml}</div>
+          <div class="cfm-edit-popup-field">
+            <label>备注</label>
+            <input type="text" class="cfm-edit-input" id="cfm-persona-note-input" value="${escapeHtml(defaultNote)}" placeholder="${personaIds.length > 1 ? "留空则不修改，点击清除可批量清空" : "输入备注内容"}">
+          </div>
+          <div class="cfm-edit-popup-actions">
+            <button class="cfm-btn cfm-edit-popup-cancel">取消</button>
+            ${personaIds.length === 1 ? (defaultNote ? '<button class="cfm-btn cfm-edit-popup-clear">清除备注</button>' : "") : '<button class="cfm-btn cfm-edit-popup-clear">清除备注</button>'}
+            <button class="cfm-btn cfm-edit-popup-confirm">确认</button>
+          </div>
+        </div>
+      </div>
+    `;
+    const overlay = $(popupHtml);
+    $("body").append(overlay);
+    overlay.find("#cfm-persona-note-input").focus();
+
+    return new Promise((resolve) => {
+      overlay.find(".cfm-edit-popup-cancel").on("click", () => {
+        overlay.remove();
+        resolve(null);
+      });
+      overlay.find(".cfm-edit-popup-overlay").on("click", (e) => {
+        if ($(e.target).hasClass("cfm-edit-popup-overlay")) {
+          overlay.remove();
+          resolve(null);
+        }
+      });
+      overlay.find(".cfm-edit-popup-clear").on("click", () => {
+        overlay.remove();
+        resolve({ note: "", clear: true });
+      });
+      overlay.find(".cfm-edit-popup-confirm").on("click", () => {
+        const note = overlay.find("#cfm-persona-note-input").val().trim();
+        overlay.remove();
+        resolve({ note, clear: false });
+      });
+      overlay.find(".cfm-edit-input").on("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          overlay.find(".cfm-edit-popup-confirm").trigger("click");
+        }
+        if (e.key === "Escape") {
+          overlay.find(".cfm-edit-popup-cancel").trigger("click");
+        }
+      });
+    });
+  }
+
+  async function executePersonaNoteEdit(ids) {
+    const result = await showPersonaNotePopup(ids);
+    if (!result) return;
+    const { note, clear } = result;
+    const isBatch = ids.length > 1;
+    if (isBatch && !note && !clear) {
+      toastr.warning("请输入备注内容");
+      return;
+    }
+    let count = 0;
+    for (const id of ids) {
+      if (clear) {
+        setPersonaNote(id, "");
+        count++;
+      } else if (note) {
+        setPersonaNote(id, note);
+        count++;
+      } else if (!isBatch) {
+        setPersonaNote(id, "");
+        count++;
+      }
+    }
+    if (count > 0) {
+      toastr.success(`已更新 ${count} 个User的备注`);
+      renderPersonasView();
+    }
+  }
+
   function enterPresetNoteMode() {
     const prev = collectCurrentSelection();
     clearAllExclusiveModes();
@@ -6369,7 +6829,8 @@ jQuery(async () => {
         delete notes[oldName];
       }
       // 同步背景绑定数据
-      const bindings = extension_settings[extensionName].themeBackgroundBindings;
+      const bindings =
+        extension_settings[extensionName].themeBackgroundBindings;
       if (bindings && bindings[oldName]) {
         bindings[newName] = bindings[oldName];
         delete bindings[oldName];
@@ -6387,7 +6848,8 @@ jQuery(async () => {
         delete orients[oldName];
       }
       // 同步主题绑定背景数据（背景重命名时更新所有引用该背景的绑定）
-      const bindings = extension_settings[extensionName].themeBackgroundBindings;
+      const bindings =
+        extension_settings[extensionName].themeBackgroundBindings;
       if (bindings) {
         for (const [theme, bg] of Object.entries(bindings)) {
           if (bg === oldName) {
@@ -7197,10 +7659,12 @@ jQuery(async () => {
     selectedWorldInfoFolder = null;
     selectedThemeFolder = null;
     selectedBgFolder = null;
+    selectedPersonaFolder = null;
     presetExpandedNodes.clear();
     worldInfoExpandedNodes.clear();
     themeExpandedNodes.clear();
     bgExpandedNodes.clear();
+    personaExpandedNodes.clear();
     // 如果是"记住上次页面"模式，恢复文件夹选中和展开状态
     if (defaultPage === "last" && lastState.resourceType) {
       const folder = lastState.selectedFolder;
@@ -7220,6 +7684,9 @@ jQuery(async () => {
       } else if (initialTab === "backgrounds") {
         selectedBgFolder = folder || null;
         expanded.forEach((id) => bgExpandedNodes.add(id));
+      } else if (initialTab === "personas") {
+        selectedPersonaFolder = folder || null;
+        expanded.forEach((id) => personaExpandedNodes.add(id));
       }
     }
 
@@ -7246,6 +7713,7 @@ jQuery(async () => {
                     <div class="cfm-tab" data-tab="presets"><i class="fa-solid fa-sliders"></i> 预设</div>
                     <div class="cfm-tab" data-tab="themes"><i class="fa-solid fa-palette"></i> 美化</div>
                     <div class="cfm-tab" data-tab="backgrounds"><i class="fa-solid fa-panorama"></i> 背景</div>
+                    <div class="cfm-tab" data-tab="personas"><i class="fa-solid fa-user-pen"></i> User</div>
                 </div>
                 <div class="cfm-global-search-bar" id="cfm-global-search-bar">
                     <div class="cfm-search-input-wrapper">
@@ -7314,6 +7782,20 @@ jQuery(async () => {
                     </select>
                     <select id="cfm-bg-search-type" class="cfm-search-select" title="搜索类型">
                         <option value="bg">背景</option>
+                        <option value="folder">文件夹</option>
+                    </select>
+                </div>
+                <div class="cfm-global-search-bar" id="cfm-persona-search-bar" style="display:none;">
+                    <div class="cfm-search-input-wrapper">
+                        <input type="text" class="cfm-global-search-input" id="cfm-persona-global-search" placeholder="搜索..." />
+                        <button class="cfm-search-clear-btn" id="cfm-persona-search-clear" title="清空搜索"><i class="fa-solid fa-xmark"></i></button>
+                    </div>
+                    <select id="cfm-persona-search-scope" class="cfm-search-select" title="搜索范围">
+                        <option value="current">当前文件夹</option>
+                        <option value="all">全部文件夹</option>
+                    </select>
+                    <select id="cfm-persona-search-type" class="cfm-search-select" title="搜索类型">
+                        <option value="persona">User</option>
                         <option value="folder">文件夹</option>
                     </select>
                 </div>
@@ -7485,6 +7967,37 @@ jQuery(async () => {
                         </div>
                         <div class="cfm-right-list" id="cfm-bg-right-list">
                             <div class="cfm-right-empty">← 点击左侧文件夹查看内容</div>
+                         </div>
+                    </div>
+                </div>
+                <div class="cfm-dual-pane" id="cfm-personas-view" style="display:none;">
+                    <div class="cfm-left-pane">
+                        <div class="cfm-left-header">
+                            <span>文件夹</span>
+                            <span class="cfm-left-header-actions">
+                                <div class="cfm-sort-wrapper" id="cfm-persona-left-sort-wrapper">
+                                    <button class="cfm-sort-trigger" id="cfm-persona-left-sort-btn" title="排序"><i class="fa-solid fa-arrow-down-short-wide"></i></button>
+                                </div>
+                                <button id="cfm-persona-expand-all" title="展开全部"><i class="fa-solid fa-angles-down"></i></button>
+                                <button id="cfm-persona-collapse-all" title="收起全部"><i class="fa-solid fa-angles-up"></i></button>
+                            </span>
+                        </div>
+                        <div class="cfm-left-tree" id="cfm-persona-left-tree"></div>
+                    </div>
+                    <div class="cfm-right-pane">
+                        <div class="cfm-right-header">
+                            <span class="cfm-rh-path" id="cfm-persona-rh-path">选择左侧文件夹查看内容</span>
+                            <span class="cfm-rh-count" id="cfm-persona-rh-count"></span>
+                            <button class="cfm-edit-char-btn" id="cfm-persona-note-btn" title="编辑备注"><i class="fa-solid fa-pen-to-square"></i></button>
+                            <button class="cfm-export-btn" id="cfm-export-persona-btn" title="导出User"><i class="fa-solid fa-file-export"></i></button>
+                            <button class="cfm-res-delete-btn" id="cfm-res-delete-persona-btn" title="删除User"><i class="fa-solid fa-trash-can"></i></button>
+                            <div class="cfm-sort-wrapper" id="cfm-persona-right-sort-wrapper">
+                                <button class="cfm-sort-trigger" id="cfm-persona-right-sort-btn" title="User排序"><i class="fa-solid fa-arrow-down-short-wide"></i></button>
+                            </div>
+                            <button class="cfm-multisel-toggle cfm-multisel-toggle-persona" title="多选模式"><i class="fa-solid fa-list-check"></i></button>
+                        </div>
+                        <div class="cfm-right-list" id="cfm-persona-right-list">
+                            <div class="cfm-right-empty">← 点击左侧文件夹查看内容</div>
                         </div>
                     </div>
                 </div>
@@ -7505,6 +8018,7 @@ jQuery(async () => {
       popup.find("#cfm-worldinfo-view").toggle(initialTab === "worldinfo");
       popup.find("#cfm-themes-view").toggle(initialTab === "themes");
       popup.find("#cfm-backgrounds-view").toggle(initialTab === "backgrounds");
+      popup.find("#cfm-personas-view").toggle(initialTab === "personas");
       // 切换搜索栏
       popup.find("#cfm-global-search-bar").hide();
       popup.find("#cfm-preset-search-bar").toggle(initialTab === "presets");
@@ -7513,6 +8027,7 @@ jQuery(async () => {
         .toggle(initialTab === "worldinfo");
       popup.find("#cfm-theme-search-bar").toggle(initialTab === "themes");
       popup.find("#cfm-bg-search-bar").toggle(initialTab === "backgrounds");
+      popup.find("#cfm-persona-search-bar").toggle(initialTab === "personas");
       // 切换header按钮
       const btn = popup.find("#cfm-btn-copymode");
       btn.toggleClass("cfm-copymode-active", resCopyMode);
@@ -7541,6 +8056,7 @@ jQuery(async () => {
       if (cfmBgNoteMode) exitBgNoteMode();
       if (cfmPresetNoteMode) exitPresetNoteMode();
       if (cfmWorldInfoNoteMode) exitWorldInfoNoteMode();
+      if (cfmPersonaNoteMode) exitPersonaNoteMode();
       if (cfmPresetRenameMode) exitPresetRenameMode();
       if (cfmWorldInfoRenameMode) exitWorldInfoRenameMode();
       // 切换视图
@@ -7549,6 +8065,7 @@ jQuery(async () => {
       popup.find("#cfm-worldinfo-view").toggle(tab === "worldinfo");
       popup.find("#cfm-themes-view").toggle(tab === "themes");
       popup.find("#cfm-backgrounds-view").toggle(tab === "backgrounds");
+      popup.find("#cfm-personas-view").toggle(tab === "personas");
       // 切换header按钮可见性 - 移动模式对所有标签可见
       if (tab === "chars") {
         popup.find("#cfm-btn-copymode").show();
@@ -7571,10 +8088,12 @@ jQuery(async () => {
       popup.find("#cfm-worldinfo-search-bar").toggle(tab === "worldinfo");
       popup.find("#cfm-theme-search-bar").toggle(tab === "themes");
       popup.find("#cfm-bg-search-bar").toggle(tab === "backgrounds");
+      popup.find("#cfm-persona-search-bar").toggle(tab === "personas");
       if (tab === "presets") renderPresetsView();
       else if (tab === "worldinfo") renderWorldInfoView();
       else if (tab === "themes") renderThemesView();
       else if (tab === "backgrounds") renderBackgroundsView();
+      else if (tab === "personas") renderPersonasView();
     });
 
     popup.find("#cfm-btn-close-main").on("click touchend", (e) => {
@@ -7829,6 +8348,19 @@ jQuery(async () => {
       e.preventDefault();
       bgExpandedNodes.clear();
       renderBackgroundsView();
+    });
+
+    // User展开全部/收起全部
+    popup.find("#cfm-persona-expand-all").on("click touchend", (e) => {
+      e.preventDefault();
+      for (const id of getResFolderIds("personas"))
+        personaExpandedNodes.add(id);
+      renderPersonasView();
+    });
+    popup.find("#cfm-persona-collapse-all").on("click touchend", (e) => {
+      e.preventDefault();
+      personaExpandedNodes.clear();
+      renderPersonasView();
     });
 
     // 预设左栏排序
@@ -8277,6 +8809,112 @@ jQuery(async () => {
       }, 0);
     });
 
+    // User左栏排序
+    popup.find("#cfm-persona-left-sort-btn").on("click touchend", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const wrapper = $("#cfm-persona-left-sort-wrapper");
+      const topFolders = getResTopLevelFolders("personas");
+      $(".cfm-sort-dropdown").remove();
+      const dropdown = createResSortDropdown(
+        "personas",
+        personaLeftSortMode,
+        personaSortSnapshot,
+        (mode) => {
+          if (mode === "revert") {
+            revertResSort("personas");
+            personaLeftSortMode = null;
+          } else {
+            applyResSortToFolders("personas", topFolders, mode);
+            personaLeftSortMode = mode;
+          }
+          renderPersonasView();
+          dropdown.remove();
+        },
+      );
+      wrapper.append(dropdown);
+      setTimeout(() => {
+        $(document).one("click.cfmSortDropdown", (ev) => {
+          if (!$(ev.target).closest(".cfm-sort-dropdown").length)
+            dropdown.remove();
+        });
+      }, 0);
+    });
+    // User右栏排序
+    popup.find("#cfm-persona-right-sort-btn").on("click touchend", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const wrapper = $("#cfm-persona-right-sort-wrapper");
+      const currentFolder = selectedPersonaFolder;
+      const childFolders =
+        currentFolder &&
+        currentFolder !== "__ungrouped__" &&
+        currentFolder !== "__favorites__"
+          ? getResChildFolders("personas", currentFolder)
+          : [];
+      $(".cfm-sort-dropdown").remove();
+      const dropdown = $(`<div class="cfm-sort-dropdown cfm-sort-open">
+        <div class="cfm-sort-dropdown-item ${personaRightSortMode === "az" ? "cfm-sort-item-active" : ""}" data-sort="item-az"><i class="fa-solid fa-arrow-down-a-z"></i> User A→Z</div>
+        <div class="cfm-sort-dropdown-item ${personaRightSortMode === "za" ? "cfm-sort-item-active" : ""}" data-sort="item-za"><i class="fa-solid fa-arrow-up-z-a"></i> User Z→A</div>
+        ${childFolders.length > 0 ? `<div class="cfm-sort-dropdown-sep"></div><div class="cfm-sort-dropdown-item" data-sort="folder-az"><i class="fa-solid fa-folder"></i> 子文件夹 A → Z</div><div class="cfm-sort-dropdown-item" data-sort="folder-za"><i class="fa-solid fa-folder"></i> 子文件夹 Z → A</div>` : ""}
+        <div class="cfm-sort-dropdown-sep"></div>
+        <div class="cfm-sort-dropdown-item ${personaRightSortMode === null && !personaSortSnapshot ? "cfm-sort-item-disabled" : ""}" data-sort="revert"><i class="fa-solid fa-rotate-left"></i> 恢复默认</div>
+      </div>`);
+      dropdown.find('[data-sort="item-az"]').on("click touchend", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        personaRightSortMode = "az";
+        renderPersonasView();
+        dropdown.remove();
+      });
+      dropdown.find('[data-sort="item-za"]').on("click touchend", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        personaRightSortMode = "za";
+        renderPersonasView();
+        dropdown.remove();
+      });
+      dropdown.find('[data-sort="folder-az"]').on("click touchend", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (childFolders.length > 0) {
+          applyResSortToFolders("personas", childFolders, "az");
+          toastr.info("子文件夹已按 A→Z 排序", "", { timeOut: 1500 });
+          renderPersonasView();
+        }
+        dropdown.remove();
+      });
+      dropdown.find('[data-sort="folder-za"]').on("click touchend", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (childFolders.length > 0) {
+          applyResSortToFolders("personas", childFolders, "za");
+          toastr.info("子文件夹已按 Z→A 排序", "", { timeOut: 1500 });
+          renderPersonasView();
+        }
+        dropdown.remove();
+      });
+      dropdown.find('[data-sort="revert"]').on("click touchend", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (personaRightSortMode === null && !personaSortSnapshot) return;
+        personaRightSortMode = null;
+        if (personaSortSnapshot) {
+          revertResSort("personas");
+          toastr.info("已恢复自定义排序", "", { timeOut: 1500 });
+        }
+        renderPersonasView();
+        dropdown.remove();
+      });
+      wrapper.append(dropdown);
+      setTimeout(() => {
+        $(document).one("click.cfmSortDropdown", (ev) => {
+          if (!$(ev.target).closest(".cfm-sort-dropdown").length)
+            dropdown.remove();
+        });
+      }, 0);
+    });
+
     // 多选模式切换
     popup.find(".cfm-multisel-toggle").on("click touchend", function (e) {
       e.preventDefault();
@@ -8293,7 +8931,8 @@ jQuery(async () => {
         cfmPresetNoteMode ||
         cfmWorldInfoNoteMode ||
         cfmThemeNoteMode ||
-        cfmBgNoteMode;
+        cfmBgNoteMode ||
+        cfmPersonaNoteMode;
       if (hasExclusiveMode) {
         // 收集选中并退出互斥模式，进入多选
         const prev = collectCurrentSelection();
@@ -8318,6 +8957,7 @@ jQuery(async () => {
       else if (currentResourceType === "presets") renderPresetsView();
       else if (currentResourceType === "themes") renderThemesView();
       else if (currentResourceType === "backgrounds") renderBackgroundsView();
+      else if (currentResourceType === "personas") renderPersonasView();
       else renderWorldInfoView();
     });
 
@@ -8682,6 +9322,22 @@ jQuery(async () => {
         executeWorldInfoNoteEdit(names).then(() => exitWorldInfoNoteMode());
       } else {
         enterWorldInfoNoteMode();
+      }
+    });
+
+    // User备注编辑按钮
+    popup.find("#cfm-persona-note-btn").on("click touchend", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (cfmPersonaNoteMode) {
+        if (cfmPersonaNoteSelected.size === 0) {
+          toastr.warning("请先选择要编辑备注的User");
+          return;
+        }
+        const ids = Array.from(cfmPersonaNoteSelected);
+        executePersonaNoteEdit(ids).then(() => exitPersonaNoteMode());
+      } else {
+        enterPersonaNoteMode();
       }
     });
 
@@ -9242,6 +9898,7 @@ jQuery(async () => {
     else if (initialTab === "worldinfo") renderWorldInfoView();
     else if (initialTab === "themes") renderThemesView();
     else if (initialTab === "backgrounds") renderBackgroundsView();
+    else if (initialTab === "personas") renderPersonasView();
 
     // 预加载世界书名称缓存（后台静默加载，切换标签时无需等待）
     getWorldInfoNames();
@@ -9360,6 +10017,33 @@ jQuery(async () => {
       $("#cfm-bg-global-search").val("").focus();
       $(this).closest(".cfm-search-input-wrapper").removeClass("cfm-has-text");
       renderBackgroundsView();
+    });
+
+    // User搜索框事件绑定
+    popup.find("#cfm-persona-global-search").on("input", function () {
+      const hasText = $(this).val().trim().length > 0;
+      $(this)
+        .closest(".cfm-search-input-wrapper")
+        .toggleClass("cfm-has-text", hasText);
+      executePersonaSearch();
+    });
+    popup.find("#cfm-persona-search-clear").on("click touchend", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      $("#cfm-persona-global-search").val("").focus();
+      $(this).closest(".cfm-search-input-wrapper").removeClass("cfm-has-text");
+      renderPersonasView();
+    });
+    popup.find("#cfm-persona-search-scope").on("change", function () {
+      executePersonaSearch();
+    });
+    popup.find("#cfm-persona-search-type").on("change", function () {
+      const type = $(this).val();
+      $("#cfm-persona-global-search").attr(
+        "placeholder",
+        type === "folder" ? "搜索文件夹..." : "搜索User...",
+      );
+      executePersonaSearch();
     });
   }
 
@@ -10235,7 +10919,7 @@ jQuery(async () => {
       return;
     }
     const currentThemeName =
-      typeof power_user !== "undefined" ? power_user.theme : null;
+      (getContext().powerUserSettings || {}).theme || null;
     for (const name of matched) {
       const isActive = name === currentThemeName;
       const fav = isResFavorite("themes", name);
@@ -10632,6 +11316,9 @@ jQuery(async () => {
     } else if (currentResourceType === "backgrounds") {
       folder = selectedBgFolder;
       expanded = Array.from(bgExpandedNodes);
+    } else if (currentResourceType === "personas") {
+      folder = selectedPersonaFolder;
+      expanded = Array.from(personaExpandedNodes);
     }
     extension_settings[extensionName].lastOpenState = {
       resourceType: currentResourceType,
@@ -10749,6 +11436,9 @@ jQuery(async () => {
     });
     uncatNode.on("drop", (e) => {
       e.preventDefault();
+      $(".cfm-right-list-drop-target").removeClass(
+        "cfm-right-list-drop-target",
+      );
       uncatNode.removeClass("cfm-drop-target");
       const data = pcGetDropData(e);
       if (!data) return;
@@ -10921,6 +11611,9 @@ jQuery(async () => {
     node.on("drop", (e) => {
       e.preventDefault();
       e.stopPropagation();
+      $(".cfm-right-list-drop-target").removeClass(
+        "cfm-right-list-drop-target",
+      );
       const dropZone = node.data("dropZone") || "into";
       node.removeClass(
         "cfm-drop-target cfm-drop-forbidden cfm-drop-before cfm-drop-after",
@@ -11264,6 +11957,9 @@ jQuery(async () => {
       row.on("drop", (e) => {
         e.preventDefault();
         e.stopPropagation();
+        $(".cfm-right-list-drop-target").removeClass(
+          "cfm-right-list-drop-target",
+        );
         const dropZone = row.data("dropZone") || "into";
         row.removeClass(
           "cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden",
@@ -11379,10 +12075,10 @@ jQuery(async () => {
       }
     });
     list.on("drop", (e) => {
+      list.removeClass("cfm-right-list-drop-target");
       if ($(e.target).closest(".cfm-row").length > 0) return;
       e.preventDefault();
       e.stopPropagation();
-      list.removeClass("cfm-right-list-drop-target");
       const data = pcGetDropData(e);
       if (!data) return;
 
@@ -11619,6 +12315,7 @@ jQuery(async () => {
       else if (currentResourceType === "worldinfo") renderWorldInfoView();
       else if (currentResourceType === "themes") renderThemesView();
       else if (currentResourceType === "backgrounds") renderBackgroundsView();
+      else if (currentResourceType === "personas") renderPersonasView();
     }
   }
 
@@ -11781,6 +12478,7 @@ jQuery(async () => {
       { value: "presets", label: "预设", icon: "fa-sliders" },
       { value: "themes", label: "美化", icon: "fa-palette" },
       { value: "backgrounds", label: "背景", icon: "fa-panorama" },
+      { value: "personas", label: "User", icon: "fa-user-pen" },
       { value: "last", label: "记住上次页面", icon: "fa-clock-rotate-left" },
     ];
 
@@ -11832,7 +12530,8 @@ jQuery(async () => {
       currentResourceType === "presets" ||
       currentResourceType === "worldinfo" ||
       currentResourceType === "themes" ||
-      currentResourceType === "backgrounds"
+      currentResourceType === "backgrounds" ||
+      currentResourceType === "personas"
     ) {
       renderResourceConfigBody(body, currentResourceType);
       return;
@@ -12158,7 +12857,9 @@ jQuery(async () => {
           ? "主题"
           : type === "backgrounds"
             ? "背景"
-            : "世界书";
+            : type === "personas"
+              ? "User"
+              : "世界书";
     const tree = getResFolderTree(type);
     const allFolderIds = getResFolderIds(type);
     const expandedSet =
@@ -12168,7 +12869,9 @@ jQuery(async () => {
           ? themeConfigExpandedNodes
           : type === "backgrounds"
             ? bgConfigExpandedNodes
-            : worldInfoConfigExpandedNodes;
+            : type === "personas"
+              ? personaConfigExpandedNodes
+              : worldInfoConfigExpandedNodes;
 
     // 0. 按钮位置设置（共享）
     const currentMode = getButtonMode();
@@ -13544,6 +14247,9 @@ jQuery(async () => {
       node.on("drop", (e) => {
         e.preventDefault();
         e.stopPropagation();
+        $(".cfm-right-list-drop-target").removeClass(
+          "cfm-right-list-drop-target",
+        );
         const zone = node.data("dropZone") || "into";
         node.removeClass(
           "cfm-drop-target cfm-drop-forbidden cfm-drop-before cfm-drop-after",
@@ -13668,6 +14374,9 @@ jQuery(async () => {
     uncatNode.on("dragleave", () => uncatNode.removeClass("cfm-drop-target"));
     uncatNode.on("drop", (e) => {
       e.preventDefault();
+      $(".cfm-right-list-drop-target").removeClass(
+        "cfm-right-list-drop-target",
+      );
       uncatNode.removeClass("cfm-drop-target");
       const d = pcGetDropData(e);
       if (d) {
@@ -13850,6 +14559,9 @@ jQuery(async () => {
         row.on("drop", (e) => {
           e.preventDefault();
           e.stopPropagation();
+          $(".cfm-right-list-drop-target").removeClass(
+            "cfm-right-list-drop-target",
+          );
           const zone = row.data("dropZone") || "into";
           row.removeClass(
             "cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden",
@@ -14112,10 +14824,10 @@ jQuery(async () => {
         }
       });
       rightList.on("drop", (e) => {
+        rightList.removeClass("cfm-right-list-drop-target");
         if ($(e.target).closest(".cfm-row").length > 0) return;
         e.preventDefault();
         e.stopPropagation();
-        rightList.removeClass("cfm-right-list-drop-target");
         const data = pcGetDropData(e);
         if (!data) return;
         if (
@@ -14317,6 +15029,9 @@ jQuery(async () => {
       node.on("drop", (e) => {
         e.preventDefault();
         e.stopPropagation();
+        $(".cfm-right-list-drop-target").removeClass(
+          "cfm-right-list-drop-target",
+        );
         const zone = node.data("dropZone") || "into";
         node.removeClass(
           "cfm-drop-target cfm-drop-forbidden cfm-drop-before cfm-drop-after",
@@ -14434,6 +15149,9 @@ jQuery(async () => {
     uncatNode.on("dragleave", () => uncatNode.removeClass("cfm-drop-target"));
     uncatNode.on("drop", (e) => {
       e.preventDefault();
+      $(".cfm-right-list-drop-target").removeClass(
+        "cfm-right-list-drop-target",
+      );
       uncatNode.removeClass("cfm-drop-target");
       const d = pcGetDropData(e);
       if (d && d.type === "theme") {
@@ -14465,7 +15183,7 @@ jQuery(async () => {
 
     // 获取当前主题
     const currentThemeName =
-      typeof power_user !== "undefined" ? power_user.theme : null;
+      (getContext().powerUserSettings || {}).theme || null;
 
     let displayItems = [];
     let displayTitle = "选择左侧文件夹查看内容";
@@ -14605,6 +15323,9 @@ jQuery(async () => {
         row.on("drop", (e) => {
           e.preventDefault();
           e.stopPropagation();
+          $(".cfm-right-list-drop-target").removeClass(
+            "cfm-right-list-drop-target",
+          );
           const zone = row.data("dropZone") || "into";
           row.removeClass(
             "cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden",
@@ -14881,10 +15602,10 @@ jQuery(async () => {
           rightList.removeClass("cfm-right-list-drop-target");
       });
       rightList.on("drop", (e) => {
+        rightList.removeClass("cfm-right-list-drop-target");
         if ($(e.target).closest(".cfm-row").length > 0) return;
         e.preventDefault();
         e.stopPropagation();
-        rightList.removeClass("cfm-right-list-drop-target");
         const data = pcGetDropData(e);
         if (!data) return;
         if (
@@ -15078,6 +15799,9 @@ jQuery(async () => {
       node.on("drop", (e) => {
         e.preventDefault();
         e.stopPropagation();
+        $(".cfm-right-list-drop-target").removeClass(
+          "cfm-right-list-drop-target",
+        );
         const zone = node.data("dropZone") || "into";
         node.removeClass(
           "cfm-drop-target cfm-drop-forbidden cfm-drop-before cfm-drop-after",
@@ -15186,6 +15910,9 @@ jQuery(async () => {
     uncatNode.on("dragleave", () => uncatNode.removeClass("cfm-drop-target"));
     uncatNode.on("drop", (e) => {
       e.preventDefault();
+      $(".cfm-right-list-drop-target").removeClass(
+        "cfm-right-list-drop-target",
+      );
       uncatNode.removeClass("cfm-drop-target");
       const d = pcGetDropData(e);
       if (d && d.type === "background") {
@@ -15345,6 +16072,9 @@ jQuery(async () => {
         row.on("drop", (e) => {
           e.preventDefault();
           e.stopPropagation();
+          $(".cfm-right-list-drop-target").removeClass(
+            "cfm-right-list-drop-target",
+          );
           const zone = row.data("dropZone") || "into";
           row.removeClass(
             "cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden",
@@ -15588,10 +16318,10 @@ jQuery(async () => {
           rightList.removeClass("cfm-right-list-drop-target");
       });
       rightList.on("drop", (e) => {
+        rightList.removeClass("cfm-right-list-drop-target");
         if ($(e.target).closest(".cfm-row").length > 0) return;
         e.preventDefault();
         e.stopPropagation();
-        rightList.removeClass("cfm-right-list-drop-target");
         const data = pcGetDropData(e);
         if (!data) return;
         if (
@@ -16173,6 +16903,9 @@ jQuery(async () => {
       node.on("drop", (e) => {
         e.preventDefault();
         e.stopPropagation();
+        $(".cfm-right-list-drop-target").removeClass(
+          "cfm-right-list-drop-target",
+        );
         const zone = node.data("dropZone") || "into";
         node.removeClass(
           "cfm-drop-target cfm-drop-forbidden cfm-drop-before cfm-drop-after",
@@ -16313,6 +17046,9 @@ jQuery(async () => {
     uncatNode.on("dragleave", () => uncatNode.removeClass("cfm-drop-target"));
     uncatNode.on("drop", (e) => {
       e.preventDefault();
+      $(".cfm-right-list-drop-target").removeClass(
+        "cfm-right-list-drop-target",
+      );
       uncatNode.removeClass("cfm-drop-target");
       const d = pcGetDropData(e);
       if (d && d.type === "worldinfo") {
@@ -16498,6 +17234,9 @@ jQuery(async () => {
         row.on("drop", (e) => {
           e.preventDefault();
           e.stopPropagation();
+          $(".cfm-right-list-drop-target").removeClass(
+            "cfm-right-list-drop-target",
+          );
           const zone = row.data("dropZone") || "into";
           row.removeClass(
             "cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden",
@@ -16756,10 +17495,10 @@ jQuery(async () => {
         }
       });
       rightList.on("drop", (e) => {
+        rightList.removeClass("cfm-right-list-drop-target");
         if ($(e.target).closest(".cfm-row").length > 0) return;
         e.preventDefault();
         e.stopPropagation();
-        rightList.removeClass("cfm-right-list-drop-target");
         const data = pcGetDropData(e);
         if (!data) return;
         if (
@@ -16793,6 +17532,1079 @@ jQuery(async () => {
         }
       });
     }
+  }
+
+  // ==================== User视图渲染（双栏 + 树形嵌套） ====================
+  // 获取当前 persona 列表
+  async function getCurrentPersonas() {
+    try {
+      const resp = await fetch("/api/avatars/get", {
+        method: "POST",
+        headers: getContext().getRequestHeaders({ omitContentType: true }),
+      });
+      if (!resp.ok) return [];
+      const avatarIds = await resp.json();
+      if (!Array.isArray(avatarIds)) return [];
+      const pu = getContext().powerUserSettings;
+      if (!pu) return [];
+      return avatarIds.map((id) => ({
+        avatarId: id,
+        name: (pu.personas && pu.personas[id]) || "[未命名User]",
+        description:
+          (pu.persona_descriptions &&
+            pu.persona_descriptions[id] &&
+            pu.persona_descriptions[id].description) ||
+          "",
+        title:
+          (pu.persona_descriptions &&
+            pu.persona_descriptions[id] &&
+            pu.persona_descriptions[id].title) ||
+          "",
+        connections:
+          (pu.persona_descriptions &&
+            pu.persona_descriptions[id] &&
+            pu.persona_descriptions[id].connections) ||
+          [],
+      }));
+    } catch (e) {
+      console.error("[CFM] 获取User列表失败", e);
+      return [];
+    }
+  }
+
+  // 解析 persona connections 为显示名称
+  function resolvePersonaConnections(connections) {
+    if (!connections || !connections.length) return [];
+    const ctx = getContext();
+    const chars = ctx.characters || [];
+    const grps = ctx.groups || [];
+    return connections
+      .map((conn) => {
+        if (conn.type === "character") {
+          const ch = chars.find((c) => c.avatar === conn.id);
+          return {
+            type: "character",
+            name: ch ? ch.name : conn.id,
+            avatar: conn.id,
+          };
+        }
+        if (conn.type === "group") {
+          const g = grps.find((g) => g.id === conn.id);
+          return { type: "group", name: g ? g.name : conn.id, avatar: null };
+        }
+        return null;
+      })
+      .filter(Boolean);
+  }
+
+  // 生成 persona 绑定角色标签 HTML
+  function buildPersonaConnHtml(connections) {
+    const resolved = resolvePersonaConnections(connections);
+    if (!resolved.length) return "";
+    return resolved
+      .map((c) => {
+        const icon = c.type === "group" ? "fa-users" : "fa-user";
+        return `<span class="cfm-persona-conn-tag" title="绑定${c.type === "group" ? "群组" : "角色"}: ${escapeHtml(c.name)}"><i class="fa-solid ${icon}"></i>${escapeHtml(c.name)}</span>`;
+      })
+      .join("");
+  }
+
+  function selectPersona(avatarId) {
+    // 通过模拟点击酒馆原生 persona 选择来切换 User
+    const avatarBlock = $(`.avatar-container[data-avatar-id="${avatarId}"]`);
+    if (avatarBlock.length > 0) {
+      avatarBlock.find(".avatar").trigger("click");
+    } else {
+      // 尝试在酒馆原生 persona 面板中找到对应的 avatar 并触发点击
+      const block = $("#user_avatar_block").find(
+        `[data-avatar-id='${avatarId}']`,
+      );
+      if (block.length) {
+        block.trigger("click");
+      }
+    }
+  }
+
+  async function renderPersonasView() {
+    const leftTree = $("#cfm-persona-left-tree");
+    const rightList = $("#cfm-persona-right-list");
+    const pathEl = $("#cfm-persona-rh-path");
+    const countEl = $("#cfm-persona-rh-count");
+
+    // 使用渲染版本号防止异步竞争导致重复渲染
+    if (!renderPersonasView._renderId) renderPersonasView._renderId = 0;
+    const thisRenderId = ++renderPersonasView._renderId;
+
+    const personas = await getCurrentPersonas();
+
+    // 如果在 await 期间有新的渲染被触发，放弃当前渲染
+    if (thisRenderId !== renderPersonasView._renderId) return;
+
+    leftTree.empty();
+    const tree = getResFolderTree("personas");
+    const allFolderIds = getResFolderIds("personas");
+
+    // 注意：不在此处提前 return，即使 personas 为空也正常渲染左侧树和右侧面板，与其他资源类型行为保持一致
+
+    const groups = getResourceGroups("personas");
+
+    // 清理 groups 中已不存在的 persona 映射
+    const existingPersonaIds = new Set(personas.map((p) => p.avatarId));
+    let personaGroupsCleaned = false;
+    for (const key of Object.keys(groups)) {
+      if (!existingPersonaIds.has(key)) {
+        delete groups[key];
+        personaGroupsCleaned = true;
+      }
+    }
+    if (personaGroupsCleaned) {
+      console.log("[CFM] 已清理不存在的User分组映射");
+      getContext().saveSettingsDebounced();
+    }
+
+    // 分类：直接属于某文件夹的 persona
+    const folderItems = {};
+    const ungrouped = [];
+    for (const p of personas) {
+      const grp = groups[p.avatarId];
+      if (grp && tree[grp]) {
+        if (!folderItems[grp]) folderItems[grp] = [];
+        folderItems[grp].push(p);
+      } else {
+        ungrouped.push(p);
+      }
+    }
+
+    // 收藏入口
+    const personaFavs = getResFavorites("personas");
+    const personaFavCount = personas.filter((p) =>
+      personaFavs.includes(p.avatarId),
+    ).length;
+    const personaFavNode = $(`
+      <div class="cfm-tnode cfm-tnode-favorites ${selectedPersonaFolder === "__favorites__" ? "cfm-tnode-selected" : ""}" data-id="__favorites__" style="padding-left:10px;">
+        <span class="cfm-tnode-arrow cfm-arrow-hidden"><i class="fa-solid fa-caret-right"></i></span>
+        <span class="cfm-tnode-icon"><i class="fa-solid fa-star" style="color:#f9e2af;"></i></span>
+        <span class="cfm-tnode-label">收藏</span>
+        <span class="cfm-tnode-count">${personaFavCount}</span>
+      </div>
+    `);
+    personaFavNode.on("click", (e) => {
+      e.preventDefault();
+      selectedPersonaFolder = "__favorites__";
+      renderPersonasView();
+    });
+    leftTree.append(personaFavNode);
+
+    // 递归渲染左侧树节点
+    function renderResTreeNode(container, folderId, depth) {
+      const children = sortResFolders(
+        "personas",
+        getResChildFolders("personas", folderId),
+      );
+      const hasChildren = children.length > 0;
+      const isExpanded = personaExpandedNodes.has(folderId);
+      const isSelected = selectedPersonaFolder === folderId;
+      const count = countResItemsRecursive("personas", folderId);
+      const indent = 10 + depth * 16;
+
+      const node = $(`
+        <div class="cfm-tnode ${isSelected ? "cfm-tnode-selected" : ""}" data-id="${escapeHtml(folderId)}" style="padding-left:${indent}px;" draggable="true">
+          <span class="cfm-tnode-arrow ${hasChildren ? (isExpanded ? "cfm-arrow-expanded" : "") : "cfm-arrow-hidden"}"><i class="fa-solid fa-caret-right"></i></span>
+          <span class="cfm-tnode-icon"><i class="fa-solid fa-folder${isSelected ? "-open" : ""}"></i></span>
+          <span class="cfm-tnode-label">${escapeHtml(getResFolderDisplayName("personas", folderId))}</span>
+          <span class="cfm-tnode-target" title="移入此文件夹"><i class="fa-solid fa-crosshairs"></i></span>
+          <span class="cfm-tnode-rename" title="重命名文件夹"><i class="fa-solid fa-pen"></i></span>
+          <span class="cfm-tnode-count">${count}</span>
+        </div>
+      `);
+
+      node.find(".cfm-tnode-target").on("click", (e) => {
+        e.stopPropagation();
+        handleFolderTargetMove(
+          (items) =>
+            items.forEach((n) => setItemGroup("personas", n, folderId)),
+          () => renderPersonasView(),
+          (count, first) =>
+            toastr.success(
+              count > 1
+                ? `已将 ${count} 个User移入「${getResFolderDisplayName("personas", folderId)}」`
+                : `已将「${first}」移入「${getResFolderDisplayName("personas", folderId)}」`,
+            ),
+        );
+      });
+      node.find(".cfm-tnode-rename").on("click", (e) => {
+        e.stopPropagation();
+        promptRenameFolder("personas", folderId, () => renderPersonasView());
+      });
+
+      // 点击箭头展开/收起
+      node.find(".cfm-tnode-arrow").on("click", (e) => {
+        e.stopPropagation();
+        if (!hasChildren) return;
+        if (personaExpandedNodes.has(folderId))
+          personaExpandedNodes.delete(folderId);
+        else personaExpandedNodes.add(folderId);
+        renderPersonasView();
+      });
+
+      // 点击选中
+      node.on("click", (e) => {
+        e.preventDefault();
+        selectedPersonaFolder = folderId;
+        renderPersonasView();
+      });
+
+      // PC拖拽（文件夹排序/嵌套）
+      node.on("dragstart", (e) => {
+        pcDragStart(e, {
+          type: "res-folder",
+          resType: "personas",
+          id: folderId,
+        });
+        node.addClass("cfm-dragging");
+      });
+      node.on("dragend", () => {
+        node.removeClass("cfm-dragging");
+        pcDragEnd();
+        $(".cfm-tnode").removeClass(
+          "cfm-drop-target cfm-drop-forbidden cfm-drop-before cfm-drop-after",
+        );
+      });
+
+      // 拖放目标（三区域）
+      node.on("dragover", (e) => {
+        e.preventDefault();
+        node.removeClass(
+          "cfm-drop-target cfm-drop-forbidden cfm-drop-before cfm-drop-after",
+        );
+        const rect = node[0].getBoundingClientRect();
+        const relY = (e.originalEvent.clientY - rect.top) / rect.height;
+        let zone = relY < 0.25 ? "before" : relY > 0.75 ? "after" : "into";
+        node.data("dropZone", zone);
+
+        const data = _pcDragData || {};
+
+        if (data.type === "res-folder" && data.resType === "personas") {
+          if (data.id === folderId) {
+            node.addClass("cfm-drop-forbidden");
+            return;
+          }
+          if (
+            zone === "into" &&
+            wouldCreateResCycle("personas", data.id, folderId)
+          ) {
+            node.addClass("cfm-drop-forbidden");
+            return;
+          }
+        }
+
+        if (zone === "before") node.addClass("cfm-drop-before");
+        else if (zone === "after") node.addClass("cfm-drop-after");
+        else node.addClass("cfm-drop-target");
+      });
+      node.on("dragleave", () =>
+        node.removeClass(
+          "cfm-drop-target cfm-drop-forbidden cfm-drop-before cfm-drop-after",
+        ),
+      );
+      node.on("drop", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        $(".cfm-right-list-drop-target").removeClass(
+          "cfm-right-list-drop-target",
+        );
+        const zone = node.data("dropZone") || "into";
+        node.removeClass(
+          "cfm-drop-target cfm-drop-forbidden cfm-drop-before cfm-drop-after",
+        );
+        const data = pcGetDropData(e);
+        if (!data) return;
+
+        if (
+          data.type === "res-folder" &&
+          data.resType === "personas" &&
+          data.id !== folderId
+        ) {
+          if (zone === "into") {
+            if (wouldCreateResCycle("personas", data.id, folderId)) {
+              toastr.error("循环嵌套，已阻止");
+              return;
+            }
+            reorderResFolder("personas", data.id, folderId, null);
+            toastr.success(
+              `「${getResFolderDisplayName("personas", data.id)}」已移入「${getResFolderDisplayName("personas", folderId)}」`,
+            );
+          } else {
+            const pId = tree[folderId]?.parentId || null;
+            if (wouldCreateResCycle("personas", data.id, pId)) {
+              toastr.error("循环嵌套，已阻止");
+              return;
+            }
+            if (zone === "before") {
+              reorderResFolder("personas", data.id, pId, folderId);
+            } else {
+              const sibs = sortResFolders(
+                "personas",
+                getResChildFolders("personas", pId),
+              );
+              const ci = sibs.indexOf(folderId);
+              reorderResFolder(
+                "personas",
+                data.id,
+                pId,
+                ci < sibs.length - 1 ? sibs[ci + 1] : null,
+              );
+            }
+            toastr.success(`「${data.id}」已排序`);
+          }
+          renderPersonasView();
+        } else if (data.type === "persona") {
+          const personaIds =
+            data.multiSelect && data.selectedIds
+              ? data.selectedIds
+              : [data.avatarId];
+          const pCount = personaIds.length;
+          personaIds.forEach((n) => setItemGroup("personas", n, folderId));
+          if (data.multiSelect) clearMultiSelect();
+          renderPersonasView();
+          toastr.success(
+            pCount > 1
+              ? `已将 ${pCount} 个User移入「${getResFolderDisplayName("personas", folderId)}」`
+              : `已将「${data.name}」移入「${getResFolderDisplayName("personas", folderId)}」`,
+          );
+        }
+      });
+
+      // 触摸拖拽
+      touchDragMgr.bind(node, () => ({
+        type: "res-folder",
+        resType: "personas",
+        id: folderId,
+        name: folderId,
+      }));
+
+      container.append(node);
+
+      if (hasChildren) {
+        const childContainer = $(
+          `<div class="cfm-tnode-children ${isExpanded ? "cfm-children-expanded" : ""}"></div>`,
+        );
+        for (const childId of children)
+          renderResTreeNode(childContainer, childId, depth + 1);
+        container.append(childContainer);
+      }
+    }
+
+    // 渲染顶级文件夹
+    const topFolders = sortResFolders(
+      "personas",
+      getResTopLevelFolders("personas"),
+    );
+    for (const fid of topFolders) renderResTreeNode(leftTree, fid, 0);
+
+    // 未归类入口
+    const uncatNode = $(`
+      <div class="cfm-tnode cfm-tnode-uncategorized ${selectedPersonaFolder === "__ungrouped__" ? "cfm-tnode-selected" : ""}" data-id="__ungrouped__" style="padding-left:10px;">
+        <span class="cfm-tnode-arrow cfm-arrow-hidden"><i class="fa-solid fa-caret-right"></i></span>
+        <span class="cfm-tnode-icon"><i class="fa-solid fa-box-open"></i></span>
+        <span class="cfm-tnode-label">未归类User</span>
+        <span class="cfm-tnode-target" title="移入此处"><i class="fa-solid fa-crosshairs"></i></span>
+        <span class="cfm-tnode-count">${ungrouped.length}</span>
+      </div>
+    `);
+    uncatNode.find(".cfm-tnode-target").on("click", (e) => {
+      e.stopPropagation();
+      handleFolderTargetMove(
+        (items) => items.forEach((n) => setItemGroup("personas", n, null)),
+        () => renderPersonasView(),
+        (count, first) =>
+          toastr.success(
+            count > 1
+              ? `已将 ${count} 个User移出文件夹`
+              : `已将「${first}」移出文件夹`,
+          ),
+      );
+    });
+    uncatNode.on("click", (e) => {
+      e.preventDefault();
+      selectedPersonaFolder = "__ungrouped__";
+      renderPersonasView();
+    });
+    uncatNode.on("dragover", (e) => {
+      e.preventDefault();
+      uncatNode.addClass("cfm-drop-target");
+    });
+    uncatNode.on("dragleave", () => uncatNode.removeClass("cfm-drop-target"));
+    uncatNode.on("drop", (e) => {
+      e.preventDefault();
+      $(".cfm-right-list-drop-target").removeClass(
+        "cfm-right-list-drop-target",
+      );
+      uncatNode.removeClass("cfm-drop-target");
+      const d = pcGetDropData(e);
+      if (d) {
+        if (d.type === "persona") {
+          const personaIds =
+            d.multiSelect && d.selectedIds ? d.selectedIds : [d.avatarId];
+          const pCount = personaIds.length;
+          personaIds.forEach((n) => setItemGroup("personas", n, null));
+          if (d.multiSelect) clearMultiSelect();
+          renderPersonasView();
+          toastr.success(
+            pCount > 1
+              ? `已将 ${pCount} 个User移出文件夹`
+              : `已将「${d.name}」移出文件夹`,
+          );
+        }
+      }
+    });
+    leftTree.append(uncatNode);
+
+    if (topFolders.length === 0) {
+      uncatNode.before(
+        '<div class="cfm-right-empty" style="padding:20px;font-size:12px;">还没有配置文件夹<br>点击右上角 ⚙ 进行配置</div>',
+      );
+    }
+
+    // 右侧渲染
+    // 如果搜索栏有内容，保持搜索模式
+    const personaSearchQuery = $("#cfm-persona-global-search").val();
+    if (personaSearchQuery && personaSearchQuery.trim()) {
+      executePersonaSearch();
+      return;
+    }
+
+    rightList.empty();
+
+    const currentUserAvatar =
+      $("#user_avatar_block .avatar-container.selected").attr(
+        "data-avatar-id",
+      ) || null;
+
+    let displayItems = [];
+    let displayTitle = "选择左侧文件夹查看内容";
+    let childFolders = [];
+
+    if (selectedPersonaFolder === "__favorites__") {
+      const favs = getResFavorites("personas");
+      displayItems = personas.filter((p) => favs.includes(p.avatarId));
+      displayTitle = "⭐ 收藏";
+    } else if (selectedPersonaFolder === "__ungrouped__") {
+      displayItems = ungrouped;
+      displayTitle = "未归类User";
+    } else if (selectedPersonaFolder && tree[selectedPersonaFolder]) {
+      displayItems = folderItems[selectedPersonaFolder] || [];
+      childFolders = sortResFolders(
+        "personas",
+        getResChildFolders("personas", selectedPersonaFolder),
+      );
+      const path = getResFolderPath("personas", selectedPersonaFolder)
+        .map((id) => getResFolderDisplayName("personas", id))
+        .join(" › ");
+      displayTitle = path;
+    }
+
+    // 应用右栏排序
+    if (personaRightSortMode && displayItems.length > 0) {
+      displayItems = sortResItems(displayItems, personaRightSortMode, (p) =>
+        typeof p === "string" ? p : p.name,
+      );
+    }
+
+    pathEl.text(displayTitle);
+    const totalItems = childFolders.length + displayItems.length;
+    if (
+      selectedPersonaFolder === "__favorites__" ||
+      selectedPersonaFolder === "__ungrouped__"
+    ) {
+      countEl.text(`${displayItems.length} 个User`);
+    } else {
+      countEl.text(selectedPersonaFolder ? `${totalItems} 项` : "");
+    }
+
+    if (!selectedPersonaFolder) {
+      rightList.html(
+        '<div class="cfm-right-empty">← 点击左侧文件夹查看内容</div>',
+      );
+    } else if (selectedPersonaFolder === "__favorites__" && totalItems === 0) {
+      rightList.html(
+        '<div class="cfm-right-empty">还没有收藏任何User<br><span style="font-size:12px;opacity:0.5;">点击User行右侧的 ☆ 按钮添加收藏</span></div>',
+      );
+    } else if (selectedPersonaFolder === "__ungrouped__" && totalItems === 0) {
+      rightList.html('<div class="cfm-right-empty">没有未归类的User</div>');
+    } else if (totalItems === 0) {
+      rightList.html('<div class="cfm-right-empty">此文件夹为空</div>');
+    } else {
+      // 子文件夹行
+      for (const childId of childFolders) {
+        const childCount = countResItemsRecursive("personas", childId);
+        const row = $(`
+          <div class="cfm-row cfm-row-folder" data-folder-id="${escapeHtml(childId)}" draggable="true">
+            <div class="cfm-row-icon"><i class="fa-solid fa-folder"></i></div>
+            <div class="cfm-row-name">${escapeHtml(getResFolderDisplayName("personas", childId))}</div>
+            <div class="cfm-row-target-btn" title="移入此文件夹"><i class="fa-solid fa-crosshairs"></i></div>
+            <div class="cfm-row-rename-btn" title="重命名文件夹"><i class="fa-solid fa-pen"></i></div>
+            <div class="cfm-row-meta">${childCount} 个User</div>
+          </div>
+        `);
+        row.find(".cfm-row-target-btn").on("click", (e) => {
+          e.stopPropagation();
+          handleFolderTargetMove(
+            (items) =>
+              items.forEach((n) => setItemGroup("personas", n, childId)),
+            () => renderPersonasView(),
+            (count, first) =>
+              toastr.success(
+                count > 1
+                  ? `已将 ${count} 个User移入「${getResFolderDisplayName("personas", childId)}」`
+                  : `已将「${first}」移入「${getResFolderDisplayName("personas", childId)}」`,
+              ),
+          );
+        });
+        row.find(".cfm-row-rename-btn").on("click", (e) => {
+          e.stopPropagation();
+          promptRenameFolder("personas", childId, () => renderPersonasView());
+        });
+        row.on("click", (e) => {
+          e.preventDefault();
+          const path = getResFolderPath("personas", childId);
+          for (const pid of path) personaExpandedNodes.add(pid);
+          selectedPersonaFolder = childId;
+          renderPersonasView();
+        });
+        row.on("dragstart", (e) => {
+          pcDragStart(e, {
+            type: "res-folder",
+            resType: "personas",
+            id: childId,
+          });
+          row.addClass("cfm-dragging");
+        });
+        row.on("dragend", () => {
+          row.removeClass("cfm-dragging");
+          pcDragEnd();
+          $(".cfm-row").removeClass(
+            "cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden",
+          );
+        });
+        // 右侧子文件夹行也是拖放目标
+        row.on("dragover", (e) => {
+          e.preventDefault();
+          row.removeClass(
+            "cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden",
+          );
+          const rect = row[0].getBoundingClientRect();
+          const relY = (e.originalEvent.clientY - rect.top) / rect.height;
+          let zone = relY < 0.25 ? "before" : relY > 0.75 ? "after" : "into";
+          row.data("dropZone", zone);
+          const data = _pcDragData || {};
+          if (data.type === "res-folder" && data.resType === "personas") {
+            if (data.id === childId) {
+              row.addClass("cfm-drop-forbidden");
+              return;
+            }
+            if (
+              zone === "into" &&
+              wouldCreateResCycle("personas", data.id, childId)
+            ) {
+              row.addClass("cfm-drop-forbidden");
+              return;
+            }
+          }
+          if (zone === "before") row.addClass("cfm-drop-before");
+          else if (zone === "after") row.addClass("cfm-drop-after");
+          else row.addClass("cfm-drop-target");
+          e.originalEvent.dataTransfer.dropEffect = "move";
+        });
+        row.on("dragleave", () => {
+          row.removeClass(
+            "cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden",
+          );
+        });
+        row.on("drop", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          $(".cfm-right-list-drop-target").removeClass(
+            "cfm-right-list-drop-target",
+          );
+          const zone = row.data("dropZone") || "into";
+          row.removeClass(
+            "cfm-drop-target cfm-drop-before cfm-drop-after cfm-drop-forbidden",
+          );
+          const data = pcGetDropData(e);
+          if (!data) return;
+          if (
+            data.type === "res-folder" &&
+            data.resType === "personas" &&
+            data.id !== childId
+          ) {
+            if (zone === "into") {
+              if (wouldCreateResCycle("personas", data.id, childId)) {
+                toastr.error("循环嵌套，已阻止");
+                return;
+              }
+              reorderResFolder("personas", data.id, childId, null);
+              toastr.success(
+                `「${getResFolderDisplayName("personas", data.id)}」已移入「${getResFolderDisplayName("personas", childId)}」`,
+              );
+            } else {
+              const pId = tree[childId]?.parentId || null;
+              if (wouldCreateResCycle("personas", data.id, pId)) {
+                toastr.error("循环嵌套，已阻止");
+                return;
+              }
+              if (zone === "before") {
+                reorderResFolder("personas", data.id, pId, childId);
+              } else {
+                const sibs = sortResFolders(
+                  "personas",
+                  getResChildFolders("personas", pId),
+                );
+                const ci = sibs.indexOf(childId);
+                reorderResFolder(
+                  "personas",
+                  data.id,
+                  pId,
+                  ci < sibs.length - 1 ? sibs[ci + 1] : null,
+                );
+              }
+              toastr.success(`「${data.id}」已排序`);
+            }
+            renderPersonasView();
+          } else if (data.type === "persona") {
+            const personaIds =
+              data.multiSelect && data.selectedIds
+                ? data.selectedIds
+                : [data.avatarId];
+            const pCount = personaIds.length;
+            personaIds.forEach((n) => setItemGroup("personas", n, childId));
+            if (data.multiSelect) clearMultiSelect();
+            toastr.success(
+              pCount > 1
+                ? `已将 ${pCount} 个User移入「${getResFolderDisplayName("personas", childId)}」`
+                : `已将「${data.name}」移入「${getResFolderDisplayName("personas", childId)}」`,
+            );
+            renderPersonasView();
+          }
+        });
+        touchDragMgr.bind(row, () => ({
+          type: "res-folder",
+          resType: "personas",
+          id: childId,
+          name: getResFolderDisplayName("personas", childId),
+        }));
+        rightList.append(row);
+      }
+      // User行（带头像 + 星标 + 多选支持 + 备注）
+      for (const p of displayItems) {
+        const isActive = p.avatarId === currentUserAvatar;
+        const fav = isResFavorite("personas", p.avatarId);
+        const isMSel = cfmMultiSelectMode && cfmMultiSelected.has(p.avatarId);
+        const isExpSel = cfmExportMode && cfmExportSelected.has(p.avatarId);
+        const isDelSel =
+          cfmResDeleteMode && cfmResDeleteSelected.has(p.avatarId);
+        const isNoteSel =
+          cfmPersonaNoteMode && cfmPersonaNoteSelected.has(p.avatarId);
+        const msCheckHtml = cfmResDeleteMode
+          ? `<div class="cfm-res-delete-checkbox ${isDelSel ? "cfm-res-delete-checked" : ""}"><i class="fa-${isDelSel ? "solid" : "regular"} fa-square${isDelSel ? "-check" : ""}"></i></div>`
+          : cfmExportMode
+            ? `<div class="cfm-export-checkbox ${isExpSel ? "cfm-export-checked" : ""}"><i class="fa-${isExpSel ? "solid" : "regular"} fa-square${isExpSel ? "-check" : ""}"></i></div>`
+            : cfmPersonaNoteMode
+              ? `<div class="cfm-edit-checkbox ${isNoteSel ? "cfm-edit-checked" : ""}"><i class="fa-${isNoteSel ? "solid" : "regular"} fa-square${isNoteSel ? "-check" : ""}"></i></div>`
+              : cfmMultiSelectMode
+                ? `<div class="cfm-multisel-checkbox ${isMSel ? "cfm-multisel-checked" : ""}"><i class="fa-${isMSel ? "solid" : "regular"} fa-square${isMSel ? "-check" : ""}"></i></div>`
+                : "";
+        // 备注信息
+        const personaNote = getPersonaNote(p.avatarId);
+        const noteHtml = personaNote
+          ? `<span class="cfm-theme-note" title="备注: ${escapeHtml(personaNote)}">${escapeHtml(personaNote)}</span>`
+          : "";
+        // 绑定角色/群组标签
+        const connHtml = buildPersonaConnHtml(p.connections);
+        // 非模式状态下显示单个备注编辑按钮
+        const noModeActive =
+          !cfmExportMode &&
+          !cfmResDeleteMode &&
+          !cfmMultiSelectMode &&
+          !cfmPersonaNoteMode;
+        const singleNoteBtn = noModeActive
+          ? `<div class="cfm-row-edit-btn cfm-row-note-btn" title="编辑备注"><i class="fa-solid fa-pen-to-square"></i></div>`
+          : "";
+        // 头像缩略图
+        const thumbUrl = getThumbnailUrl("persona", p.avatarId);
+        const row = $(`
+          <div class="cfm-row cfm-row-char ${isActive ? "cfm-rv-item-active" : ""} ${isDelSel ? "cfm-res-delete-row-selected" : ""} ${isExpSel ? "cfm-export-row-selected" : ""} ${isMSel ? "cfm-multisel-row-selected" : ""} ${isNoteSel ? "cfm-edit-row-selected" : ""}" data-avatar-id="${escapeHtml(p.avatarId)}" data-res-id="${escapeHtml(p.avatarId)}" draggable="true">
+            ${msCheckHtml}
+            <div class="cfm-row-icon cfm-persona-avatar"><img src="${thumbUrl}" alt="avatar" onerror="this.src='/img/ai4.png'"></div>
+            <div class="cfm-row-name"><span class="cfm-persona-name-text">${escapeHtml(p.name)}</span>${p.title ? `<span class="cfm-persona-title">${escapeHtml(p.title)}</span>` : ""}${noteHtml}${connHtml}</div>
+            ${singleNoteBtn}
+            <div class="cfm-row-star ${fav ? "cfm-star-active" : ""}" title="${fav ? "取消收藏" : "添加收藏"}"><i class="fa-${fav ? "solid" : "regular"} fa-star"></i></div>
+          </div>
+        `);
+        row.find(".cfm-row-star").on("click touchend", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const nowFav = toggleResFavorite("personas", p.avatarId);
+          const starEl = row.find(".cfm-row-star");
+          starEl.toggleClass("cfm-star-active", nowFav);
+          starEl.attr("title", nowFav ? "取消收藏" : "添加收藏");
+          starEl
+            .find("i")
+            .attr("class", `fa-${nowFav ? "solid" : "regular"} fa-star`);
+          // 更新左侧收藏计数
+          const favCountEl = $(
+            "#cfm-persona-left-tree .cfm-tnode-favorites .cfm-tnode-count",
+          );
+          if (favCountEl.length) {
+            const newCount = personas.filter((pp) =>
+              getResFavorites("personas").includes(pp.avatarId),
+            ).length;
+            favCountEl.text(newCount);
+          }
+          if (selectedPersonaFolder === "__favorites__") renderPersonasView();
+        });
+        // 单个备注编辑按钮
+        row.find(".cfm-row-note-btn").on("click touchend", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          executePersonaNoteEdit([p.avatarId]);
+        });
+        row.on("click", (e) => {
+          if ($(e.target).closest(".cfm-row-star, .cfm-row-note-btn").length)
+            return;
+          if (cfmPersonaNoteMode) {
+            togglePersonaNoteItem(p.avatarId, e.shiftKey);
+            renderPersonasView();
+            return;
+          }
+          if (cfmResDeleteMode) {
+            toggleResDeleteItem(p.avatarId, e.shiftKey);
+            renderPersonasView();
+            return;
+          }
+          if (cfmExportMode) {
+            toggleExportItem(p.avatarId, e.shiftKey);
+            renderPersonasView();
+            return;
+          }
+          if (cfmMultiSelectMode) {
+            toggleMultiSelectItem(p.avatarId, e.shiftKey);
+            renderPersonasView();
+            return;
+          }
+          selectPersona(p.avatarId);
+          rightList
+            .find(".cfm-rv-item-active")
+            .removeClass("cfm-rv-item-active");
+          row.addClass("cfm-rv-item-active");
+          toastr.success(`已切换到User「${p.name}」`);
+        });
+        row.on("dragstart", (e) => {
+          const singleData = {
+            type: "persona",
+            name: p.name,
+            avatarId: p.avatarId,
+          };
+          const dragData = getMultiDragData(singleData);
+          pcDragStart(e, dragData);
+        });
+        row.on("dragend", () => pcDragEnd());
+        touchDragMgr.bind(row, () => {
+          const singleData = {
+            type: "persona",
+            name: p.name,
+            avatarId: p.avatarId,
+          };
+          return getMultiDragData(singleData);
+        });
+        rightList.append(row);
+      }
+
+      // 删除工具栏
+      prependResDeleteToolbar(rightList, renderPersonasView);
+      // 导出工具栏
+      prependExportToolbar(rightList, renderPersonasView);
+      // User备注工具栏
+      prependPersonaNoteToolbar(rightList, renderPersonasView);
+      // 多选工具栏
+      if (cfmMultiSelectMode && selectedPersonaFolder) {
+        const visible = getVisibleResourceIds();
+        const allSel =
+          visible.length > 0 && visible.every((id) => cfmMultiSelected.has(id));
+        const toolbar = $(`
+          <div class="cfm-multisel-toolbar">
+            <button class="cfm-btn cfm-btn-sm cfm-multisel-selectall"><i class="fa-solid fa-${allSel ? "square-minus" : "square-check"}"></i> ${allSel ? "全不选" : "全选"}</button>
+            <button class="cfm-btn cfm-btn-sm cfm-multisel-range ${cfmMultiSelectRangeMode ? "cfm-range-active" : ""}"><i class="fa-solid fa-arrow-down-short-wide"></i> 框选${cfmMultiSelectRangeMode ? "(开)" : ""}</button>
+            <span class="cfm-multisel-count">${cfmMultiSelected.size > 0 ? `已选 ${cfmMultiSelected.size} 项` : ""}</span>
+          </div>
+        `);
+        toolbar.find(".cfm-multisel-selectall").on("click touchend", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          selectAllVisible();
+          renderPersonasView();
+        });
+        toolbar.find(".cfm-multisel-range").on("click touchend", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          cfmMultiSelectRangeMode = !cfmMultiSelectRangeMode;
+          if (cfmMultiSelectRangeMode) cfmMultiSelectLastClicked = null;
+          renderPersonasView();
+        });
+        rightList.prepend(toolbar);
+      }
+    }
+
+    // 右侧列表本身也是拖放目标（拖到空白区域 = 放入当前文件夹）
+    if (
+      selectedPersonaFolder &&
+      selectedPersonaFolder !== "__ungrouped__" &&
+      selectedPersonaFolder !== "__favorites__" &&
+      tree[selectedPersonaFolder]
+    ) {
+      const currentFolder = selectedPersonaFolder;
+      rightList.off("dragover dragleave drop");
+      rightList.on("dragover", (e) => {
+        e.preventDefault();
+        e.originalEvent.dataTransfer.dropEffect = "move";
+        if ($(e.target).closest(".cfm-row").length > 0) return;
+        rightList.addClass("cfm-right-list-drop-target");
+      });
+      rightList.on("dragleave", (e) => {
+        if (
+          $(e.relatedTarget).closest("#cfm-persona-right-list").length === 0
+        ) {
+          rightList.removeClass("cfm-right-list-drop-target");
+        }
+      });
+      rightList.on("drop", (e) => {
+        rightList.removeClass("cfm-right-list-drop-target");
+        if ($(e.target).closest(".cfm-row").length > 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const data = pcGetDropData(e);
+        if (!data) return;
+        if (
+          data.type === "res-folder" &&
+          data.resType === "personas" &&
+          data.id !== currentFolder
+        ) {
+          if (wouldCreateResCycle("personas", data.id, currentFolder)) {
+            toastr.error("循环嵌套，已阻止");
+            return;
+          }
+          reorderResFolder("personas", data.id, currentFolder, null);
+          toastr.success(
+            `「${getResFolderDisplayName("personas", data.id)}」已移入「${getResFolderDisplayName("personas", currentFolder)}」`,
+          );
+          renderPersonasView();
+        } else if (data.type === "persona") {
+          const personaIds =
+            data.multiSelect && data.selectedIds
+              ? data.selectedIds
+              : [data.avatarId];
+          const pCount = personaIds.length;
+          personaIds.forEach((n) => setItemGroup("personas", n, currentFolder));
+          if (data.multiSelect) clearMultiSelect();
+          toastr.success(
+            pCount > 1
+              ? `已将 ${pCount} 个User移入「${getResFolderDisplayName("personas", currentFolder)}」`
+              : `已将「${data.name}」移入「${getResFolderDisplayName("personas", currentFolder)}」`,
+          );
+          renderPersonasView();
+        }
+      });
+    }
+  }
+
+  // User搜索
+  function executePersonaSearch() {
+    const query = $("#cfm-persona-global-search").val();
+    if (!query || !query.trim()) {
+      renderPersonasView();
+      return;
+    }
+    const q = query.trim().toLowerCase();
+    const scope = $("#cfm-persona-search-scope").val() || "current";
+    const searchType = $("#cfm-persona-search-type").val() || "persona";
+    const rightList = $("#cfm-persona-right-list");
+    const pathEl = $("#cfm-persona-rh-path");
+    const countEl = $("#cfm-persona-rh-count");
+    rightList.empty();
+
+    if (searchType === "folder") {
+      // 搜索文件夹名（支持当前文件夹范围）
+      const folders = getResFolderIds("personas");
+      let matchedIds;
+      if (
+        scope === "current" &&
+        selectedPersonaFolder &&
+        selectedPersonaFolder !== "__ungrouped__" &&
+        selectedPersonaFolder !== "__favorites__" &&
+        getResFolderTree("personas")[selectedPersonaFolder]
+      ) {
+        const collectDesc = (pid) => {
+          let r = [pid];
+          for (const c of getResChildFolders("personas", pid))
+            r = r.concat(collectDesc(c));
+          return r;
+        };
+        const descendants = collectDesc(selectedPersonaFolder);
+        matchedIds = descendants.filter((f) =>
+          fuzzyMatch(
+            q,
+            getFolderSelfPathNames("personas", f).map((s) => s.toLowerCase()),
+          ),
+        );
+      } else {
+        matchedIds = folders.filter((f) =>
+          fuzzyMatch(
+            q,
+            getFolderSelfPathNames("personas", f).map((s) => s.toLowerCase()),
+          ),
+        );
+      }
+      pathEl.text(`搜索文件夹: "${q}"`);
+      countEl.text(`${matchedIds.length} 个结果`);
+      if (matchedIds.length === 0) {
+        rightList.html('<div class="cfm-right-empty">未找到匹配的文件夹</div>');
+        return;
+      }
+      for (const fname of matchedIds) {
+        const folderPath = getResFolderPath("personas", fname)
+          .map((id) => getResFolderDisplayName("personas", id))
+          .join(" › ");
+        const childCount = countResItemsRecursive("personas", fname);
+        const row = $(`
+          <div class="cfm-row cfm-row-folder cfm-search-result">
+            <div class="cfm-row-icon"><i class="fa-solid fa-folder"></i></div>
+            <div class="cfm-row-name">${escapeHtml(getResFolderDisplayName("personas", fname))}<div class="cfm-row-folder-path">${escapeHtml(folderPath)}</div></div>
+            <div class="cfm-row-meta">${childCount} 个User</div>
+          </div>
+        `);
+        row.on("click", () => {
+          const path = getResFolderPath("personas", fname);
+          for (const pid of path) personaExpandedNodes.add(pid);
+          selectedPersonaFolder = fname;
+          $("#cfm-persona-global-search").val("");
+          renderPersonasView();
+        });
+        rightList.append(row);
+      }
+      return;
+    }
+
+    // 搜索User（模糊搜索）
+    getCurrentPersonas().then((personas) => {
+      const groups = getResourceGroups("personas");
+      const tree = getResFolderTree("personas");
+      let searchPool = [];
+      if (scope === "current" && selectedPersonaFolder) {
+        if (selectedPersonaFolder === "__favorites__") {
+          const favs = getResFavorites("personas");
+          searchPool = personas.filter((p) => favs.includes(p.avatarId));
+        } else if (selectedPersonaFolder === "__ungrouped__") {
+          searchPool = personas.filter(
+            (p) => !groups[p.avatarId] || !tree[groups[p.avatarId]],
+          );
+        } else if (tree[selectedPersonaFolder]) {
+          // 递归收集当前文件夹及子文件夹中的User
+          const collectFolderIds = (pid) => {
+            let r = [pid];
+            for (const c of getResChildFolders("personas", pid))
+              r = r.concat(collectFolderIds(c));
+            return r;
+          };
+          const allFids = collectFolderIds(selectedPersonaFolder);
+          searchPool = personas.filter((p) =>
+            allFids.includes(groups[p.avatarId]),
+          );
+        } else {
+          searchPool = personas.filter(
+            (p) => groups[p.avatarId] === selectedPersonaFolder,
+          );
+        }
+      } else {
+        searchPool = personas;
+      }
+
+      const matched = searchPool.filter((p) => {
+        const connNames = resolvePersonaConnections(p.connections).map(
+          (c) => (c.name || "").toLowerCase(),
+        );
+        const pool = [
+          (p.name || "").toLowerCase(),
+          (p.description || "").toLowerCase(),
+          (getPersonaNote(p.avatarId) || "").toLowerCase(),
+          ...getResFolderPathNames("personas", p.avatarId).map((s) =>
+            s.toLowerCase(),
+          ),
+          ...connNames,
+        ];
+        return fuzzyMatch(q, pool);
+      });
+
+      pathEl.text(`搜索User: "${query.trim()}"`);
+      countEl.text(`${matched.length} 个结果`);
+
+      if (matched.length === 0) {
+        rightList.html('<div class="cfm-right-empty">未找到匹配的User</div>');
+        return;
+      }
+
+      const currentUserAvatar =
+        $("#user_avatar_block .avatar-container.selected").attr(
+          "data-avatar-id",
+        ) || null;
+
+      for (const p of matched) {
+        const isActive = p.avatarId === currentUserAvatar;
+        const fav = isResFavorite("personas", p.avatarId);
+        const thumbUrl = getThumbnailUrl("persona", p.avatarId);
+        const personaNote = getPersonaNote(p.avatarId);
+        const noteHtml = personaNote
+          ? `<span class="cfm-theme-note" title="备注: ${escapeHtml(personaNote)}">${escapeHtml(personaNote)}</span>`
+          : "";
+        // 绑定角色/群组标签
+        const connHtml = buildPersonaConnHtml(p.connections);
+        // 文件夹路径
+        const folderPathNames = getResFolderPathNames("personas", p.avatarId);
+        const pathHtml = folderPathNames.length > 0
+          ? `<span class="cfm-row-folder-path">${escapeHtml(folderPathNames.join(" › "))}</span>`
+          : "";
+        const row = $(`
+          <div class="cfm-row cfm-row-char ${isActive ? "cfm-rv-item-active" : ""}" data-avatar-id="${escapeHtml(p.avatarId)}" data-res-id="${escapeHtml(p.avatarId)}" draggable="true">
+            <div class="cfm-row-icon cfm-persona-avatar"><img src="${thumbUrl}" alt="avatar" onerror="this.src='/img/ai4.png'"></div>
+            <div class="cfm-row-name"><span class="cfm-persona-name-text">${escapeHtml(p.name)}</span>${p.title ? `<span class="cfm-persona-title">${escapeHtml(p.title)}</span>` : ""}${noteHtml}${connHtml}${pathHtml}</div>
+            <div class="cfm-row-star ${fav ? "cfm-star-active" : ""}" title="${fav ? "取消收藏" : "添加收藏"}"><i class="fa-${fav ? "solid" : "regular"} fa-star"></i></div>
+          </div>
+        `);
+        row.find(".cfm-row-star").on("click touchend", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          toggleResFavorite("personas", p.avatarId);
+          executePersonaSearch();
+        });
+        row.on("click", (e) => {
+          if ($(e.target).closest(".cfm-row-star").length) return;
+          selectPersona(p.avatarId);
+          rightList
+            .find(".cfm-rv-item-active")
+            .removeClass("cfm-rv-item-active");
+          row.addClass("cfm-rv-item-active");
+          toastr.success(`已切换到User「${p.name}」`);
+        });
+        row.on("dragstart", (e) => {
+          pcDragStart(e, {
+            type: "persona",
+            name: p.name,
+            avatarId: p.avatarId,
+          });
+        });
+        row.on("dragend", () => pcDragEnd());
+        rightList.append(row);
+      }
+    });
   }
 
   // ==================== 导入导出功能 ====================
@@ -16899,9 +18711,12 @@ jQuery(async () => {
           JSON.stringify(extension_settings[extensionName].themeNotes || {}),
         ),
         bgBindings: JSON.parse(
-          JSON.stringify(extension_settings[extensionName].themeBackgroundBindings || {}),
+          JSON.stringify(
+            extension_settings[extensionName].themeBackgroundBindings || {},
+          ),
         ),
-        defaultBackground: extension_settings[extensionName].defaultBackground || "",
+        defaultBackground:
+          extension_settings[extensionName].defaultBackground || "",
       };
     }
 
@@ -16918,6 +18733,18 @@ jQuery(async () => {
           JSON.stringify(
             extension_settings[extensionName].bgOrientations || {},
           ),
+        ),
+      };
+    }
+
+    if (scope === "all" || scope === "personas") {
+      ensureResourceSettings();
+      data.personas = {
+        folderTree: JSON.parse(JSON.stringify(getResFolderTree("personas"))),
+        groups: JSON.parse(JSON.stringify(getResourceGroups("personas"))),
+        favorites: [...getResFavorites("personas")],
+        notes: JSON.parse(
+          JSON.stringify(extension_settings[extensionName].personaNotes || {}),
         ),
       };
     }
@@ -16941,7 +18768,11 @@ jQuery(async () => {
             ? "预设"
             : scope === "themes"
               ? "美化"
-              : "世界书";
+              : scope === "backgrounds"
+                ? "背景"
+                : scope === "personas"
+                  ? "User"
+                  : "世界书";
     a.download = `cfm-backup-${scopeLabel}-${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(a);
     a.click();
@@ -16957,6 +18788,7 @@ jQuery(async () => {
       worldinfo: { matched: 0, skipped: 0 },
       themes: { matched: 0, skipped: 0 },
       backgrounds: { matched: 0, skipped: 0 },
+      personas: { matched: 0, skipped: 0 },
       foldersCreated: 0,
       favoritesRestored: 0,
     };
@@ -17301,6 +19133,63 @@ jQuery(async () => {
       }
     }
 
+    if (jsonData.personas) {
+      const { folderTree, groups, favorites } = jsonData.personas;
+      ensureResourceSettings();
+
+      if (folderTree) {
+        const existingTree = getResFolderTree("personas");
+        for (const [folderId, folderData] of Object.entries(folderTree)) {
+          if (!existingTree[folderId]) {
+            existingTree[folderId] = { ...folderData };
+            report.foldersCreated++;
+          }
+        }
+        saveResTree("personas");
+      }
+
+      if (groups) {
+        const personasList = await getCurrentPersonas();
+        const avatarIdSet = new Set(personasList.map((p) => p.avatarId));
+        const existingFolderIds = new Set(getResFolderIds("personas"));
+
+        for (const [avatarId, folderName] of Object.entries(groups)) {
+          if (avatarIdSet.has(avatarId) && existingFolderIds.has(folderName)) {
+            setItemGroup("personas", avatarId, folderName);
+            report.personas.matched++;
+          } else {
+            report.personas.skipped++;
+          }
+        }
+      }
+
+      if (favorites) {
+        const personasList = await getCurrentPersonas();
+        const avatarIdSet = new Set(personasList.map((p) => p.avatarId));
+        for (const avatarId of favorites) {
+          if (
+            avatarIdSet.has(avatarId) &&
+            !isResFavorite("personas", avatarId)
+          ) {
+            toggleResFavorite("personas", avatarId);
+            report.favoritesRestored++;
+          }
+        }
+      }
+
+      // 恢复User备注
+      const personaNotes = jsonData.personas.notes;
+      if (personaNotes && typeof personaNotes === "object") {
+        const personasList = await getCurrentPersonas();
+        const avatarIdSet = new Set(personasList.map((p) => p.avatarId));
+        for (const [avatarId, note] of Object.entries(personaNotes)) {
+          if (avatarIdSet.has(avatarId) && note) {
+            setPersonaNote(avatarId, note);
+          }
+        }
+      }
+    }
+
     return report;
   }
 
@@ -17318,7 +19207,9 @@ jQuery(async () => {
             ? "美化"
             : currentResourceType === "backgrounds"
               ? "背景"
-              : "世界书";
+              : currentResourceType === "personas"
+                ? "User"
+                : "世界书";
     const popup = $(`
       <div class="cfm-batch-popup" style="max-width:480px;">
         <div class="cfm-config-header">
@@ -17398,6 +19289,8 @@ jQuery(async () => {
             html += `美化：匹配 ${report.themes.matched} 个，跳过 ${report.themes.skipped} 个<br>`;
           if (jsonData.backgrounds)
             html += `背景：匹配 ${report.backgrounds.matched} 个，跳过 ${report.backgrounds.skipped} 个<br>`;
+          if (jsonData.personas)
+            html += `User：匹配 ${report.personas.matched} 个，跳过 ${report.personas.skipped} 个<br>`;
           if (report.favoritesRestored > 0)
             html += `恢复了 ${report.favoritesRestored} 个收藏<br>`;
           html += `</div>`;
@@ -17410,6 +19303,7 @@ jQuery(async () => {
           else if (currentResourceType === "themes") renderThemesView();
           else if (currentResourceType === "backgrounds")
             renderBackgroundsView();
+          else if (currentResourceType === "personas") renderPersonasView();
         } catch (err) {
           toastr.error("导入失败：" + err.message);
           console.error("[CFM] Import error:", err);
@@ -17426,6 +19320,8 @@ jQuery(async () => {
   let nativeFilterWorldInfo = null; // 世界书当前过滤的文件夹id
   let nativeFilterTheme = null; // 主题当前过滤的文件夹id
   let nativeFilterBg = null; // 背景当前过滤的文件夹id
+  let nativeFilterGlobalWI = null; // 全局世界书当前过滤的文件夹id
+  let nativeFilterPersona = null; // User当前过滤的文件夹id
 
   /**
    * 构建文件夹树HTML（递归），用于原生界面浮动面板
@@ -17459,7 +19355,9 @@ jQuery(async () => {
             ? "themes"
             : type === "backgrounds"
               ? "backgrounds"
-              : "worldinfo";
+              : type === "personas"
+                ? "personas"
+                : "worldinfo";
       folderIds = parentId
         ? sortResFolders(resType, getResChildFolders(resType, parentId))
         : sortResFolders(resType, getResTopLevelFolders(resType));
@@ -17517,7 +19415,9 @@ jQuery(async () => {
               ? "themes"
               : type === "backgrounds"
                 ? "backgrounds"
-                : "worldinfo";
+                : type === "personas"
+                  ? "personas"
+                  : "worldinfo";
         const groups = getResourceGroups(resType);
         const tree = getResFolderTree(resType);
         let allItems;
@@ -17527,6 +19427,12 @@ jQuery(async () => {
           allItems = getThemeNames();
         } else if (type === "backgrounds") {
           allItems = getBackgroundNames();
+        } else if (type === "personas") {
+          allItems = [];
+          $("#user_avatar_block .avatar-container").each(function () {
+            const aid = $(this).attr("data-avatar-id");
+            if (aid) allItems.push(aid);
+          });
         } else {
           allItems = [];
           $("#world_editor_select option").each(function () {
@@ -17555,7 +19461,7 @@ jQuery(async () => {
       html += `<div class="cfm-nf-item cfm-nf-uncat${isUncatActive ? " cfm-nf-active" : ""}" data-folder-id="__ungrouped__" data-type="${type}" style="padding-left:12px;">`;
       html += `<span class="cfm-nf-arrow-placeholder"></span>`;
       html += `<i class="fa-solid fa-box-open cfm-nf-icon"></i>`;
-      html += `<span class="cfm-nf-name">${type === "chars" ? "未归类角色" : type === "presets" ? "未归类预设" : type === "themes" ? "未归类主题" : type === "backgrounds" ? "未归类背景" : "未归类世界书"}</span>`;
+      html += `<span class="cfm-nf-name">${type === "chars" ? "未归类角色" : type === "presets" ? "未归类预设" : type === "themes" ? "未归类主题" : type === "backgrounds" ? "未归类背景" : type === "personas" ? "未归类User" : "未归类世界书"}</span>`;
       html += `<span class="cfm-nf-count">${uncatCount}</span>`;
       html += `</div>`;
     }
@@ -17571,6 +19477,9 @@ jQuery(async () => {
     // 移除已有面板
     $(".cfm-nf-panel").remove();
 
+    // globalworldinfo 共享 worldinfo 的文件夹结构
+    const treeType = type === "globalworldinfo" ? "worldinfo" : type;
+
     const currentFilter =
       type === "chars"
         ? nativeFilterChar
@@ -17580,7 +19489,11 @@ jQuery(async () => {
             ? nativeFilterTheme
             : type === "backgrounds"
               ? nativeFilterBg
-              : nativeFilterWorldInfo;
+              : type === "personas"
+                ? nativeFilterPersona
+                : type === "globalworldinfo"
+                  ? nativeFilterGlobalWI
+                  : nativeFilterWorldInfo;
 
     // 展开状态集合（持久化到会话中）
     if (!showNativeFolderPanel._expanded) showNativeFolderPanel._expanded = {};
@@ -17611,7 +19524,7 @@ jQuery(async () => {
     // 文件夹树
     const treeContainer = $(`<div class="cfm-nf-tree"></div>`);
     treeContainer.html(
-      buildNativeFolderTreeHtml(type, null, 0, expandedSet, currentFilter),
+      buildNativeFolderTreeHtml(treeType, null, 0, expandedSet, currentFilter),
     );
     panel.append(treeContainer);
 
@@ -17642,7 +19555,13 @@ jQuery(async () => {
       if (expandedSet.has(fid)) expandedSet.delete(fid);
       else expandedSet.add(fid);
       treeContainer.html(
-        buildNativeFolderTreeHtml(type, null, 0, expandedSet, currentFilter),
+        buildNativeFolderTreeHtml(
+          treeType,
+          null,
+          0,
+          expandedSet,
+          currentFilter,
+        ),
       );
     });
 
@@ -17653,29 +19572,17 @@ jQuery(async () => {
       if (type === "chars") {
         allIds = getFolderTagIds();
       } else {
-        const resType =
-          type === "presets"
-            ? "presets"
-            : type === "themes"
-              ? "themes"
-              : type === "backgrounds"
-                ? "backgrounds"
-                : "worldinfo";
-        allIds = getResFolderIds(resType);
+        allIds = getResFolderIds(treeType);
       }
       allIds.forEach((id) => expandedSet.add(id));
-      const cf =
-        type === "chars"
-          ? nativeFilterChar
-          : type === "presets"
-            ? nativeFilterPreset
-            : type === "themes"
-              ? nativeFilterTheme
-              : type === "backgrounds"
-                ? nativeFilterBg
-                : nativeFilterWorldInfo;
       treeContainer.html(
-        buildNativeFolderTreeHtml(type, null, 0, expandedSet, cf),
+        buildNativeFolderTreeHtml(
+          treeType,
+          null,
+          0,
+          expandedSet,
+          currentFilter,
+        ),
       );
     });
 
@@ -17683,18 +19590,14 @@ jQuery(async () => {
     toolbar.find(".cfm-nf-collapse-all").on("click", function (e) {
       e.stopPropagation();
       expandedSet.clear();
-      const cf =
-        type === "chars"
-          ? nativeFilterChar
-          : type === "presets"
-            ? nativeFilterPreset
-            : type === "themes"
-              ? nativeFilterTheme
-              : type === "backgrounds"
-                ? nativeFilterBg
-                : nativeFilterWorldInfo;
       treeContainer.html(
-        buildNativeFolderTreeHtml(type, null, 0, expandedSet, cf),
+        buildNativeFolderTreeHtml(
+          treeType,
+          null,
+          0,
+          expandedSet,
+          currentFilter,
+        ),
       );
     });
 
@@ -17704,6 +19607,8 @@ jQuery(async () => {
       else if (type === "presets") nativeFilterPreset = null;
       else if (type === "themes") nativeFilterTheme = null;
       else if (type === "backgrounds") nativeFilterBg = null;
+      else if (type === "personas") nativeFilterPersona = null;
+      else if (type === "globalworldinfo") nativeFilterGlobalWI = null;
       else nativeFilterWorldInfo = null;
       applyNativeFilter(type);
       panel.remove();
@@ -17720,6 +19625,8 @@ jQuery(async () => {
       else if (type === "presets") nativeFilterPreset = fid;
       else if (type === "themes") nativeFilterTheme = fid;
       else if (type === "backgrounds") nativeFilterBg = fid;
+      else if (type === "personas") nativeFilterPersona = fid;
+      else if (type === "globalworldinfo") nativeFilterGlobalWI = fid;
       else nativeFilterWorldInfo = fid;
       applyNativeFilter(type);
       panel.remove();
@@ -17760,7 +19667,9 @@ jQuery(async () => {
               ? "themes"
               : type === "backgrounds"
                 ? "backgrounds"
-                : "worldinfo";
+                : type === "personas"
+                  ? "personas"
+                  : "worldinfo";
         const groups = getResourceGroups(resType);
         const tree = getResFolderTree(resType);
         let allNames;
@@ -17770,6 +19679,12 @@ jQuery(async () => {
           allNames = getThemeNames();
         } else if (type === "backgrounds") {
           allNames = getBackgroundNames();
+        } else if (type === "personas") {
+          allNames = [];
+          $("#user_avatar_block .avatar-container").each(function () {
+            const aid = $(this).attr("data-avatar-id");
+            if (aid) allNames.push(aid);
+          });
         } else {
           $("#world_editor_select option").each(function () {
             const v = $(this).val();
@@ -17819,7 +19734,9 @@ jQuery(async () => {
             ? "themes"
             : type === "backgrounds"
               ? "backgrounds"
-              : "worldinfo";
+              : type === "personas"
+                ? "personas"
+                : "worldinfo";
       const groups = getResourceGroups(resType);
       for (const [name, fid] of Object.entries(groups)) {
         if (fid === folderId) items.add(name);
@@ -17845,6 +19762,10 @@ jQuery(async () => {
       applyThemeFilter();
     } else if (type === "backgrounds") {
       applyBgFilter();
+    } else if (type === "personas") {
+      applyPersonaFilter();
+    } else if (type === "globalworldinfo") {
+      applyGlobalWorldInfoFilter();
     } else {
       applyWorldInfoFilter();
     }
@@ -17878,11 +19799,38 @@ jQuery(async () => {
     });
   }
 
+  /**
+   * User过滤：隐藏/显示 #user_avatar_block 中的 persona
+   */
+  function applyPersonaFilter() {
+    const block = $("#user_avatar_block");
+    if (!nativeFilterPersona) {
+      // 显示全部
+      block.find(".avatar-container").show();
+      return;
+    }
+    const allowedAvatarIds = getAllItemsInFolderRecursive(
+      "personas",
+      nativeFilterPersona,
+    );
+    block.find(".avatar-container").each(function () {
+      const aid = $(this).attr("data-avatar-id");
+      if (aid) {
+        if (allowedAvatarIds.has(aid)) {
+          $(this).show();
+        } else {
+          $(this).hide();
+        }
+      }
+    });
+  }
+
   // 缓存被 detach 的 option，用于恢复
   let _presetDetachedOptions = [];
   let _worldInfoDetachedOptions = [];
   let _themeDetachedOptions = [];
   let _bgDetachedElements = [];
+  let _globalWIDetachedOptions = [];
 
   /**
    * 预设过滤：通过 detach/append option 实现过滤
@@ -18079,7 +20027,11 @@ jQuery(async () => {
             ? nativeFilterTheme
             : type === "backgrounds"
               ? nativeFilterBg
-              : nativeFilterWorldInfo;
+              : type === "personas"
+                ? nativeFilterPersona
+                : type === "globalworldinfo"
+                  ? nativeFilterGlobalWI
+                  : nativeFilterWorldInfo;
     const btn = $(`.cfm-nf-btn[data-nf-type="${type}"]`);
     if (filter) {
       btn.addClass("cfm-nf-btn-active");
@@ -18094,7 +20046,9 @@ jQuery(async () => {
                 ? "未归类主题"
                 : type === "backgrounds"
                   ? "未归类背景"
-                  : "未归类世界书";
+                  : type === "personas"
+                    ? "未归类User"
+                    : "未归类世界书";
       } else if (type === "chars") {
         name = getTagName(filter);
       } else {
@@ -18105,7 +20059,9 @@ jQuery(async () => {
               ? "themes"
               : type === "backgrounds"
                 ? "backgrounds"
-                : "worldinfo";
+                : type === "personas"
+                  ? "personas"
+                  : "worldinfo";
         name = getResFolderDisplayName(resType, filter);
       }
       btn.attr("title", `文件夹过滤: ${name}`);
@@ -18215,6 +20171,489 @@ jQuery(async () => {
         showNativeFolderPanel($(this), "backgrounds");
       });
     }
+
+    // 6. 全局世界书选择器 - 注入到 #world_info 的 .range-block-range 容器
+    if (
+      $("#world_info").length &&
+      !$("#world_info").closest(".range-block-range").find(".cfm-nf-btn").length
+    ) {
+      const globalWIBtn = $(
+        `<div class="cfm-nf-btn menu_button menu_button_icon fa-solid fa-folder-tree" data-nf-type="globalworldinfo" title="文件夹过滤" style="flex-shrink:0;"></div>`,
+      );
+      const rangeBlock = $("#world_info").closest(".range-block-range");
+      rangeBlock.css({ display: "flex", alignItems: "center", gap: "4px" });
+      // 把 select2 容器设为 flex:1
+      rangeBlock.find(".select2-container").css({ flex: "1", minWidth: "0" });
+      rangeBlock.append(globalWIBtn);
+      globalWIBtn.on("click touchend", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if ($('.cfm-nf-panel[data-nf-type="globalworldinfo"]').length) {
+          $(".cfm-nf-panel").remove();
+          return;
+        }
+        showNativeFolderPanel($(this), "globalworldinfo");
+      });
+    }
+
+    // 7. User/Persona 面板 - 注入到 #user_avatar_block 前面
+    if (
+      $("#user_avatar_block").length &&
+      !$("#user_avatar_block").parent().find(".cfm-nf-btn[data-nf-type='personas']").length
+    ) {
+      const personaBtn = $(
+        `<div class="cfm-nf-btn menu_button fa-solid fa-folder-tree" data-nf-type="personas" title="文件夹过滤" style="display:inline-block;margin:2px 4px;"></div>`,
+      );
+      $("#user_avatar_block").before(personaBtn);
+      personaBtn.on("click touchend", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if ($('.cfm-nf-panel[data-nf-type="personas"]').length) {
+          $(".cfm-nf-panel").remove();
+          return;
+        }
+        showNativeFolderPanel($(this), "personas");
+      });
+    }
+  }
+
+  /**
+   * 全局世界书过滤：通过 detach/append option 实现过滤
+   * 类似 applyWorldInfoFilter 但目标是 #world_info（select2 多选）
+   */
+  function applyGlobalWorldInfoFilter() {
+    const select = $("#world_info");
+    if (!select.length) return;
+
+    // 先 destroy select2
+    const hasSelect2 = select.hasClass("select2-hidden-accessible");
+    if (hasSelect2) {
+      try {
+        select.select2("destroy");
+      } catch (e) {
+        /* ignore */
+      }
+    }
+
+    // 恢复之前 detach 的 option
+    if (_globalWIDetachedOptions.length > 0) {
+      for (const opt of _globalWIDetachedOptions) {
+        select.append(opt);
+      }
+      _globalWIDetachedOptions = [];
+      _sortSelectOptions(select);
+    }
+
+    if (nativeFilterGlobalWI) {
+      const allowedNames = getAllItemsInFolderRecursive(
+        "worldinfo",
+        nativeFilterGlobalWI,
+      );
+      // detach 不匹配的 option（已选中的不移除，保留用户已激活的世界书）
+      select.find("option").each(function () {
+        const val = $(this).val();
+        const text = $(this).text().trim();
+        if (val === "") return; // 保留空值占位选项
+        if ($(this).prop("selected")) return; // 保留已选中的
+        if (!allowedNames.has(text)) {
+          _globalWIDetachedOptions.push($(this).detach());
+        }
+      });
+    }
+
+    // 重新初始化 select2
+    if (hasSelect2 || select.attr("multiple")) {
+      try {
+        select.select2({
+          width: "100%",
+          placeholder: "No Worlds active. Click here to select.",
+          allowClear: true,
+          closeOnSelect: false,
+        });
+      } catch (e) {
+        /* ignore select2 init error */
+      }
+      // 更新 flex 样式（select2 重建后容器会变）
+      const rangeBlock = select.closest(".range-block-range");
+      if (rangeBlock.length) {
+        rangeBlock.find(".select2-container").css({ flex: "1", minWidth: "0" });
+      }
+    }
+  }
+
+  // ==================== 角色卡世界书连接面板 - 文件夹过滤 ====================
+  /**
+   * 增强原生 Persona 选择弹窗：竖向列表布局 + 显示备注
+   * 当角色绑定多个 persona 时，酒馆会弹出 askForPersonaSelection 弹窗，
+   * 其中 .persona-list 容器默认是横向 flex wrap 排列。
+   * 本函数通过 MutationObserver 监听该容器出现，将其改为竖向列表并追加备注。
+   */
+  function setupPersonaSelectionPopupEnhancer() {
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+          if (!(node instanceof HTMLElement)) continue;
+          // 检测弹窗中的 .persona-list 容器
+          const personaList = node.classList?.contains("persona-list")
+            ? node
+            : node.querySelector?.(".persona-list");
+          if (!personaList) continue;
+          // 避免重复处理
+          if (personaList.classList.contains("cfm-persona-popup-enhanced"))
+            continue;
+          personaList.classList.add("cfm-persona-popup-enhanced");
+          enhancePersonaPopupList(personaList);
+        }
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  /**
+   * 对 persona 选择弹窗列表进行增强处理
+   * @param {HTMLElement} listEl - .persona-list 容器元素
+   */
+  function enhancePersonaPopupList(listEl) {
+    const pu = getContext().powerUserSettings;
+    if (!pu) return;
+    const avatarBlocks = listEl.querySelectorAll(
+      '.avatar[data-type="persona"]',
+    );
+    avatarBlocks.forEach((block) => {
+      const pid = block.dataset.pid;
+      if (!pid) return;
+      // 创建信息容器
+      const infoDiv = document.createElement("div");
+      infoDiv.className = "cfm-persona-popup-info";
+      // 名称
+      const personaName = (pu.personas && pu.personas[pid]) || pid;
+      const nameSpan = document.createElement("span");
+      nameSpan.className = "cfm-persona-popup-name";
+      nameSpan.textContent = personaName;
+      infoDiv.appendChild(nameSpan);
+      // 备注
+      const note = getPersonaNote(pid);
+      if (note) {
+        const noteSpan = document.createElement("span");
+        noteSpan.className = "cfm-persona-popup-note";
+        noteSpan.textContent = note;
+        noteSpan.title = "备注: " + note;
+        infoDiv.appendChild(noteSpan);
+      }
+      // 将 avatar 块包裹成行布局
+      const wrapper = document.createElement("div");
+      wrapper.className = "cfm-persona-popup-row";
+      block.parentNode.insertBefore(wrapper, block);
+      wrapper.appendChild(block);
+      wrapper.appendChild(infoDiv);
+      // 点击 wrapper 的非 avatar 区域时，转发点击到 avatar 块
+      wrapper.addEventListener("click", (e) => {
+        if (e.target === block || block.contains(e.target)) return;
+        block.click();
+      });
+    });
+  }
+
+  /**
+   * 在角色卡「更多」→「连接到世界书」弹窗中注入文件夹过滤按钮
+   * 该弹窗每次都是动态创建的（从 #character_world_template 克隆），
+   * 因此需要用 MutationObserver 监听 .character_world 容器出现
+   */
+  function setupCharWorldPopupFilterObserver() {
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+          if (!(node instanceof HTMLElement)) continue;
+          // 检测弹窗中的 .character_world 容器
+          const charWorldEl = node.classList?.contains("character_world")
+            ? node
+            : node.querySelector?.(".character_world");
+          if (!charWorldEl) continue;
+          // 在主世界书选择器旁注入过滤按钮
+          injectCharWorldFilterBtn(
+            $(charWorldEl).find(".character_world_info_selector"),
+            "primary",
+          );
+          // 在辅助世界书选择器旁注入过滤按钮
+          injectCharWorldFilterBtn(
+            $(charWorldEl).find(".character_extra_world_info_selector"),
+            "extras",
+          );
+        }
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  /**
+   * 在角色卡世界书选择器旁注入文件夹过滤按钮
+   * @param {jQuery} selectEl - 选择器元素
+   * @param {string} kind - 'primary' | 'extras'
+   */
+  function injectCharWorldFilterBtn(selectEl, kind) {
+    if (!selectEl.length) return;
+    const parent = selectEl.closest(".range-block-range");
+    if (!parent.length) return;
+    // 防止重复注入
+    if (parent.find(".cfm-nf-btn").length) return;
+
+    // 使 parent 变成 flex 布局以容纳按钮
+    parent.css({ display: "flex", alignItems: "center", gap: "4px" });
+    selectEl.css({ flex: "1", minWidth: "0" });
+
+    const btn = $(
+      `<div class="cfm-nf-btn menu_button fa-solid fa-folder-tree" data-nf-kind="${kind}" title="文件夹过滤" style="flex-shrink:0;padding:4px 6px;"></div>`,
+    );
+    parent.append(btn);
+
+    // 过滤状态（临时，弹窗关闭后自然销毁）
+    let currentFilter = null;
+
+    btn.on("click touchend", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      // 如果面板已存在，关闭
+      if ($(`.cfm-nf-panel[data-nf-kind="${kind}"]`).length) {
+        $(".cfm-nf-panel").remove();
+        return;
+      }
+      $(".cfm-nf-panel").remove();
+
+      // 展开状态
+      if (!showNativeFolderPanel._expanded)
+        showNativeFolderPanel._expanded = {};
+      if (!showNativeFolderPanel._expanded["charworld_" + kind])
+        showNativeFolderPanel._expanded["charworld_" + kind] = new Set();
+      const expandedSet = showNativeFolderPanel._expanded["charworld_" + kind];
+
+      const panel = $(
+        `<div class="cfm-nf-panel" data-nf-type="worldinfo" data-nf-kind="${kind}"></div>`,
+      );
+
+      // 顶部工具栏
+      const toolbar = $(`<div class="cfm-nf-toolbar">
+        <span class="cfm-nf-title"><i class="fa-solid fa-folder-tree"></i> 文件夹过滤</span>
+        <span class="cfm-nf-toolbar-actions">
+          <i class="fa-solid fa-angles-down cfm-nf-expand-all" title="展开全部"></i>
+          <i class="fa-solid fa-angles-up cfm-nf-collapse-all" title="收起全部"></i>
+        </span>
+      </div>`);
+      panel.append(toolbar);
+
+      // "显示全部" 按钮
+      const showAllBtn = $(
+        `<div class="cfm-nf-item cfm-nf-show-all${!currentFilter ? " cfm-nf-active" : ""}">
+        <i class="fa-solid fa-layer-group cfm-nf-icon"></i>
+        <span class="cfm-nf-name">显示全部</span>
+      </div>`,
+      );
+      panel.append(showAllBtn);
+
+      // 文件夹树
+      const treeContainer = $(`<div class="cfm-nf-tree"></div>`);
+      treeContainer.html(
+        buildNativeFolderTreeHtml(
+          "worldinfo",
+          null,
+          0,
+          expandedSet,
+          currentFilter,
+        ),
+      );
+      panel.append(treeContainer);
+
+      // 阻止冒泡
+      panel.on("mousedown mouseup click touchstart touchend", function (ev) {
+        ev.stopPropagation();
+      });
+
+      // 定位面板 — 必须挂到 dialog 内部，否则被 top layer 遮挡
+      const dialogEl = btn.closest("dialog");
+      if (dialogEl.length) {
+        dialogEl.append(panel);
+      } else {
+        $("body").append(panel);
+      }
+      const anchorRect = btn[0].getBoundingClientRect();
+      let top = anchorRect.bottom + 4;
+      let left = anchorRect.left;
+      const panelWidth = panel.outerWidth();
+      const panelHeight = panel.outerHeight();
+      if (left + panelWidth > window.innerWidth)
+        left = window.innerWidth - panelWidth - 8;
+      if (left < 4) left = 4;
+      if (top + panelHeight > window.innerHeight)
+        top = anchorRect.top - panelHeight - 4;
+      panel.css({ top: top + "px", left: left + "px" });
+
+      // 展开/收起箭头
+      panel.on("click", ".cfm-nf-arrow", function (ev) {
+        ev.stopPropagation();
+        const fid = $(this).attr("data-folder-id");
+        if (expandedSet.has(fid)) expandedSet.delete(fid);
+        else expandedSet.add(fid);
+        treeContainer.html(
+          buildNativeFolderTreeHtml(
+            "worldinfo",
+            null,
+            0,
+            expandedSet,
+            currentFilter,
+          ),
+        );
+      });
+
+      // 展开全部
+      toolbar.find(".cfm-nf-expand-all").on("click", function (ev) {
+        ev.stopPropagation();
+        getResFolderIds("worldinfo").forEach((id) => expandedSet.add(id));
+        treeContainer.html(
+          buildNativeFolderTreeHtml(
+            "worldinfo",
+            null,
+            0,
+            expandedSet,
+            currentFilter,
+          ),
+        );
+      });
+
+      // 收起全部
+      toolbar.find(".cfm-nf-collapse-all").on("click", function (ev) {
+        ev.stopPropagation();
+        expandedSet.clear();
+        treeContainer.html(
+          buildNativeFolderTreeHtml(
+            "worldinfo",
+            null,
+            0,
+            expandedSet,
+            currentFilter,
+          ),
+        );
+      });
+
+      // 点击"显示全部"
+      showAllBtn.on("click", function () {
+        currentFilter = null;
+        applyCharWorldSelectFilter(selectEl, null, kind);
+        btn.removeClass("cfm-nf-active");
+        panel.remove();
+        $(document).off("mousedown.cfmCwPanel touchstart.cfmCwPanel");
+      });
+
+      // 点击文件夹项
+      panel.on("click", ".cfm-nf-item[data-folder-id]", function (ev) {
+        if ($(ev.target).closest(".cfm-nf-arrow").length) return;
+        const fid = $(this).attr("data-folder-id");
+        currentFilter = fid;
+        applyCharWorldSelectFilter(selectEl, fid, kind);
+        btn.addClass("cfm-nf-active");
+        panel.remove();
+        $(document).off("mousedown.cfmCwPanel touchstart.cfmCwPanel");
+      });
+
+      // 点击外部关闭
+      setTimeout(() => {
+        $(document).on(
+          "mousedown.cfmCwPanel touchstart.cfmCwPanel",
+          function (ev) {
+            if (!$(ev.target).closest(".cfm-nf-panel, .cfm-nf-btn").length) {
+              $(".cfm-nf-panel").remove();
+              $(document).off("mousedown.cfmCwPanel touchstart.cfmCwPanel");
+            }
+          },
+        );
+      }, 0);
+    });
+  }
+
+  /**
+   * 对角色卡世界书选择器应用文件夹过滤
+   * @param {jQuery} selectEl - <select> 元素
+   * @param {string|null} folderId - 文件夹ID，null 表示显示全部
+   * @param {string} kind - 'primary' | 'extras'
+   */
+  function applyCharWorldSelectFilter(selectEl, folderId, kind) {
+    if (!selectEl.length) return;
+
+    // 恢复之前被 detach 的 option
+    const storeKey = "_cfmDetachedOpts";
+    const detached = selectEl.data(storeKey);
+    if (detached && detached.length) {
+      selectEl.append(detached);
+      selectEl.data(storeKey, null);
+    }
+
+    // 对主世界书（普通 select）：show/hide 即可
+    if (kind === "primary") {
+      selectEl.find("option").show();
+      if (folderId) {
+        const allowedNames = getAllItemsInFolderRecursive(
+          "worldinfo",
+          folderId,
+        );
+        selectEl.find("option").each(function () {
+          const val = $(this).val();
+          const text = $(this).text().trim();
+          if (val === "") return; // 保留空值/默认选项
+          if (!allowedNames.has(text)) {
+            $(this).hide();
+          }
+        });
+      }
+      return;
+    }
+
+    // 对辅助世界书（select2 多选）：需要 detach 不匹配的 option，再 reinit select2
+    if (kind === "extras") {
+      // 先 destroy select2
+      if (selectEl.hasClass("select2-hidden-accessible")) {
+        try {
+          selectEl.select2("destroy");
+        } catch (e) {
+          /* ignore */
+        }
+      }
+
+      if (folderId) {
+        const allowedNames = getAllItemsInFolderRecursive(
+          "worldinfo",
+          folderId,
+        );
+        const toDetach = [];
+        selectEl.find("option").each(function () {
+          const val = $(this).val();
+          const text = $(this).text().trim();
+          if (val === "") return; // 保留空值选项
+          // 已被选中的 option 不移除（保留用户已选的世界书）
+          if ($(this).prop("selected")) return;
+          if (!allowedNames.has(text)) {
+            toDetach.push(this);
+          }
+        });
+        if (toDetach.length) {
+          const $detached = $(toDetach).detach();
+          selectEl.data(storeKey, $detached);
+        }
+      }
+
+      // 重新初始化 select2
+      try {
+        const popupDialog = selectEl.closest(
+          "dialog, .popup-content, .dialogue_popup",
+        );
+        selectEl.select2({
+          width: "100%",
+          placeholder: "No auxiliary Lorebooks set. Click here to select.",
+          allowClear: true,
+          closeOnSelect: false,
+          dropdownParent: popupDialog.length ? popupDialog : undefined,
+        });
+      } catch (e) {
+        /* ignore select2 init error */
+      }
+    }
   }
 
   // ==================== 初始化 ====================
@@ -18223,6 +20662,8 @@ jQuery(async () => {
   autoCleanRedundantTags(); // 自动清理多余的路径标签
   initButton();
   injectNativeFilterButtons();
+  setupCharWorldPopupFilterObserver();
+  setupPersonaSelectionPopupEnhancer();
 
   // 监听角色卡列表重新渲染事件，自动重新应用过滤
   const eventSource = getContext().eventSource;
@@ -18235,6 +20676,36 @@ jQuery(async () => {
         requestAnimationFrame(() => applyCharFilter());
       }
     });
+    // 角色卡重命名后，自动更新所有 persona connections 中的旧 avatar ID
+    // 酒馆原生代码未处理此同步，这里补上
+    if (event_types.CHARACTER_RENAMED) {
+      eventSource.on(event_types.CHARACTER_RENAMED, (oldAvatar, newAvatar) => {
+        try {
+          if (!oldAvatar || !newAvatar || oldAvatar === newAvatar) return;
+          const pu = getContext().powerUserSettings;
+          if (!pu || !pu.persona_descriptions) return;
+          let changed = false;
+          for (const [pid, desc] of Object.entries(pu.persona_descriptions)) {
+            if (!desc || !desc.connections || !desc.connections.length)
+              continue;
+            for (const conn of desc.connections) {
+              if (conn && conn.type === "character" && conn.id === oldAvatar) {
+                conn.id = newAvatar;
+                changed = true;
+              }
+            }
+          }
+          if (changed) {
+            getContext().saveSettingsDebounced();
+            console.log(
+              `[CFM] 已更新 persona connections: ${oldAvatar} → ${newAvatar}`,
+            );
+          }
+        } catch (e) {
+          console.warn("[CFM] CHARACTER_RENAMED handler error:", e);
+        }
+      });
+    }
   }
 
   console.log(`[${extensionName}] 酒馆资源管理器已加载`);

@@ -243,7 +243,9 @@
   cursor: pointer;
   color: var(--SmartThemeBodyColor, #cdd6f4);
   opacity: 0.4;
-  transition: opacity 0.15s, color 0.15s;
+  transition:
+    opacity 0.15s,
+    color 0.15s;
   flex-shrink: 0;
   font-size: 10px;
   border-radius: 3px;
@@ -1312,6 +1314,84 @@
 .cfm-theme-bgbind-tag i {
   font-size: 9px;
   flex-shrink: 0;
+}
+/* ========== User绑定角色/群组标签 ========== */
+.cfm-persona-conn-tag {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+  flex-shrink: 1;
+  margin-left: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-weight: 500;
+  line-height: 1.4;
+  background: rgba(166, 227, 161, 0.2);
+  color: #a6e3a1;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cfm-persona-conn-tag i {
+  font-size: 9px;
+  flex-shrink: 0;
+}
+/* ========== Persona选择弹窗增强（竖向列表+备注） ========== */
+.persona-list.cfm-persona-popup-enhanced {
+  flex-direction: column !important;
+  align-items: stretch !important;
+  max-height: 400px !important;
+  overflow-y: auto !important;
+  gap: 0 !important;
+}
+.cfm-persona-popup-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  cursor: pointer;
+  transition: background 0.15s;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.cfm-persona-popup-row:last-child {
+  border-bottom: none;
+}
+.cfm-persona-popup-row:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.cfm-persona-popup-row .avatar {
+  flex-shrink: 0;
+}
+.cfm-persona-popup-info {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+.cfm-persona-popup-name {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 1;
+  min-width: 0;
+}
+.cfm-persona-popup-note {
+  font-size: 11px;
+  color: #a6adc8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+  flex-shrink: 1;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(186, 194, 222, 0.1);
 }
 /* 锁链按钮激活状态（已绑定） */
 .cfm-row-bglink-btn.cfm-bglink-active {
@@ -2578,7 +2658,9 @@
   cursor: pointer;
   color: var(--SmartThemeBodyColor, #cdd6f4);
   opacity: 0.4;
-  transition: opacity 0.15s, color 0.15s;
+  transition:
+    opacity 0.15s,
+    color 0.15s;
   flex-shrink: 0;
   font-size: 12px;
   border-radius: 3px;
@@ -2777,7 +2859,9 @@
   opacity: 0.7;
   font-size: 13px;
   margin-left: 2px;
-  transition: opacity 0.15s, color 0.15s;
+  transition:
+    opacity 0.15s,
+    color 0.15s;
 }
 #cfm-popup.cfm-multisel-on .cfm-tnode-target:hover,
 #cfm-popup.cfm-multisel-on .cfm-row-target-btn:hover {
@@ -3375,5 +3459,81 @@ option.cfm-nf-hidden {
   }
   .cfm-cb-footer {
     padding: 10px 14px;
+  }
+}
+
+/* ========== 用户(Persona)样式 ========== */
+/* 头像：圆形，略大 */
+.cfm-persona-avatar {
+  border-radius: 50% !important;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.cfm-persona-avatar img {
+  width: 32px;
+  height: 32px;
+  object-fit: cover;
+  border-radius: 50%;
+}
+/* 名称 */
+.cfm-persona-name-text {
+  font-weight: 500;
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 标题标签 */
+.cfm-persona-title {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-left: 6px;
+  display: inline-flex;
+  align-items: center;
+  font-weight: 500;
+  line-height: 1.4;
+  background: rgba(166, 227, 161, 0.2);
+  color: #a6e3a1;
+}
+/* 描述文本 */
+.cfm-persona-desc {
+  font-size: 11px;
+  opacity: 0.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+  flex-shrink: 1;
+  margin-left: 6px;
+  color: var(--SmartThemeQuoteColor, #bac2de);
+}
+/* 当前激活的 persona 行 */
+.cfm-row[data-avatar-id].cfm-rv-item-active {
+  background-color: rgba(137, 180, 250, 0.1);
+}
+.cfm-row[data-avatar-id].cfm-rv-item-active .cfm-persona-name-text {
+  color: #89b4fa;
+  font-weight: 600;
+}
+/* persona 行的 name 区域 flex 布局 */
+.cfm-row[data-avatar-id] .cfm-row-name {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0 6px;
+  min-width: 0;
+}
+/* 移动端适配 */
+@media (max-width: 768px) {
+  .cfm-persona-avatar img {
+    width: 40px;
+    height: 40px;
+  }
+  .cfm-persona-desc {
+    max-width: 120px;
   }
 }
