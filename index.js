@@ -11367,11 +11367,11 @@ jQuery(async () => {
     // 右侧列表本身也是拖放目标（拖到空白区域 = 放入当前文件夹）
     list.off("dragover dragleave drop");
     list.on("dragover", (e) => {
-      // 仅在拖到空白区域时触发（不在子行上）
-      if ($(e.target).closest(".cfm-row").length > 0) return;
       e.preventDefault();
-      list.addClass("cfm-right-list-drop-target");
       e.originalEvent.dataTransfer.dropEffect = "move";
+      // 仅在拖到空白区域时添加高亮（不在子行上）
+      if ($(e.target).closest(".cfm-row").length > 0) return;
+      list.addClass("cfm-right-list-drop-target");
     });
     list.on("dragleave", (e) => {
       if ($(e.relatedTarget).closest("#cfm-right-list").length === 0) {
@@ -14101,10 +14101,10 @@ jQuery(async () => {
       const currentFolder = selectedPresetFolder;
       rightList.off("dragover dragleave drop");
       rightList.on("dragover", (e) => {
-        if ($(e.target).closest(".cfm-row").length > 0) return;
         e.preventDefault();
-        rightList.addClass("cfm-right-list-drop-target");
         e.originalEvent.dataTransfer.dropEffect = "move";
+        if ($(e.target).closest(".cfm-row").length > 0) return;
+        rightList.addClass("cfm-right-list-drop-target");
       });
       rightList.on("dragleave", (e) => {
         if ($(e.relatedTarget).closest("#cfm-preset-right-list").length === 0) {
@@ -14871,10 +14871,10 @@ jQuery(async () => {
       const currentFolder = selectedThemeFolder;
       rightList.off("dragover dragleave drop");
       rightList.on("dragover", (e) => {
-        if ($(e.target).closest(".cfm-row").length > 0) return;
         e.preventDefault();
-        rightList.addClass("cfm-right-list-drop-target");
         e.originalEvent.dataTransfer.dropEffect = "move";
+        if ($(e.target).closest(".cfm-row").length > 0) return;
+        rightList.addClass("cfm-right-list-drop-target");
       });
       rightList.on("dragleave", (e) => {
         if ($(e.relatedTarget).closest("#cfm-theme-right-list").length === 0)
@@ -15578,10 +15578,10 @@ jQuery(async () => {
       const currentFolder = selectedBgFolder;
       rightList.off("dragover dragleave drop");
       rightList.on("dragover", (e) => {
-        if ($(e.target).closest(".cfm-row").length > 0) return;
         e.preventDefault();
-        rightList.addClass("cfm-right-list-drop-target");
         e.originalEvent.dataTransfer.dropEffect = "move";
+        if ($(e.target).closest(".cfm-row").length > 0) return;
+        rightList.addClass("cfm-right-list-drop-target");
       });
       rightList.on("dragleave", (e) => {
         if ($(e.relatedTarget).closest("#cfm-bg-right-list").length === 0)
@@ -16743,10 +16743,10 @@ jQuery(async () => {
       const currentFolder = selectedWorldInfoFolder;
       rightList.off("dragover dragleave drop");
       rightList.on("dragover", (e) => {
-        if ($(e.target).closest(".cfm-row").length > 0) return;
         e.preventDefault();
-        rightList.addClass("cfm-right-list-drop-target");
         e.originalEvent.dataTransfer.dropEffect = "move";
+        if ($(e.target).closest(".cfm-row").length > 0) return;
+        rightList.addClass("cfm-right-list-drop-target");
       });
       rightList.on("dragleave", (e) => {
         if (
