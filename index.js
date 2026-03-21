@@ -1510,7 +1510,7 @@ jQuery(async () => {
           if (mgr.active) return;
           if (
             e.target.closest(
-              ".cfm-row-star, .cfm-tnode-arrow, .cfm-row-bglink-btn, .cfm-row-note-btn, .cfm-row-rename-btn, .cfm-row-edit-btn, .cfm-wi-toggle",
+              ".cfm-row-star, .cfm-tnode-arrow, .cfm-row-bglink-btn, .cfm-row-note-btn, .cfm-row-rename-btn, .cfm-row-edit-btn, .cfm-wi-toggle, .cfm-qr-expand-arrow",
             )
           )
             return;
@@ -1545,7 +1545,9 @@ jQuery(async () => {
                         ? "🎨 "
                         : data.type === "background"
                           ? "🖼️ "
-                          : "👤 ") + (data.name || "");
+                          : data.type === "quickreply"
+                            ? "💬 "
+                            : "👤 ") + (data.name || "");
             }
             g.style.left = sx + "px";
             g.style.top = sy - 50 + "px";
@@ -1847,6 +1849,7 @@ jQuery(async () => {
           else if (resType === "themes") renderThemesView();
           else if (resType === "backgrounds") renderBackgroundsView();
           else if (resType === "personas") renderPersonasView();
+          else if (resType === "quickreply") renderQRView();
         } else if (!target && rightList) {
           const selFolder =
             resType === "presets"
@@ -1878,6 +1881,7 @@ jQuery(async () => {
               else if (resType === "themes") renderThemesView();
               else if (resType === "backgrounds") renderBackgroundsView();
               else if (resType === "personas") renderPersonasView();
+              else if (resType === "quickreply") renderQRView();
             }
           }
         }
@@ -2073,6 +2077,46 @@ jQuery(async () => {
               ? `已将 ${names.length} 个User移入「${getResFolderDisplayName("personas", selectedPersonaFolder)}」`
               : `已将「${d.name}」移入「${getResFolderDisplayName("personas", selectedPersonaFolder)}」`,
           );
+        }
+      } else if (d.type === "quickreply") {
+        const qrNames =
+          d.multiSelect && d.selectedIds ? d.selectedIds : [d.name];
+        const qrCount = qrNames.length;
+        if (uncatNode) {
+          qrNames.forEach((n) => setItemGroup("quickreply", n, null));
+          toastr.success(
+            qrCount > 1
+              ? `已将 ${qrCount} 个快速回复集移出文件夹`
+              : `已将「${d.name}」移出文件夹`,
+          );
+          if (d.multiSelect) clearMultiSelect();
+          renderQRView();
+        } else if (targetId) {
+          qrNames.forEach((n) => setItemGroup("quickreply", n, targetId));
+          toastr.success(
+            qrCount > 1
+              ? `已将 ${qrCount} 个快速回复集移入「${getResFolderDisplayName("quickreply", targetId)}」`
+              : `已将「${d.name}」移入「${getResFolderDisplayName("quickreply", targetId)}」`,
+          );
+          if (d.multiSelect) clearMultiSelect();
+          renderQRView();
+        } else if (
+          !target &&
+          rightList &&
+          selectedQrFolder &&
+          selectedQrFolder !== "__ungrouped__" &&
+          selectedQrFolder !== "__favorites__"
+        ) {
+          qrNames.forEach((n) =>
+            setItemGroup("quickreply", n, selectedQrFolder),
+          );
+          toastr.success(
+            qrCount > 1
+              ? `已将 ${qrCount} 个快速回复集移入「${getResFolderDisplayName("quickreply", selectedQrFolder)}」`
+              : `已将「${d.name}」移入「${getResFolderDisplayName("quickreply", selectedQrFolder)}」`,
+          );
+          if (d.multiSelect) clearMultiSelect();
+          renderQRView();
         }
       }
     },
@@ -12950,7 +12994,7 @@ jQuery(async () => {
                 </div>
                 <div class="cfm-global-search-bar" id="cfm-regex-search-bar" style="display:none;">
                     <div class="cfm-search-input-wrapper">
-                        <input type="text" class="cfm-global-search-input" id="cfm-regex-global-search" placeholder="搜索正则脚本..." />
+                        <input type="text" class="cfm-global-search-input" id="cfm-regex-global-search" placeholder="搜索..." />
                         <button class="cfm-search-clear-btn" id="cfm-regex-search-clear" title="清空搜索"><i class="fa-solid fa-xmark"></i></button>
                     </div>
                     <select id="cfm-regex-search-scope" class="cfm-search-select" title="搜索范围">
@@ -12964,7 +13008,7 @@ jQuery(async () => {
                 </div>
                 <div class="cfm-global-search-bar" id="cfm-qr-search-bar" style="display:none;">
                     <div class="cfm-search-input-wrapper">
-                        <input type="text" class="cfm-global-search-input" id="cfm-qr-global-search" placeholder="搜索快速回复集..." />
+                        <input type="text" class="cfm-global-search-input" id="cfm-qr-global-search" placeholder="搜索..." />
                         <button class="cfm-search-clear-btn" id="cfm-qr-search-clear" title="清空搜索"><i class="fa-solid fa-xmark"></i></button>
                     </div>
                     <select id="cfm-qr-search-scope" class="cfm-search-select" title="搜索范围">
@@ -15732,7 +15776,7 @@ jQuery(async () => {
       const type = $(this).val();
       $("#cfm-qr-global-search").attr(
         "placeholder",
-        type === "folder" ? "搜索文件夹..." : "搜索快速回复集...",
+        type === "folder" ? "搜索文件夹..." : "搜索...",
       );
       executeQrSearch();
     });
@@ -15817,7 +15861,7 @@ jQuery(async () => {
       const type = $(this).val();
       $("#cfm-regex-global-search").attr(
         "placeholder",
-        type === "folder" ? "搜索文件夹..." : "搜索正则脚本...",
+        type === "folder" ? "搜索文件夹..." : "搜索...",
       );
       executeRegexSearch();
     });
@@ -26674,7 +26718,7 @@ jQuery(async () => {
             <label>包含的快速回复集</label>
             <div class="cfm-wi-preset-edit-search">
               <select class="cfm-edit-input" id="cfm-qr-preset-edit-folder-filter">${buildQrFilterOptions()}</select>
-              <input type="text" class="cfm-edit-input" id="cfm-qr-preset-edit-filter" placeholder="搜索快速回复集...">
+              <input type="text" class="cfm-edit-input" id="cfm-qr-preset-edit-filter" placeholder="搜索...">
             </div>
             <div class="cfm-wi-preset-edit-list">${setsHtml}</div>
           </div>
@@ -28462,7 +28506,7 @@ jQuery(async () => {
             <label>包含的正则脚本</label>
             <div class="cfm-wi-preset-edit-search">
               <select class="cfm-edit-input" id="cfm-regex-preset-edit-folder-filter">${buildRegexFilterOptions()}</select>
-              <input type="text" class="cfm-edit-input" id="cfm-regex-preset-edit-filter" placeholder="搜索正则脚本...">
+              <input type="text" class="cfm-edit-input" id="cfm-regex-preset-edit-filter" placeholder="搜索...">
             </div>
             <div class="cfm-wi-preset-edit-list">${scriptsHtml}</div>
           </div>
