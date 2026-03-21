@@ -36,9 +36,20 @@
   background-position: center center;
   font-size: 0px !important;
 }
-#cfm-topbar-button .drawer-icon.cfm-custom-icon::before {
+/* 元素本身模式：隐藏 ::before 伪元素（避免美化主题的 ::before 遮挡） */
+#cfm-topbar-button
+  .drawer-icon.cfm-custom-icon:not(.cfm-custom-icon-before)::before {
   display: none !important;
   content: "" !important;
+}
+/* ::before 伪元素模式：隐藏FA图标文字，通过 ::before 显示自定义图标 */
+#cfm-topbar-button .drawer-icon.cfm-custom-icon.cfm-custom-icon-before {
+  font-size: 0px !important;
+  color: transparent !important;
+  background-image: none !important;
+  overflow: visible !important;
+  min-width: 40px !important;
+  min-height: 40px !important;
 }
 /* 当主题对 .drawer-toggle 设置了自定义图标时，确保可点击 */
 #cfm-topbar-button .drawer-toggle.cfm-custom-toggle-icon {

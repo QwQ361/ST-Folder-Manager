@@ -2446,21 +2446,18 @@ jQuery(async () => {
       );
       if (!neighborIcon) continue;
       // 跳过处于打开状态的邻居按钮图标
-      // 打开面板时 drawer-icon 会从 closedIcon 变为 openIcon，
-      // 美化主题可能对两种状态设置了不同的 background-image，
-      // 此时读取到的是 openIcon 的图标，不应用于 CFM 按钮
       if (
         cls === ".drawer-icon" &&
         neighborIcon.classList.contains("openIcon")
       ) {
         continue;
       }
+      // 先检测元素本身的 background-image
       const computed = window.getComputedStyle(neighborIcon);
       const bgImage = computed.backgroundImage;
       if (bgImage && bgImage !== "none" && bgImage !== "") {
         const extraStyles = {};
         if (cls === ".drawer-toggle") {
-          // 从 .drawer-toggle 复制关键样式属性
           const w = computed.width;
           const h = computed.height;
           const bgSize = computed.backgroundSize;
@@ -2477,6 +2474,24 @@ jQuery(async () => {
           if (color) extraStyles.color = color;
         }
         return { cssUrl: bgImage, target: cls, styles: extraStyles };
+      }
+      // 再检测 ::before 伪元素的 background-image
+      // 某些美化主题通过 .drawer-icon::before 设置图标
+      const beforeComputed = window.getComputedStyle(neighborIcon, "::before");
+      const beforeBgImage = beforeComputed.backgroundImage;
+      if (beforeBgImage && beforeBgImage !== "none" && beforeBgImage !== "") {
+        const extraStyles = {};
+        const w = beforeComputed.width;
+        const h = beforeComputed.height;
+        const bgSize = beforeComputed.backgroundSize;
+        const bgRepeat = beforeComputed.backgroundRepeat;
+        const bgPos = beforeComputed.backgroundPosition;
+        if (w) extraStyles.width = w;
+        if (h) extraStyles.height = h;
+        if (bgSize) extraStyles.backgroundSize = bgSize;
+        if (bgRepeat) extraStyles.backgroundRepeat = bgRepeat;
+        if (bgPos) extraStyles.backgroundPosition = bgPos;
+        return { cssUrl: beforeBgImage, target: cls + "::before", styles: extraStyles };
       }
     }
     return null;
@@ -2508,9 +2523,10 @@ jQuery(async () => {
           )
             continue;
           // 放宽匹配：任何包含 #xxx 和 .drawer-icon 或 .drawer-toggle 的选择器
+          // 同时支持 ::before 伪元素（某些美化主题通过 ::before 设置图标）
           // 支持逗号分隔的多选择器（matchAll 全局匹配）
           const matches = rule.selectorText.matchAll(
-            /#([\w-]+)(?:\s+|.*?)(?:\.drawer-icon|\.drawer-toggle)/g,
+            /#([\w-]+)(?:\s+|.*?)(?:\.drawer-icon|\.drawer-toggle)(?:::before)?/g,
           );
           for (const match of matches) {
             iconMap[match[1]] = rule.style.backgroundImage;
@@ -2538,10 +2554,18 @@ jQuery(async () => {
         if (cls === ".drawer-icon" && iconEl.classList.contains("openIcon")) {
           continue;
         }
+        // 先检测元素本身
         const computed = window.getComputedStyle(iconEl);
         const bgImage = computed.backgroundImage;
         if (bgImage && bgImage !== "none" && bgImage !== "") {
           iconMap[btnId] = bgImage;
+          break;
+        }
+        // 再检测 ::before 伪元素
+        const beforeComputed = window.getComputedStyle(iconEl, "::before");
+        const beforeBgImage = beforeComputed.backgroundImage;
+        if (beforeBgImage && beforeBgImage !== "none" && beforeBgImage !== "") {
+          iconMap[btnId] = beforeBgImage;
           break;
         }
       }
@@ -2571,17 +2595,57 @@ jQuery(async () => {
   /**
    * 应用自定义图标到顶栏按钮
    * @param {string} cssUrl - CSS url() 格式的图标链接
-   * @param {string} [targetCls] - 图标来源元素类名（".drawer-icon" 或 ".drawer-toggle"）
+   * @param {string} [targetCls] - 图标来源元素类名（".drawer-icon"、".drawer-toggle" 或含 "::before" 的伪元素标识）
    * @param {Object} [extraStyles] - 需要额外复制的样式属性
    */
   function applyCustomIcon(cssUrl, targetCls, extraStyles) {
     const icon = $("#cfm-topbar-button .drawer-icon");
     if (icon.length === 0) return;
+
+    // ★ 先统一清理所有旧模式的残留状态，再应用新模式
+    // 清理 ::before 模式残留
+    icon.removeClass("cfm-custom-icon-before");
+    $("#cfm-dynamic-icon-style").remove();
+    // 清理元素本身 background-image 残留
+    icon.css("background-image", "");
+    // 清理 .drawer-toggle 模式残留
+    const toggle = $("#cfm-topbar-button .drawer-toggle");
+    if (toggle.length > 0) {
+      toggle.removeClass("cfm-custom-toggle-icon");
+      toggle.css({
+        "background-image": "",
+        "background-repeat": "",
+        "background-position": "",
+        "background-size": "",
+        width: "",
+        height: "",
+        color: "",
+      });
+    }
+
+    // 标记为自定义图标模式
     icon.addClass("cfm-custom-icon");
-    icon.css("background-image", cssUrl);
-    // 如果图标来源是 .drawer-toggle，还需要将样式复制到插件的 .drawer-toggle
-    if (targetCls === ".drawer-toggle" && extraStyles) {
-      const toggle = $("#cfm-topbar-button .drawer-toggle");
+
+    // 检测是否是 ::before 伪元素模式
+    const isPseudoBefore = targetCls && targetCls.includes("::before");
+
+    if (isPseudoBefore) {
+      // ::before 伪元素模式：通过动态 <style> 注入伪元素样式
+      // 美化主题的通用规则 .drawer-icon::before 已为所有 .drawer-icon 设置了尺寸等样式，
+      // 我们只需要设置 background-image 即可，其他属性让美化主题的规则自然生效
+      icon.addClass("cfm-custom-icon-before");
+      const styleEl = $(
+        `<style id="cfm-dynamic-icon-style">
+          #cfm-topbar-button .drawer-icon.cfm-custom-icon-before::before {
+            content: '' !important;
+            display: block !important;
+            background-image: ${cssUrl} !important;
+          }
+        </style>`,
+      );
+      $("head").append(styleEl);
+    } else if (targetCls === ".drawer-toggle" && extraStyles) {
+      // .drawer-toggle 模式：将图标应用到 .drawer-toggle 元素
       if (toggle.length > 0) {
         toggle.addClass("cfm-custom-toggle-icon");
         toggle.css({
@@ -2594,6 +2658,9 @@ jQuery(async () => {
           color: "transparent",
         });
       }
+    } else {
+      // .drawer-icon 元素本身模式：直接设置 background-image
+      icon.css("background-image", cssUrl);
     }
   }
 
@@ -2603,8 +2670,10 @@ jQuery(async () => {
   function clearCustomIcon() {
     const icon = $("#cfm-topbar-button .drawer-icon");
     if (icon.length === 0) return;
-    icon.removeClass("cfm-custom-icon");
+    icon.removeClass("cfm-custom-icon cfm-custom-icon-before");
     icon.css("background-image", "");
+    // 移除动态注入的 ::before 样式
+    $("#cfm-dynamic-icon-style").remove();
     // 清除 .drawer-toggle 上的自定义样式
     const toggle = $("#cfm-topbar-button .drawer-toggle");
     if (toggle.length > 0) {
@@ -3098,9 +3167,6 @@ jQuery(async () => {
     getContext().saveSettingsDebounced();
     return idx < 0;
   }
-
-  // 预设/世界书的移动/复制模式
-  let resCopyMode = false;
 
   // 预设/世界书/主题/背景排序状态
   let presetLeftSortMode = null;
@@ -13213,14 +13279,15 @@ jQuery(async () => {
       popup.find("#cfm-regex-search-bar").toggle(initialTab === "regex");
       popup.find("#cfm-qr-search-bar").toggle(initialTab === "quickreply");
       // 切换header按钮
-      if (initialTab === "regex" || initialTab === "quickreply") {
-        popup.find("#cfm-btn-copymode").hide();
-      } else {
+      if (initialTab === "chars") {
         const btn = popup.find("#cfm-btn-copymode");
-        btn.toggleClass("cfm-copymode-active", resCopyMode);
+        btn.show();
+        btn.toggleClass("cfm-copymode-active", cfmCopyMode);
         btn.html(
-          `<i class="fa-solid fa-${resCopyMode ? "copy" : "arrows-turn-to-dots"}"></i> ${resCopyMode ? "复制" : "移动"}`,
+          `<i class="fa-solid fa-${cfmCopyMode ? "copy" : "arrows-turn-to-dots"}"></i> ${cfmCopyMode ? "复制" : "移动"}`,
         );
+      } else {
+        popup.find("#cfm-btn-copymode").hide();
       }
     }
 
@@ -13261,10 +13328,8 @@ jQuery(async () => {
       popup.find("#cfm-personas-view").toggle(tab === "personas");
       popup.find("#cfm-regex-view").toggle(tab === "regex");
       popup.find("#cfm-qr-view").toggle(tab === "quickreply");
-      // 切换header按钮可见性 - 正则/QR标签页隐藏移动/复制按钮
-      if (tab === "regex" || tab === "quickreply") {
-        popup.find("#cfm-btn-copymode").hide();
-      } else if (tab === "chars") {
+      // 切换header按钮可见性
+      if (tab === "chars") {
         popup.find("#cfm-btn-copymode").show();
         const btn = $("#cfm-btn-copymode");
         btn.toggleClass("cfm-copymode-active", cfmCopyMode);
@@ -13272,12 +13337,7 @@ jQuery(async () => {
           `<i class="fa-solid fa-${cfmCopyMode ? "copy" : "arrows-turn-to-dots"}"></i> ${cfmCopyMode ? "复制" : "移动"}`,
         );
       } else {
-        popup.find("#cfm-btn-copymode").show();
-        const btn = $("#cfm-btn-copymode");
-        btn.toggleClass("cfm-copymode-active", resCopyMode);
-        btn.html(
-          `<i class="fa-solid fa-${resCopyMode ? "copy" : "arrows-turn-to-dots"}"></i> ${resCopyMode ? "复制" : "移动"}`,
-        );
+        popup.find("#cfm-btn-copymode").hide();
       }
       // 切换搜索栏
       popup.find("#cfm-global-search-bar").toggle(tab === "chars");
@@ -13480,17 +13540,6 @@ jQuery(async () => {
           `<i class="fa-solid fa-${cfmCopyMode ? "copy" : "arrows-turn-to-dots"}"></i> ${cfmCopyMode ? "复制" : "移动"}`,
         );
         toastr.info(cfmCopyMode ? "已切换为复制模式" : "已切换为移动模式", "", {
-          timeOut: 1500,
-        });
-      } else {
-        resCopyMode = !resCopyMode;
-        const btn = $("#cfm-btn-copymode");
-        btn.toggleClass("cfm-copymode-active", resCopyMode);
-        btn.attr("title", resCopyMode ? "当前：复制模式" : "当前：移动模式");
-        btn.html(
-          `<i class="fa-solid fa-${resCopyMode ? "copy" : "arrows-turn-to-dots"}"></i> ${resCopyMode ? "复制" : "移动"}`,
-        );
-        toastr.info(resCopyMode ? "已切换为复制模式" : "已切换为移动模式", "", {
           timeOut: 1500,
         });
       }
@@ -14802,7 +14851,10 @@ jQuery(async () => {
               try {
                 await api.deleteSet(setName);
               } catch (delErr) {
-                console.warn(`[CFM] api.deleteSet 失败，回退到直接删除`, delErr);
+                console.warn(
+                  `[CFM] api.deleteSet 失败，回退到直接删除`,
+                  delErr,
+                );
                 await fetch("/api/quick-replies/delete", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
@@ -18259,9 +18311,7 @@ jQuery(async () => {
           $("#cfm-overlay")
             .find("#cfm-qr-view")
             .toggle(tab === "quickreply");
-          if (tab === "regex" || tab === "quickreply") {
-            $("#cfm-overlay").find("#cfm-btn-copymode").hide();
-          } else if (tab === "chars") {
+          if (tab === "chars") {
             $("#cfm-overlay").find("#cfm-btn-copymode").show();
             const btn = $("#cfm-btn-copymode");
             btn.toggleClass("cfm-copymode-active", cfmCopyMode);
@@ -18269,12 +18319,7 @@ jQuery(async () => {
               `<i class="fa-solid fa-${cfmCopyMode ? "copy" : "arrows-turn-to-dots"}"></i> ${cfmCopyMode ? "复制" : "移动"}`,
             );
           } else {
-            $("#cfm-overlay").find("#cfm-btn-copymode").show();
-            const btn = $("#cfm-btn-copymode");
-            btn.toggleClass("cfm-copymode-active", resCopyMode);
-            btn.html(
-              `<i class="fa-solid fa-${resCopyMode ? "copy" : "arrows-turn-to-dots"}"></i> ${resCopyMode ? "复制" : "移动"}`,
-            );
+            $("#cfm-overlay").find("#cfm-btn-copymode").hide();
           }
           $("#cfm-overlay")
             .find("#cfm-global-search-bar")
