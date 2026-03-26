@@ -2489,6 +2489,9 @@ jQuery(async () => {
     );
     $("#cfm-topbar-button").remove();
     $("#cfm-wand-button").remove();
+    // 清理主题绑定背景的监听事件，避免重复绑定
+    const themesSelect = document.getElementById("themes");
+    if (themesSelect) $(themesSelect).off("change.cfmBgBinding");
   }
   function switchButtonMode(newMode) {
     destroyAllButtons();
@@ -2496,12 +2499,16 @@ jQuery(async () => {
     if (newMode === "topbar") createTopbarButton();
     else if (newMode === "wand") createWandButton();
     else createFloatingButton();
+    // 重新设置主题绑定背景的监听（所有按钮模式都需要）
+    setTimeout(() => setupThemeBgBindingListener(), 500);
   }
   function initButton() {
     const mode = getButtonMode();
     if (mode === "topbar") createTopbarButton();
     else if (mode === "wand") createWandButton();
     else createFloatingButton();
+    // 监听主题切换，自动切换绑定的背景（所有按钮模式都需要）
+    setTimeout(() => setupThemeBgBindingListener(), 500);
   }
 
   function createTopbarButton() {
@@ -2520,10 +2527,8 @@ jQuery(async () => {
     // 创建按钮后自动检测并应用自定义图标（延迟等待美化主题样式加载）
     setTimeout(() => {
       applyTopbarIconFromConfig();
-      // 启动主题切换自动监听
+      // 启动主题切换自动监听（仅topbar模式需要，用于图标美化适配）
       setupThemeChangeObserver();
-      // 监听主题切换，自动切换绑定的背景
-      setupThemeBgBindingListener();
     }, 500);
   }
 
