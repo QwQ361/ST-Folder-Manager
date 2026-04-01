@@ -35,6 +35,8 @@ jQuery(async () => {
       extension_settings[extensionName].bgOrientations = {};
     if (!extension_settings[extensionName].themeBackgroundBindings)
       extension_settings[extensionName].themeBackgroundBindings = {};
+    if (!extension_settings[extensionName].worldInfoEntryDetailSortMode)
+      extension_settings[extensionName].worldInfoEntryDetailSortMode = "custom";
     // 默认背景图（切换到没有绑定背景的主题时使用，空字符串=不设置）
     if (extension_settings[extensionName].defaultBackground === undefined)
       extension_settings[extensionName].defaultBackground = "";
@@ -287,60 +289,201 @@ jQuery(async () => {
     getContext().saveSettingsDebounced();
   }
 
+  async function flushFolderAssignmentSettings() {
+    const context = getContext();
+    try {
+      if (context && typeof context.saveSettings === "function") {
+        await context.saveSettings();
+        return;
+      }
+    } catch (err) {
+      console.warn(
+        "[CFM] context.saveSettings 持久化失败，回退到其他保存方式",
+        err,
+      );
+    }
+
+    try {
+      if (typeof saveSettings === "function") {
+        await saveSettings();
+        return;
+      }
+    } catch (err) {
+      console.warn("[CFM] saveSettings 持久化失败，回退到 debounce 保存", err);
+    }
+
+    if (context && typeof context.saveSettingsDebounced === "function") {
+      context.saveSettingsDebounced();
+    }
+  }
+
   // 获取当前API的预设列表
   function getCurrentPresets() {
     const pm = getContext().getPresetManager();
     if (!pm || !pm.select) return [];
-    const presets = [];
+    const presetMap = new Map();
     pm.select.find("option").each(function () {
       const v = $(this).val();
       const t = $(this).text();
-      if (v !== "" && v !== undefined) presets.push({ value: v, name: t });
+      if (v !== "" && v !== undefined && !presetMap.has(t)) {
+        presetMap.set(t, { value: v, name: t });
+      }
     });
     // 如果原生过滤激活，被 detach 的 option 也要加入（防止清理逻辑误删分组映射）
     if (_presetDetachedOptions && _presetDetachedOptions.length > 0) {
       for (const opt of _presetDetachedOptions) {
         const v = $(opt).val();
         const t = $(opt).text();
-        if (v !== "" && v !== undefined) presets.push({ value: v, name: t });
+        if (v !== "" && v !== undefined && !presetMap.has(t)) {
+          presetMap.set(t, { value: v, name: t });
+        }
       }
     }
-    return presets;
+    const orderedNames = syncPresetCustomOrder([...presetMap.values()]);
+    return orderedNames.map((name) => presetMap.get(name)).filter(Boolean);
   }
   function getCurrentPresetApiId() {
     const pm = getContext().getPresetManager();
     return pm ? pm.apiId : "unknown";
   }
+
+  function getPresetCustomOrderStore() {
+    ensureSettings();
+    const settings = extension_settings[extensionName];
+    if (!Array.isArray(settings.presetCustomOrder)) {
+      settings.presetCustomOrder = [];
+    }
+    return settings.presetCustomOrder;
+  }
+
+  function syncPresetCustomOrder(presets = []) {
+    const normalizedItems = (Array.isArray(presets) ? presets : []).filter(
+      (item) => item && typeof item === "object",
+    );
+    const normalizedNames = [
+      ...new Set(
+        normalizedItems
+          .map((item) => String(item.name || "").trim())
+          .filter(Boolean),
+      ),
+    ];
+    const currentOrder = getPresetCustomOrderStore();
+    const normalizedOrder = [
+      ...new Set(
+        currentOrder.map((name) => String(name || "").trim()).filter(Boolean),
+      ),
+    ];
+    const nextOrder = normalizedOrder.filter((name) =>
+      normalizedNames.includes(name),
+    );
+    for (const name of normalizedNames) {
+      if (!nextOrder.includes(name)) nextOrder.push(name);
+    }
+    const changed =
+      nextOrder.length !== currentOrder.length ||
+      nextOrder.some(
+        (name, idx) => name !== String(currentOrder[idx] || "").trim(),
+      );
+    if (changed) {
+      extension_settings[extensionName].presetCustomOrder = nextOrder;
+      getContext().saveSettingsDebounced();
+    }
+    return nextOrder;
+  }
+
+  function insertPresetAfterInCustomOrder(sourcePresetName, newPresetName) {
+    const sourceName = String(sourcePresetName || "").trim();
+    const targetName = String(newPresetName || "").trim();
+    if (!targetName) return;
+    const order = [...getPresetCustomOrderStore()]
+      .map((name) => String(name || "").trim())
+      .filter(Boolean);
+    const filtered = order.filter((name) => name !== targetName);
+    const sourceIndex = filtered.indexOf(sourceName);
+    if (sourceIndex === -1) filtered.push(targetName);
+    else filtered.splice(sourceIndex + 1, 0, targetName);
+    extension_settings[extensionName].presetCustomOrder = filtered;
+    getContext().saveSettingsDebounced();
+  }
+
+  function removePresetFromCustomOrder(presetName) {
+    const targetName = String(presetName || "").trim();
+    if (!targetName) return;
+    const order = getPresetCustomOrderStore();
+    const nextOrder = order.filter(
+      (name) => String(name || "").trim() !== targetName,
+    );
+    if (nextOrder.length === order.length) return;
+    extension_settings[extensionName].presetCustomOrder = nextOrder;
+    getContext().saveSettingsDebounced();
+  }
+
+  function buildDuplicatedPresetName(baseName) {
+    const normalizedBase = String(baseName || "").trim() || "未命名预设";
+    const existingNames = new Set(
+      getCurrentPresets()
+        .map((preset) => String(preset?.name || "").trim())
+        .filter(Boolean),
+    );
+    let nextName = `${normalizedBase} - 副本`;
+    let counter = 2;
+    while (existingNames.has(nextName)) {
+      nextName = `${normalizedBase} - 副本 ${counter}`;
+      counter++;
+    }
+    return nextName;
+  }
+
   function applyPreset(value) {
     const pm = getContext().getPresetManager();
     if (pm && pm.select) {
       pm.select.val(value).trigger("change");
+      setTimeout(() => {
+        refreshActiveViewerStateAfterSelectionChange({ preset: true });
+      }, 0);
     }
+  }
+  function getCurrentPresetName() {
+    const pm = getContext().getPresetManager();
+    if (!pm || !pm.select) return "";
+    const currentValue = pm.select.val();
+    const currentPreset = getCurrentPresets().find(
+      (p) => String(p.value) === String(currentValue),
+    );
+    return currentPreset?.name || "";
+  }
+  function isCurrentAppliedPreset(presetName) {
+    return String(presetName || "") === String(getCurrentPresetName() || "");
+  }
+  function ensureCurrentAppliedPreset(presetName, actionLabel = "操作") {
+    if (isCurrentAppliedPreset(presetName)) return true;
+    const currentPresetName = getCurrentPresetName();
+    if (currentPresetName) {
+      toastr.warning(
+        `${actionLabel}仅支持当前应用的预设：${currentPresetName}`,
+      );
+    } else {
+      toastr.warning(`请先应用一个预设后再执行${actionLabel}`);
+    }
+    return false;
   }
 
   // 获取世界书列表（带缓存，优先从DOM读取避免网络延迟）
   let _worldInfoNamesCache = null;
   let _worldInfoPreloadPromise = null;
-  async function getWorldInfoNames(forceRefresh) {
-    if (_worldInfoNamesCache && !forceRefresh) return _worldInfoNamesCache;
-    // forceRefresh 时直接走API获取最新数据（导入后DOM可能未更新）
-    if (forceRefresh) {
-      try {
-        const resp = await fetch("/api/settings/get", {
-          method: "POST",
-          headers: getContext().getRequestHeaders(),
-          body: JSON.stringify({}),
-        });
-        if (resp.ok) {
-          const data = await resp.json();
-          _worldInfoNamesCache = data.world_names || [];
-          return _worldInfoNamesCache;
-        }
-      } catch (e) {
-        console.error("[CFM] 强制刷新世界书列表失败", e);
-      }
+  function normalizeWorldInfoNameList(names) {
+    const result = [];
+    const seen = new Set();
+    for (const rawName of Array.isArray(names) ? names : []) {
+      const name = String(rawName || "").trim();
+      if (!name || name === "--- 选择以编辑 ---" || seen.has(name)) continue;
+      seen.add(name);
+      result.push(name);
     }
-    // 非强制刷新时优先从DOM读取（同步，无延迟）
+    return result;
+  }
+
+  function collectWorldInfoNamesFromDom() {
     const names = [];
     $("#world_editor_select option").each(function () {
       const v = $(this).val();
@@ -355,6 +498,35 @@ jQuery(async () => {
         if (v !== "" && t !== "--- 选择以编辑 ---") names.push(t);
       }
     }
+    return normalizeWorldInfoNameList(names);
+  }
+
+  async function getWorldInfoNames(forceRefresh) {
+    if (Array.isArray(_worldInfoNamesCache) && !forceRefresh) {
+      _worldInfoNamesCache = normalizeWorldInfoNameList(_worldInfoNamesCache);
+      return _worldInfoNamesCache;
+    }
+    // forceRefresh 时直接走API获取最新数据（导入后DOM可能未更新）
+    if (forceRefresh) {
+      try {
+        const resp = await fetch("/api/settings/get", {
+          method: "POST",
+          headers: getContext().getRequestHeaders(),
+          body: JSON.stringify({}),
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          _worldInfoNamesCache = normalizeWorldInfoNameList(
+            data.world_names || [],
+          );
+          return _worldInfoNamesCache;
+        }
+      } catch (e) {
+        console.error("[CFM] 强制刷新世界书列表失败", e);
+      }
+    }
+    // 非强制刷新时优先从DOM读取（同步，无延迟）
+    const names = collectWorldInfoNamesFromDom();
     if (names.length > 0) {
       _worldInfoNamesCache = names;
       return names;
@@ -368,7 +540,9 @@ jQuery(async () => {
       });
       if (resp.ok) {
         const data = await resp.json();
-        _worldInfoNamesCache = data.world_names || [];
+        _worldInfoNamesCache = normalizeWorldInfoNameList(
+          data.world_names || [],
+        );
         return _worldInfoNamesCache;
       }
     } catch (e) {}
@@ -804,9 +978,27 @@ jQuery(async () => {
     // 当前已应用的正则分组索引集合（用于应用/取消追踪）
     if (!extension_settings[extensionName]._regexAppliedPresetIndices)
       extension_settings[extensionName]._regexAppliedPresetIndices = [];
+    // 预设详情激活分组：{ [presetName]: [{name, fields}] }
+    if (!extension_settings[extensionName].presetDetailActivePresets)
+      extension_settings[extensionName].presetDetailActivePresets = {};
+    // 当前已应用的预设详情分组索引集合：{ [presetName]: number[] }
+    if (!extension_settings[extensionName]._presetDetailAppliedPresetIndices)
+      extension_settings[extensionName]._presetDetailAppliedPresetIndices = {};
     // 置顶聊天列表：[{ avatar, chatFileName }]
     if (!Array.isArray(extension_settings[extensionName].pinnedChats))
       extension_settings[extensionName].pinnedChats = [];
+    // User 聊天绑定记录：{ [personaAvatarId]: ["charAvatar::chatFileName"] }
+    if (
+      !extension_settings[extensionName].personaChatBindings ||
+      typeof extension_settings[extensionName].personaChatBindings !== "object"
+    )
+      extension_settings[extensionName].personaChatBindings = {};
+    // User 自定义顺序：用于默认排序下保持手动/复制插入后的相对顺序
+    if (!Array.isArray(extension_settings[extensionName].personaCustomOrder))
+      extension_settings[extensionName].personaCustomOrder = [];
+    // 预设自定义顺序：用于默认排序下保持手动/复制插入后的相对顺序
+    if (!Array.isArray(extension_settings[extensionName].presetCustomOrder))
+      extension_settings[extensionName].presetCustomOrder = [];
   }
   ensureSettings();
 
@@ -823,6 +1015,8 @@ jQuery(async () => {
   ];
   const CFM_ACTION_META = {
     import: { label: "导入", icon: "fa-file-import" },
+    create: { label: "新增", icon: "fa-plus" },
+    transfer: { label: "互通", icon: "fa-right-left" },
     chatmode: { label: "显示聊天记录", icon: "fa-comments" },
     regexmode: { label: "查看正则", icon: "fa-code" },
     quickedit: { label: "快速编辑", icon: "fa-pen-to-square" },
@@ -898,7 +1092,7 @@ jQuery(async () => {
           "delete",
         ],
         personas: ["import", "note", "export", "delete"],
-        regex: ["import", "export", "delete", "sort"],
+        regex: ["import", "create", "transfer", "export", "delete", "sort"],
         quickreply: ["import", "note", "rename", "export", "delete"],
       };
       const refOrder = defaultOrder[tabId] || Object.keys(knownIds);
@@ -982,6 +1176,8 @@ jQuery(async () => {
     },
     regex: {
       import: "#cfm-import-regex-btn",
+      create: "#cfm-regex-create-btn",
+      transfer: "#cfm-regex-transfer-btn",
       export: "#cfm-export-regex-btn",
       delete: "#cfm-res-delete-regex-btn",
       sort: "#cfm-regex-sort-btn",
@@ -1542,6 +1738,10 @@ jQuery(async () => {
     });
   }
 
+  // ==================== 触摸设备检测 ====================
+  const cfmIsTouchDevice = () =>
+    "ontouchstart" in window || navigator.maxTouchPoints > 0;
+
   // ==================== 移动端触摸拖拽管理器 ====================
   const touchDragMgr = {
     active: false,
@@ -1552,6 +1752,7 @@ jQuery(async () => {
     _startX: 0,
     _startY: 0,
     _lastTarget: null,
+    _touchEnded: false,
 
     /** 为元素注册触摸拖拽（长按500ms启动） */
     bind(el, getDataFn) {
@@ -1565,7 +1766,7 @@ jQuery(async () => {
           if (mgr.active) return;
           if (
             e.target.closest(
-              ".cfm-row-star, .cfm-tnode-arrow, .cfm-row-bglink-btn, .cfm-row-note-btn, .cfm-row-rename-btn, .cfm-row-edit-btn, .cfm-wi-toggle, .cfm-qr-expand-arrow",
+              ".cfm-row-star, .cfm-tnode-arrow, .cfm-row-bglink-btn, .cfm-row-note-btn, .cfm-row-rename-btn, .cfm-row-edit-btn, .cfm-wi-toggle, .cfm-qr-expand-arrow, .cfm-chat-toggle, .cfm-regex-toggle, .cfm-char-detail-toggle, .cfm-preset-detail-toggle, .cfm-persona-toggle",
             )
           )
             return;
@@ -1574,8 +1775,12 @@ jQuery(async () => {
           sy = t.clientY;
           mgr._startX = sx;
           mgr._startY = sy;
+          mgr._touchEnded = false;
 
           mgr._timer = setTimeout(() => {
+            mgr._timer = null;
+            // 竞态保护：如果 touchend 已经触发，不再启动拖拽
+            if (mgr._touchEnded) return;
             const data = getDataFn();
             if (!data) return;
             mgr.active = true;
@@ -1640,6 +1845,7 @@ jQuery(async () => {
       dom.addEventListener(
         "touchend",
         (e) => {
+          mgr._touchEnded = true;
           mgr._cancelTimer();
           if (!mgr.active) return;
           e.preventDefault();
@@ -1651,6 +1857,7 @@ jQuery(async () => {
       );
 
       dom.addEventListener("touchcancel", () => {
+        mgr._touchEnded = true;
         mgr._cancelTimer();
         if (mgr.active) mgr._cleanup();
       });
@@ -2595,7 +2802,11 @@ jQuery(async () => {
         if (bgSize) extraStyles.backgroundSize = bgSize;
         if (bgRepeat) extraStyles.backgroundRepeat = bgRepeat;
         if (bgPos) extraStyles.backgroundPosition = bgPos;
-        return { cssUrl: beforeBgImage, target: cls + "::before", styles: extraStyles };
+        return {
+          cssUrl: beforeBgImage,
+          target: cls + "::before",
+          styles: extraStyles,
+        };
       }
     }
     return null;
@@ -3064,11 +3275,13 @@ jQuery(async () => {
     // 移动端：触摸长按拖拽（使用原生事件 + passive:false）
     const btnEl = btn[0];
     let tSx, tSy;
+    let btnTouchEnded = false;
     btnEl.addEventListener(
       "touchstart",
       (e) => {
         hasMoved = false;
         longPressTriggered = false;
+        btnTouchEnded = false;
         const t = e.touches[0];
         tSx = t.clientX;
         tSy = t.clientY;
@@ -3076,6 +3289,9 @@ jQuery(async () => {
         offset.x = t.pageX - pos.left;
         offset.y = t.pageY - pos.top;
         longPressTimer = setTimeout(() => {
+          longPressTimer = null;
+          // 竞态保护：如果 touchend 已经触发，不再启动长按拖拽
+          if (btnTouchEnded) return;
           longPressTriggered = true;
           isDragging = true;
           btn.addClass("cfm-long-press-ready");
@@ -3116,6 +3332,7 @@ jQuery(async () => {
     btnEl.addEventListener(
       "touchend",
       (e) => {
+        btnTouchEnded = true;
         if (longPressTimer) {
           clearTimeout(longPressTimer);
           longPressTimer = null;
@@ -3141,6 +3358,7 @@ jQuery(async () => {
     );
 
     btnEl.addEventListener("touchcancel", () => {
+      btnTouchEnded = true;
       if (longPressTimer) {
         clearTimeout(longPressTimer);
         longPressTimer = null;
@@ -3220,6 +3438,7 @@ jQuery(async () => {
   let selectedQrFolder = null;
   let qrExpandedNodes = new Set();
   let qrItemExpandedSets = new Set(); // 右侧展开的QR集名称
+  let cfmQrLastFocusedSetName = null; // 最近一次操作/展开的QR集名称（用于收起后回定位）
   let presetConfigExpandedNodes = new Set();
   let worldInfoConfigExpandedNodes = new Set();
   let themeConfigExpandedNodes = new Set();
@@ -4706,6 +4925,15 @@ jQuery(async () => {
               // 清理文件夹分配
               const groups = extension_settings[extensionName].presetGroups;
               if (groups && groups[name]) delete groups[name];
+              // 清理备注
+              if (
+                extension_settings[extensionName].presetNotes?.[name] !==
+                undefined
+              )
+                delete extension_settings[extensionName].presetNotes[name];
+              removePresetFromCustomOrder(name);
+              cfmPresetDetailExpandedNames.delete(name);
+              cfmPresetRegexExpandedNames.delete(name);
               // 也从被 detach 的 option 中移除（原生过滤可能已将其 detach）
               if (_presetDetachedOptions && _presetDetachedOptions.length > 0) {
                 _presetDetachedOptions = _presetDetachedOptions.filter(
@@ -4839,6 +5067,13 @@ jQuery(async () => {
               // 清理文件夹分配
               const groups = extension_settings[extensionName].personaGroups;
               if (groups && groups[avatarId]) delete groups[avatarId];
+              // 清理聊天绑定记录
+              const chatBindings =
+                extension_settings[extensionName].personaChatBindings;
+              if (chatBindings && chatBindings[avatarId])
+                delete chatBindings[avatarId];
+              // 清理自定义顺序
+              removePersonaFromCustomOrder(avatarId);
               // 清理备注
               const notes = extension_settings[extensionName].personaNotes;
               if (notes && notes[avatarId]) delete notes[avatarId];
@@ -4899,15 +5134,20 @@ jQuery(async () => {
             const QRS =
               typeof globalThis !== "undefined" && globalThis.QuickReplySet;
             let deleted = false;
-            // 优先使用 QuickReplySet 实例的 delete 方法
-            if (QRS && QRS.list) {
+            // 优先使用酒馆原生 quickReplyApi.deleteSet，确保原生列表与运行时状态同步更新
+            if (api && typeof api.deleteSet === "function") {
+              await api.deleteSet(name);
+              deleted = true;
+            }
+            // 兼容旧版 QuickReplySet 实例的 delete 方法
+            if (!deleted && QRS && QRS.list) {
               const set = QRS.list.find((s) => s.name === name);
               if (set && typeof set.delete === "function") {
                 await set.delete();
                 deleted = true;
               }
             }
-            // 后备：直接调用 API
+            // 最后后备：直接调用后端 API
             if (!deleted) {
               const resp = await fetch("/api/quick-replies/delete", {
                 method: "POST",
@@ -4928,6 +5168,24 @@ jQuery(async () => {
               if (Array.isArray(favs)) {
                 const fi = favs.indexOf(name);
                 if (fi !== -1) favs.splice(fi, 1);
+              }
+              // 清理 QR 激活分组中的已删除引用
+              const qrPresets = getQrActivePresets ? getQrActivePresets() : [];
+              for (const qp of qrPresets) {
+                if (Array.isArray(qp.sets)) {
+                  qp.sets = qp.sets.filter((setName) => setName !== name);
+                }
+              }
+              const qrApplied =
+                extension_settings[extensionName]._qrAppliedPresetIndices;
+              if (Array.isArray(qrApplied)) {
+                extension_settings[extensionName]._qrAppliedPresetIndices =
+                  qrApplied.filter(
+                    (idx) =>
+                      qrPresets[idx] &&
+                      Array.isArray(qrPresets[idx].sets) &&
+                      qrPresets[idx].sets.length > 0,
+                  );
               }
               // 清理展开状态
               if (qrItemExpandedSets) qrItemExpandedSets.delete(name);
@@ -4952,6 +5210,24 @@ jQuery(async () => {
               // 清理文件夹分配
               const groups = extension_settings[extensionName].worldInfoGroups;
               if (groups && groups[name]) delete groups[name];
+              // 清理世界书激活分组中的已删除引用
+              const wiPresets = getWiActivePresets ? getWiActivePresets() : [];
+              for (const wp of wiPresets) {
+                if (Array.isArray(wp.books)) {
+                  wp.books = wp.books.filter((bookName) => bookName !== name);
+                }
+              }
+              const wiApplied =
+                extension_settings[extensionName]._wiAppliedPresetIndices;
+              if (Array.isArray(wiApplied)) {
+                extension_settings[extensionName]._wiAppliedPresetIndices =
+                  wiApplied.filter(
+                    (idx) =>
+                      wiPresets[idx] &&
+                      Array.isArray(wiPresets[idx].books) &&
+                      wiPresets[idx].books.length > 0,
+                  );
+              }
               // 从酒馆原生DOM中移除对应option（防止renderWorldInfoView从DOM读到已删除的世界书）
               $("#world_editor_select option")
                 .filter(function () {
@@ -4984,6 +5260,11 @@ jQuery(async () => {
       if (success > 0) {
         toastr.success(
           `已删除 ${success} 个${typeLabel}${fail > 0 ? `，${fail} 个失败` : ""}`,
+          "",
+          {
+            timeOut: 2500,
+            extendedTimeOut: 800,
+          },
         );
         // 保存文件夹分配变更
         getContext().saveSettingsDebounced();
@@ -5209,6 +5490,7 @@ jQuery(async () => {
     dialog.find("#cfm-defbg-clear").on("click touchend", (e) => {
       e.preventDefault();
       e.stopPropagation();
+      if (!window.confirm("确认清除默认背景吗？")) return;
       extension_settings[extensionName].defaultBackground = "";
       getContext().saveSettingsDebounced();
       toastr.info("已清除默认背景");
@@ -5381,6 +5663,7 @@ jQuery(async () => {
         }
       });
       overlay.find(".cfm-edit-popup-clear").on("click", () => {
+        if (!window.confirm("确认清除备注吗？")) return;
         overlay.remove();
         resolve({ note: "", clear: true });
       });
@@ -5705,6 +5988,7 @@ jQuery(async () => {
         }
       });
       overlay.find(".cfm-edit-popup-clear").on("click", () => {
+        if (!window.confirm("确认清除备注吗？")) return;
         overlay.remove();
         resolve({ note: "", orient: "", clear: true });
       });
@@ -6664,6 +6948,7 @@ jQuery(async () => {
         }
       });
       overlay.find(".cfm-edit-popup-clear").on("click", () => {
+        if (!window.confirm("确认清除备注吗？")) return;
         overlay.remove();
         resolve({ note: "", clear: true });
       });
@@ -6855,6 +7140,7 @@ jQuery(async () => {
         }
       });
       overlay.find(".cfm-edit-popup-clear").on("click", () => {
+        if (!window.confirm("确认清除备注吗？")) return;
         overlay.remove();
         resolve({ note: "", clear: true });
       });
@@ -6923,11 +7209,22 @@ jQuery(async () => {
           bound.add(ch.data.extensions.world);
         }
       }
-      // charLore 中所有角色关联的世界书
+      // charLore 中当前角色关联的辅助世界书（只取当前角色，而非所有角色）
       if (worldInfoObj?.charLore && Array.isArray(worldInfoObj.charLore)) {
-        for (const entry of worldInfoObj.charLore) {
-          if (entry.extraBooks && Array.isArray(entry.extraBooks)) {
-            entry.extraBooks.forEach((b) => bound.add(b));
+        // 获取当前角色的 fileName（与酒馆 getCharaFilename 逻辑一致）
+        const characters = ctx.characters || getCharacters();
+        const currentChar =
+          charId !== undefined && charId !== null ? characters[charId] : null;
+        const fileName = currentChar?.avatar?.replace(/\.[^/.]+$/, "") ?? null;
+        if (fileName) {
+          const extraCharLore = worldInfoObj.charLore.find(
+            (e) => e.name === fileName,
+          );
+          if (
+            extraCharLore?.extraBooks &&
+            Array.isArray(extraCharLore.extraBooks)
+          ) {
+            extraCharLore.extraBooks.forEach((b) => bound.add(b));
           }
         }
       }
@@ -6973,32 +7270,127 @@ jQuery(async () => {
     }
   }
 
+  function getExistingWorldInfoNameSet() {
+    const names = [];
+    try {
+      if (Array.isArray(_worldInfoNamesCache)) {
+        for (const name of _worldInfoNamesCache) {
+          const normalizedName = String(name || "").trim();
+          if (normalizedName) names.push(normalizedName);
+        }
+      }
+      $("#world_editor_select option").each(function () {
+        const name = $(this).text().trim();
+        if (name) names.push(name);
+      });
+      $("#world_info option").each(function () {
+        const name = $(this).text().trim();
+        if (name) names.push(name);
+      });
+      if (_worldInfoDetachedOptions && _worldInfoDetachedOptions.length > 0) {
+        for (const opt of _worldInfoDetachedOptions) {
+          const name = $(opt).text().trim();
+          if (name) names.push(name);
+        }
+      }
+    } catch (e) {
+      console.warn("[CFM] 获取世界书列表失败", e);
+    }
+    return new Set(names.filter(Boolean));
+  }
+
+  function filterExistingWorldInfoNames(bookNames, existingNameSet) {
+    const validNameSet = existingNameSet || getExistingWorldInfoNameSet();
+    return Array.from(
+      new Set(
+        (Array.isArray(bookNames) ? bookNames : [])
+          .map((name) => String(name || "").trim())
+          .filter((name) => name && validNameSet.has(name)),
+      ),
+    );
+  }
+
+  function sanitizeWiActivePresetState(save = false) {
+    const presets = extension_settings[extensionName].wiActivePresets || [];
+    const existingNameSet = getExistingWorldInfoNameSet();
+    let presetChanged = false;
+    for (const preset of presets) {
+      if (!preset || typeof preset !== "object") continue;
+      const prevBooks = Array.isArray(preset.books) ? preset.books : [];
+      const nextBooks = filterExistingWorldInfoNames(
+        prevBooks,
+        existingNameSet,
+      );
+      const sameBooks =
+        prevBooks.length === nextBooks.length &&
+        prevBooks.every((name, idx) => name === nextBooks[idx]);
+      if (!sameBooks || !Array.isArray(preset.books)) {
+        preset.books = nextBooks;
+        presetChanged = true;
+      }
+    }
+    const applied = Array.isArray(
+      extension_settings[extensionName]._wiAppliedPresetIndices,
+    )
+      ? extension_settings[extensionName]._wiAppliedPresetIndices
+      : [];
+    const nextApplied = applied.filter(
+      (idx) =>
+        presets[idx] &&
+        Array.isArray(presets[idx].books) &&
+        presets[idx].books.length > 0,
+    );
+    const appliedChanged =
+      applied.length !== nextApplied.length ||
+      applied.some((idx, i) => idx !== nextApplied[i]);
+    if (appliedChanged) {
+      extension_settings[extensionName]._wiAppliedPresetIndices = nextApplied;
+    }
+    if (save && (presetChanged || appliedChanged)) {
+      getContext().saveSettingsDebounced();
+    }
+    return {
+      presets,
+      existingNameSet,
+      changed: presetChanged || appliedChanged,
+    };
+  }
+
   /**
    * 切换世界书的全局激活状态
    * @param {string} name - 世界书名称
    * @param {boolean} activate - true=激活, false=取消激活
    */
   async function toggleWorldInfoActivation(name, activate) {
+    const normalizedName = String(name || "").trim();
+    if (!normalizedName) return false;
+    const existingNameSet = getExistingWorldInfoNameSet();
+    if (!existingNameSet.has(normalizedName)) {
+      console.info(`[CFM] 已跳过不存在的世界书激活切换：${normalizedName}`);
+      return false;
+    }
     try {
       const wiModule = await import("../../../world-info.js");
       const selectedWI = wiModule.selected_world_info;
       const worldNames = wiModule.world_names;
-      const idx = selectedWI.indexOf(name);
+      const idx = selectedWI.indexOf(normalizedName);
       if (activate && idx === -1) {
-        selectedWI.push(name);
+        selectedWI.push(normalizedName);
       } else if (!activate && idx !== -1) {
         selectedWI.splice(idx, 1);
       }
       // 同步 DOM: 更新 #world_info option 的 selected 状态
-      const wiIdx = worldNames.indexOf(name);
+      const wiIdx = worldNames.indexOf(normalizedName);
       if (wiIdx !== -1) {
         $("#world_info")
           .find(`option[value='${wiIdx}']`)
           .prop("selected", activate);
       }
       $("#world_info").trigger("change");
+      return true;
     } catch (e) {
       console.error("[CFM] 切换世界书激活状态失败", e);
+      return false;
     }
   }
 
@@ -7012,17 +7404,28 @@ jQuery(async () => {
       const wiModule = await import("../../../world-info.js");
       const selectedWI = wiModule.selected_world_info;
       const worldNames = wiModule.world_names;
-      const targetSet = new Set(bookNames);
-      // 先取消所有非角色关联的世界书
-      const toRemove = [];
+      const existingNameSet = getExistingWorldInfoNameSet();
+      for (const name of Array.isArray(worldNames) ? worldNames : []) {
+        const normalizedName = String(name || "").trim();
+        if (normalizedName) existingNameSet.add(normalizedName);
+      }
+      const filteredBookNames = filterExistingWorldInfoNames(
+        bookNames,
+        existingNameSet,
+      );
+      const targetSet = new Set(filteredBookNames);
+      // 先取消所有非角色关联的世界书，以及已经不存在的世界书
       for (let i = selectedWI.length - 1; i >= 0; i--) {
-        if (!charBound.has(selectedWI[i]) && !targetSet.has(selectedWI[i])) {
-          toRemove.push(selectedWI[i]);
+        const selectedName = String(selectedWI[i] || "").trim();
+        if (
+          !existingNameSet.has(selectedName) ||
+          (!charBound.has(selectedName) && !targetSet.has(selectedName))
+        ) {
           selectedWI.splice(i, 1);
         }
       }
       // 再激活目标列表中未激活的
-      for (const name of bookNames) {
+      for (const name of filteredBookNames) {
         if (!charBound.has(name) && !selectedWI.includes(name)) {
           selectedWI.push(name);
         }
@@ -7031,7 +7434,7 @@ jQuery(async () => {
       $("#world_info")
         .find("option")
         .each(function () {
-          const optName = $(this).text();
+          const optName = $(this).text().trim();
           if (charBound.has(optName)) return; // 不动角色关联的
           $(this).prop("selected", selectedWI.includes(optName));
         });
@@ -7043,6 +7446,7 @@ jQuery(async () => {
 
   // ==================== 世界书分组预设管理 ====================
   function getWiActivePresets() {
+    sanitizeWiActivePresetState(true);
     return extension_settings[extensionName].wiActivePresets || [];
   }
   function saveWiActivePreset(name, books, scope, bindChars, bindPresets) {
@@ -7129,6 +7533,141 @@ jQuery(async () => {
   }
 
   /**
+   * 获取当前激活的 User avatar 标识
+   */
+  function getCurrentPersonaAvatar() {
+    try {
+      return (
+        $("#user_avatar_block .avatar-container.selected").attr(
+          "data-avatar-id",
+        ) || null
+      );
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
+   * 获取当前聊天文件名（不含扩展名）
+   */
+  function getCurrentChatFileName() {
+    try {
+      const ctx = getContext();
+      const charId = ctx.characterId;
+      if (charId === undefined || charId === null) return null;
+      const characters = ctx.characters || getCharacters();
+      const ch = characters[charId];
+      return ch && typeof ch.chat === "string" && ch.chat ? ch.chat : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
+   * 获取当前聊天绑定键：avatar::chatFileName
+   */
+  function getCurrentChatBindKey() {
+    const avatar = getCurrentCharAvatar();
+    const chatFileName = getCurrentChatFileName();
+    if (!avatar || !chatFileName) return null;
+    return `${avatar}::${chatFileName}`;
+  }
+
+  function makeChatBindKey(charAvatar, chatFileName) {
+    if (!charAvatar || !chatFileName) return null;
+    return `${charAvatar}::${chatFileName}`;
+  }
+
+  function parseChatBindKey(bindKey) {
+    const raw = String(bindKey || "");
+    const sepIdx = raw.indexOf("::");
+    if (sepIdx === -1) return { avatar: "", chatFileName: raw };
+    return {
+      avatar: raw.slice(0, sepIdx),
+      chatFileName: raw.slice(sepIdx + 2),
+    };
+  }
+
+  function getPersonaChatBindingsStore() {
+    ensureSettings();
+    const settings = extension_settings[extensionName];
+    if (
+      !settings.personaChatBindings ||
+      typeof settings.personaChatBindings !== "object"
+    ) {
+      settings.personaChatBindings = {};
+    }
+    return settings.personaChatBindings;
+  }
+
+  function getPersonaChatBindKeys(avatarId, includeBindKey = "") {
+    const store = getPersonaChatBindingsStore();
+    const avatarKey = String(avatarId || "");
+    const saved = Array.isArray(store[avatarKey]) ? [...store[avatarKey]] : [];
+    const chatMeta =
+      getContext().chatMetadata ||
+      window.chat_metadata ||
+      window.chatMetadata ||
+      {};
+    const livePersonaAvatar = String(chatMeta?.persona || "");
+    const liveBindKey =
+      livePersonaAvatar && livePersonaAvatar === avatarKey
+        ? String(getCurrentChatBindKey() || "").trim()
+        : "";
+    const extras = [includeBindKey, liveBindKey]
+      .map((item) => String(item || "").trim())
+      .filter(Boolean);
+
+    for (const extra of extras) {
+      if (!saved.includes(extra)) saved.push(extra);
+    }
+
+    if (saved.length) {
+      store[avatarKey] = [...new Set(saved)];
+    }
+
+    return [...new Set(saved)].filter(Boolean);
+  }
+
+  function syncPersonaChatBindingState(avatarId, bindKey, shouldBind) {
+    if (!avatarId || !bindKey) return;
+    const store = getPersonaChatBindingsStore();
+
+    for (const key of Object.keys(store)) {
+      const nextList = Array.isArray(store[key])
+        ? store[key].filter((item) => item && item !== bindKey)
+        : [];
+      if (nextList.length) store[key] = nextList;
+      else delete store[key];
+    }
+
+    if (shouldBind) {
+      if (!Array.isArray(store[avatarId])) store[avatarId] = [];
+      store[avatarId].push(bindKey);
+      store[avatarId] = [...new Set(store[avatarId])];
+    }
+
+    getContext().saveSettingsDebounced();
+  }
+
+  function buildPersonaChatBindHtml(avatarId, includeBindKey = "") {
+    const bindKeys = getPersonaChatBindKeys(avatarId, includeBindKey);
+    if (!bindKeys.length) return "";
+
+    const chars = getContext().characters || [];
+    return bindKeys
+      .map((bindKey) => {
+        const parsed = parseChatBindKey(bindKey);
+        const ch = chars.find((c) => c.avatar === parsed.avatar);
+        const charName = ch ? ch.name : parsed.avatar || "当前角色";
+        const chatName = parsed.chatFileName || bindKey;
+        const label = `${charName}-${chatName}`;
+        return `<div><span class="cfm-persona-conn-tag" style="margin-left:6px;max-width:100%;white-space:normal;overflow:visible;text-overflow:clip;word-break:break-all;align-items:flex-start;"><i class="fa-solid fa-comments" style="margin-top:2px;flex:0 0 auto;"></i><span title="绑定聊天: ${escapeHtml(label)}">${escapeHtml(label)}</span></span></div>`;
+      })
+      .join("");
+  }
+
+  /**
    * 更新分组的 scope
    * scope: "global"（不自动管理）| "bound"（有绑定，自动管理）
    */
@@ -7140,6 +7679,7 @@ jQuery(async () => {
       if (scope === "global") {
         presets[presetIdx].bindChars = [];
         presets[presetIdx].bindPresets = [];
+        presets[presetIdx].bindChats = [];
       }
       getContext().saveSettingsDebounced();
     }
@@ -7155,6 +7695,21 @@ jQuery(async () => {
     if (!Array.isArray(p.bindChars)) p.bindChars = [];
     if (!p.bindChars.includes(charAvatar)) {
       p.bindChars.push(charAvatar);
+      getContext().saveSettingsDebounced();
+    }
+  }
+
+  /**
+   * 绑定分组到聊天记录
+   */
+  function bindWiPresetToChat(presetIdx, charAvatar, chatFileName) {
+    const presets = getWiActivePresets();
+    const p = presets[presetIdx];
+    const bindKey = makeChatBindKey(charAvatar, chatFileName);
+    if (!p || !bindKey) return;
+    if (!Array.isArray(p.bindChats)) p.bindChats = [];
+    if (!p.bindChats.includes(bindKey)) {
+      p.bindChats.push(bindKey);
       getContext().saveSettingsDebounced();
     }
   }
@@ -7187,6 +7742,17 @@ jQuery(async () => {
     }
   }
 
+  function unbindWiPresetFromChat(presetIdx, bindKey) {
+    const presets = getWiActivePresets();
+    const p = presets[presetIdx];
+    if (!p || !Array.isArray(p.bindChats)) return;
+    const idx = p.bindChats.indexOf(bindKey);
+    if (idx !== -1) {
+      p.bindChats.splice(idx, 1);
+      getContext().saveSettingsDebounced();
+    }
+  }
+
   /**
    * 取消绑定分组与预设
    */
@@ -7202,23 +7768,32 @@ jQuery(async () => {
   }
 
   /**
-   * 获取当前角色/预设应该自动应用的分组列表（含匹配原因）
-   * @returns {{indices: number[], details: Object<number, {charMatch: boolean, presetMatch: boolean}>}}
+   * 获取当前角色/聊天/预设应该自动应用的分组列表（含匹配原因）
+   * @returns {{indices: number[], details: Object<number, {charMatch: boolean, presetMatch: boolean, chatMatch: boolean}>}}
    */
   function getAutoApplyPresetIndices() {
     const presets = getWiActivePresets();
     const currentChar = getCurrentCharAvatar();
     const currentPreset = getCurrentPresetName();
+    const currentChatKey = getCurrentChatBindKey();
     const indices = [];
     const details = {};
     for (let i = 0; i < presets.length; i++) {
       const p = presets[i];
+      if (!p || !Array.isArray(p.books) || p.books.length === 0) continue;
       if (p.scope === "global") continue;
       const hasBindings =
         (p.bindChars && p.bindChars.length > 0) ||
-        (p.bindPresets && p.bindPresets.length > 0);
+        (p.bindPresets && p.bindPresets.length > 0) ||
+        (p.bindChats && p.bindChats.length > 0);
       if (!hasBindings) continue;
+      const chatMatch = !!(
+        currentChatKey &&
+        p.bindChats &&
+        p.bindChats.includes(currentChatKey)
+      );
       const charMatch = !!(
+        !chatMatch &&
         currentChar &&
         p.bindChars &&
         p.bindChars.includes(currentChar)
@@ -7228,9 +7803,9 @@ jQuery(async () => {
         p.bindPresets &&
         p.bindPresets.includes(currentPreset)
       );
-      if (charMatch || presetMatch) {
+      if (chatMatch || charMatch || presetMatch) {
         indices.push(i);
-        details[i] = { charMatch, presetMatch };
+        details[i] = { chatMatch, charMatch, presetMatch };
       }
     }
     return { indices, details };
@@ -7239,7 +7814,7 @@ jQuery(async () => {
   /**
    * 自动应用/关闭世界书分组（角色或预设切换时调用）
    */
-  async function autoApplyWiPresets() {
+  async function autoApplyWiPresets(silent = false) {
     try {
       const presets = getWiActivePresets();
       const charBound = await getCharBoundWorldBooks();
@@ -7309,6 +7884,10 @@ jQuery(async () => {
         const d = details[idx];
         if (!d) return "";
         const reasons = [];
+        if (d.chatMatch) {
+          const currentChatName = getCurrentChatFileName();
+          if (currentChatName) reasons.push(`聊天「${currentChatName}」`);
+        }
         if (d.charMatch && currentCharName)
           reasons.push(`角色「${currentCharName}」`);
         if (d.presetMatch && currentPresetName)
@@ -7331,6 +7910,7 @@ jQuery(async () => {
           // 分析关闭原因：哪些绑定不再匹配
           const p = presets[idx];
           const reasons = [];
+          if (p.bindChats && p.bindChats.length > 0) reasons.push("聊天不匹配");
           if (p.bindChars && p.bindChars.length > 0) reasons.push("角色不匹配");
           if (p.bindPresets && p.bindPresets.length > 0)
             reasons.push("预设不匹配");
@@ -7351,7 +7931,7 @@ jQuery(async () => {
         }
       }
 
-      if (msgParts.length > 0) {
+      if (!silent && msgParts.length > 0) {
         toastr.info(msgParts.join("<br>"), "世界书分组", {
           timeOut: 4000,
           escapeHtml: false,
@@ -7413,6 +7993,15 @@ jQuery(async () => {
     const scopeColors = { global: "#a6e3a1", bound: "#cba6f7" };
 
     // 构建已有分组列表（用索引定位）
+    const appliedPresetIndices = new Set(
+      extension_settings[extensionName]._wiAppliedPresetIndices || [],
+    );
+    const currentWiActiveSet = new Set();
+    $("#world_info")
+      .find("option:selected")
+      .each(function () {
+        currentWiActiveSet.add($(this).text());
+      });
     const presetsHtml =
       presets.length === 0
         ? `<div class="cfm-wi-preset-empty">暂无已保存的分组</div>`
@@ -7421,8 +8010,12 @@ jQuery(async () => {
               const scope = p.scope || "global";
               const hasBindings =
                 (p.bindChars && p.bindChars.length > 0) ||
-                (p.bindPresets && p.bindPresets.length > 0);
+                (p.bindPresets && p.bindPresets.length > 0) ||
+                (p.bindChats && p.bindChats.length > 0);
               const bindSummary = getWiPresetBindSummary(p);
+              const isApplied =
+                appliedPresetIndices.has(idx) ||
+                p.books.every((b) => currentWiActiveSet.has(b));
               return `
         <div class="cfm-wi-preset-item" data-preset-idx="${idx}">
           <div class="cfm-wi-preset-item-left">
@@ -7432,7 +8025,7 @@ jQuery(async () => {
             ${hasBindings ? `<span class="cfm-wi-preset-bind-toggle" title="查看绑定"><i class="fa-solid fa-caret-down"></i></span>` : ""}
           </div>
           <span class="cfm-wi-preset-item-actions">
-            <i class="fa-solid fa-play cfm-wi-preset-apply" title="应用到全局"></i>
+            <i class="fa-solid fa-play cfm-wi-preset-apply ${isApplied ? "cfm-wi-preset-apply-active" : ""}" title="${isApplied ? "当前已激活" : "应用到全局"}" style="${isApplied ? "color:#a6e3a1;text-shadow:0 0 8px rgba(166,227,161,.55);" : ""}"></i>
             <i class="fa-solid fa-stop cfm-wi-preset-unapply" title="取消应用"></i>
             <i class="fa-solid fa-link cfm-wi-preset-bind" title="绑定管理"></i>
             <i class="fa-solid fa-pen cfm-wi-preset-edit" title="编辑"></i>
@@ -7560,6 +8153,29 @@ jQuery(async () => {
           mode = choice;
         }
 
+        const autoAppliedState = getAutoApplyPresetIndices();
+        const autoDetail = autoAppliedState.details[idx] || {};
+        const currentActiveSet = await getActiveWorldInfoSet();
+        const isActuallyApplied = preset.books.every((b) =>
+          currentActiveSet.has(b),
+        );
+        if (
+          autoAppliedState.indices.includes(idx) &&
+          isActuallyApplied &&
+          (autoDetail.charMatch ||
+            autoDetail.presetMatch ||
+            autoDetail.chatMatch)
+        ) {
+          const reasons = [];
+          if (autoDetail.chatMatch) reasons.push("当前聊天");
+          if (autoDetail.charMatch) reasons.push("当前角色");
+          if (autoDetail.presetMatch) reasons.push("当前预设");
+          toastr.info(
+            `分组「${preset.name}」已因${reasons.join("和")}绑定自动生效`,
+          );
+          return;
+        }
+
         if (mode === "replace") {
           // 替换模式：先关闭其他已应用分组的独占世界书
           const keepBooks = new Set(preset.books);
@@ -7621,11 +8237,11 @@ jQuery(async () => {
           toastr.warning(`分组「${preset.name}」当前未处于应用状态`);
           return;
         }
-        // 检查该分组是否因绑定条件匹配而自动应用，如果是则阻止手动取消
+        // 检查该分组是否因绑定条件匹配而自动应用
         const { indices: autoIndices, details: autoDetails } =
           getAutoApplyPresetIndices();
         if (autoIndices.includes(idx)) {
-          const detail = autoDetails[idx];
+          const detail = autoDetails[idx] || {};
           const reasons = [];
           if (detail.charMatch)
             reasons.push(
@@ -7633,12 +8249,8 @@ jQuery(async () => {
             );
           if (detail.presetMatch)
             reasons.push(`预设「${escapeHtml(getCurrentPresetName())}」`);
-          toastr.warning(
-            `分组「${preset.name}」因绑定了${reasons.join(" 和 ")}而自动应用，无法手动取消。请先取消对应的绑定关系。`,
-            "无法取消应用",
-            { timeOut: 5000 },
-          );
-          return;
+          const confirmMsg = `分组「${preset.name}」当前因${reasons.join(" 和 ")}自动应用，确认取消应用吗？`;
+          if (!confirm(confirmMsg)) return;
         }
         // 计算其他已应用分组覆盖的世界书
         const otherApplied = applied.filter(
@@ -7686,7 +8298,11 @@ jQuery(async () => {
           <div class="cfm-wi-preset-bind-menu-title">应用方式</div>
           <div class="cfm-wi-preset-bind-menu-item" data-action="global"><i class="fa-solid fa-globe" style="color:#a6e3a1;"></i> 应用到全局</div>
           <div class="cfm-wi-preset-bind-menu-item ${!currentPresetName ? "cfm-disabled" : ""}" data-action="preset"><i class="fa-solid fa-sliders" style="color:#89b4fa;"></i> 绑定到当前预设${currentPresetName ? "「" + escapeHtml(currentPresetName) + "」" : "（无预设）"}</div>
-          <div class="cfm-wi-preset-bind-menu-item ${!currentChar ? "cfm-disabled" : ""}" data-action="char"><i class="fa-solid fa-user" style="color:#f9e2af;"></i> 绑定到当前角色${currentCharName ? "「" + escapeHtml(currentCharName) + "」" : "（无角色）"}</div>
+          <div class="cfm-wi-preset-bind-menu-item ${!currentChar ? "cfm-disabled" : ""}" data-action="char">
+            <span style="display:flex;align-items:center;min-width:0;flex:1;"><i class="fa-solid fa-user" style="color:#f9e2af;"></i><span style="margin-left:6px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">绑定到当前角色${currentCharName ? "「" + escapeHtml(currentCharName) + "」" : "（无角色）"}</span></span>
+            <i class="fa-solid fa-caret-down cfm-wi-bind-chat-toggle" style="margin-left:auto;opacity:.7;"></i>
+          </div>
+          <div class="cfm-wi-preset-bind-menu-item cfm-wi-preset-bind-subitem ${!getCurrentChatBindKey() ? "cfm-disabled" : ""}" data-action="chat" style="display:none;"><i class="fa-solid fa-comments" style="color:#cba6f7;"></i> 绑定到当前聊天${getCurrentChatFileName() ? "「" + escapeHtml(getCurrentChatFileName()) + "」" : "（无聊天）"}</div>
         </div>
       `);
       // append 到 overlay 层避免被 overflow 裁剪，用 fixed 定位
@@ -7699,10 +8315,23 @@ jQuery(async () => {
       if (menuTop + 160 > window.innerHeight) menuTop = btnRect.top - 160;
       menu.css({ top: menuTop + "px", left: menuLeft + "px" });
 
+      menu.find(".cfm-wi-bind-chat-toggle").on("click", function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const chatItem = menu.find('[data-action="chat"]');
+        if (!chatItem.length) return;
+        const willShow = !chatItem.is(":visible");
+        chatItem.stop(true, true).slideToggle(150);
+        $(this)
+          .toggleClass("fa-caret-down", !willShow)
+          .toggleClass("fa-caret-up", willShow);
+      });
+
       menu
         .find(".cfm-wi-preset-bind-menu-item")
         .on("click", async function (ev) {
           ev.stopPropagation();
+          if ($(ev.target).closest(".cfm-wi-bind-chat-toggle").length) return;
           if ($(this).hasClass("cfm-disabled")) return;
           const action = $(this).data("action");
           const allPresets = getWiActivePresets();
@@ -7715,21 +8344,82 @@ jQuery(async () => {
             toastr.success(`已将分组「${preset.name}」设为全局应用`);
           } else if (action === "preset") {
             if (!currentPresetName) return;
-            // 确保 scope 为 bound
-            if (preset.scope === "global") setWiPresetScope(idx, "bound");
-            bindWiPresetToPreset(idx, currentPresetName);
-            await applyWorldInfoPreset(preset.books, wiCharBound);
-            toastr.success(
-              `已将分组「${preset.name}」绑定到预设「${currentPresetName}」`,
-            );
+            const alreadyBound =
+              Array.isArray(preset.bindPresets) &&
+              preset.bindPresets.includes(currentPresetName);
+            const autoApplied = getAutoApplyPresetIndices();
+            if (alreadyBound) {
+              if (
+                autoApplied.indices.includes(idx) &&
+                autoApplied.details[idx]?.presetMatch
+              ) {
+                toastr.info(
+                  `分组「${preset.name}」已绑定当前预设，且已处于应用状态`,
+                );
+              } else {
+                toastr.info(`当前预设已绑定分组「${preset.name}」`);
+              }
+            } else {
+              // 确保 scope 为 bound
+              if (preset.scope === "global") setWiPresetScope(idx, "bound");
+              bindWiPresetToPreset(idx, currentPresetName);
+              await applyWorldInfoPreset(preset.books, wiCharBound);
+              toastr.success(
+                `已将分组「${preset.name}」绑定到预设「${currentPresetName}」`,
+              );
+            }
           } else if (action === "char") {
             if (!currentChar) return;
-            if (preset.scope === "global") setWiPresetScope(idx, "bound");
-            bindWiPresetToChar(idx, currentChar);
-            await applyWorldInfoPreset(preset.books, wiCharBound);
-            toastr.success(
-              `已将分组「${preset.name}」绑定到角色「${currentCharName}」`,
-            );
+            const alreadyBound =
+              Array.isArray(preset.bindChars) &&
+              preset.bindChars.includes(currentChar);
+            const autoApplied = getAutoApplyPresetIndices();
+            if (alreadyBound) {
+              if (
+                autoApplied.indices.includes(idx) &&
+                autoApplied.details[idx]?.charMatch
+              ) {
+                toastr.info(
+                  `分组「${preset.name}」已绑定当前角色，且已处于应用状态`,
+                );
+              } else {
+                toastr.info(`当前角色已绑定分组「${preset.name}」`);
+              }
+            } else {
+              if (preset.scope === "global") setWiPresetScope(idx, "bound");
+              bindWiPresetToChar(idx, currentChar);
+              await applyWorldInfoPreset(preset.books, wiCharBound);
+              toastr.success(
+                `已将分组「${preset.name}」绑定到角色「${currentCharName}」`,
+              );
+            }
+          } else if (action === "chat") {
+            const currentChatKey = getCurrentChatBindKey();
+            const currentChatName = getCurrentChatFileName();
+            if (!currentChar || !currentChatKey || !currentChatName) return;
+            const alreadyBound =
+              Array.isArray(preset.bindChats) &&
+              preset.bindChats.includes(currentChatKey);
+            const autoApplied = getAutoApplyPresetIndices();
+            if (alreadyBound) {
+              if (
+                autoApplied.indices.includes(idx) &&
+                autoApplied.details[idx]?.chatMatch
+              ) {
+                toastr.info(
+                  `分组「${preset.name}」已绑定当前聊天，且已处于应用状态`,
+                );
+              } else {
+                toastr.info(`当前聊天已绑定分组「${preset.name}」`);
+              }
+            } else {
+              if (preset.scope === "global") setWiPresetScope(idx, "bound");
+              bindWiPresetToChat(idx, currentChar, currentChatName);
+              await applyWorldInfoPreset(preset.books, wiCharBound);
+              toastr.success(
+                `已将分组「${preset.name}」绑定到聊天「${currentChatName}」`,
+              );
+            }
           }
           menu.remove();
           overlay.remove();
@@ -7769,7 +8459,24 @@ jQuery(async () => {
         for (const av of preset.bindChars) {
           const ch = chars.find((c) => c.avatar === av);
           const name = ch ? ch.name : av;
-          html += `<div class="cfm-wi-bind-entry" data-bind-type="char" data-bind-id="${escapeHtml(av)}">
+          const isCurrentChar = !!currentChar && currentChar === av;
+          html += `<div class="cfm-wi-bind-entry ${isCurrentChar ? "cfm-wi-bind-entry-current" : ""}" data-bind-type="char" data-bind-id="${escapeHtml(av)}">
+            <span class="cfm-wi-bind-entry-name">${escapeHtml(name)}</span>
+            <i class="fa-solid fa-xmark cfm-wi-bind-remove" title="取消绑定"></i>
+          </div>`;
+        }
+      }
+      if (preset.bindChats && preset.bindChats.length > 0) {
+        const chars = getCharacters();
+        html +=
+          '<div class="cfm-wi-bind-section-title"><i class="fa-solid fa-comments" style="color:#cba6f7;"></i> 绑定的聊天</div>';
+        for (const bindKey of preset.bindChats) {
+          const parsed = parseChatBindKey(bindKey);
+          const ch = chars.find((c) => c.avatar === parsed.avatar);
+          const charName = ch ? ch.name : parsed.avatar;
+          const name = `${charName}（${parsed.chatFileName || bindKey}）`;
+          const isCurrentChat = getCurrentChatBindKey() === bindKey;
+          html += `<div class="cfm-wi-bind-entry ${isCurrentChat ? "cfm-wi-bind-entry-current" : ""}" data-bind-type="chat" data-bind-id="${escapeHtml(bindKey)}">
             <span class="cfm-wi-bind-entry-name">${escapeHtml(name)}</span>
             <i class="fa-solid fa-xmark cfm-wi-bind-remove" title="取消绑定"></i>
           </div>`;
@@ -7779,7 +8486,9 @@ jQuery(async () => {
         html +=
           '<div class="cfm-wi-bind-section-title"><i class="fa-solid fa-sliders" style="color:#89b4fa;"></i> 绑定的预设</div>';
         for (const pn of preset.bindPresets) {
-          html += `<div class="cfm-wi-bind-entry" data-bind-type="preset" data-bind-id="${escapeHtml(pn)}">
+          const isCurrentPreset =
+            !!currentPresetName && currentPresetName === pn;
+          html += `<div class="cfm-wi-bind-entry ${isCurrentPreset ? "cfm-wi-bind-entry-current" : ""}" data-bind-type="preset" data-bind-id="${escapeHtml(pn)}">
             <span class="cfm-wi-bind-entry-name">${escapeHtml(pn)}</span>
             <i class="fa-solid fa-xmark cfm-wi-bind-remove" title="取消绑定"></i>
           </div>`;
@@ -7800,12 +8509,14 @@ jQuery(async () => {
         const displayName = entry.find(".cfm-wi-bind-entry-name").text();
         if (
           !confirm(
-            `确定取消分组「${preset.name}」与${bindType === "char" ? "角色" : "预设"}「${displayName}」的绑定？`,
+            `确定取消分组「${preset.name}」与${bindType === "char" ? "角色" : bindType === "chat" ? "聊天" : "预设"}「${displayName}」的绑定？`,
           )
         )
           return;
         if (bindType === "char") {
           unbindWiPresetFromChar(idx, bindId);
+        } else if (bindType === "chat") {
+          unbindWiPresetFromChat(idx, bindId);
         } else {
           unbindWiPresetFromPreset(idx, bindId);
         }
@@ -7815,26 +8526,7 @@ jQuery(async () => {
         if (applied.includes(idx)) {
           const { indices: stillAutoIndices } = getAutoApplyPresetIndices();
           if (!stillAutoIndices.includes(idx)) {
-            // 不再满足绑定条件，自动取消应用
-            const allPresets = getWiActivePresets();
-            const otherApplied = applied.filter(
-              (i) => i !== idx && allPresets[i],
-            );
-            const otherBooks = new Set();
-            for (const oi of otherApplied) {
-              for (const b of allPresets[oi].books) otherBooks.add(b);
-            }
-            const wiCharBoundLocal = await getCharBoundWorldBooks();
-            let removedCount = 0;
-            for (const b of preset.books) {
-              if (!wiCharBoundLocal.has(b) && !otherBooks.has(b)) {
-                await toggleWorldInfoActivation(b, false);
-                removedCount++;
-              }
-            }
-            extension_settings[extensionName]._wiAppliedPresetIndices =
-              otherApplied;
-            getContext().saveSettingsDebounced();
+            const removedCount = await unapplyWiPresetIndex(idx);
             toastr.info(
               `已取消绑定，分组「${preset.name}」不再匹配当前条件，已自动取消应用（移除 ${removedCount} 个世界书）`,
             );
@@ -7849,7 +8541,8 @@ jQuery(async () => {
         const stillHasBindings =
           updated &&
           ((updated.bindChars && updated.bindChars.length > 0) ||
-            (updated.bindPresets && updated.bindPresets.length > 0));
+            (updated.bindPresets && updated.bindPresets.length > 0) ||
+            (updated.bindChats && updated.bindChats.length > 0));
         if (!stillHasBindings) {
           if (updated) setWiPresetScope(idx, "global");
           // 最后一个绑定被取消，重建面板
@@ -7969,7 +8662,9 @@ jQuery(async () => {
           <div class="cfm-edit-field">
             <label>包含的世界书 <span class="cfm-wi-preset-edit-hint">（角色关联的世界书已排除）</span></label>
             <div class="cfm-wi-preset-edit-search">
-              <select class="cfm-edit-input" id="cfm-wi-preset-edit-folder-filter">${buildWiFilterOptions()}</select>
+              <div class="cfm-nf-btn menu_button fa-solid fa-folder-tree" id="cfm-wi-preset-edit-folder-btn" title="文件夹过滤"></div>
+              <span class="cfm-wi-preset-edit-folder-label" id="cfm-wi-preset-edit-folder-label">显示全部</span>
+              <input type="hidden" id="cfm-wi-preset-edit-folder-filter" value="__all__">
               <input type="text" class="cfm-edit-input" id="cfm-wi-preset-edit-filter" placeholder="搜索世界书...">
             </div>
             <div class="cfm-wi-preset-edit-list">${booksHtml}</div>
@@ -7983,8 +8678,18 @@ jQuery(async () => {
     `);
     $("body").append(overlay);
     // 组合过滤函数（文件夹 + 文本搜索）
+    function getWiFolderFilterLabel(folderVal) {
+      if (!folderVal || folderVal === "__all__") return "显示全部";
+      if (folderVal === "__ungrouped__") return "未归类世界书";
+      return getResFolderDisplayName("worldinfo", folderVal) || folderVal;
+    }
+
     function applyEditFilters() {
-      const folderVal = overlay.find("#cfm-wi-preset-edit-folder-filter").val();
+      const folderVal =
+        overlay.find("#cfm-wi-preset-edit-folder-filter").val() || "__all__";
+      overlay
+        .find("#cfm-wi-preset-edit-folder-label")
+        .text(getWiFolderFilterLabel(folderVal));
       const q = overlay
         .find("#cfm-wi-preset-edit-filter")
         .val()
@@ -8020,10 +8725,43 @@ jQuery(async () => {
         $(this).toggle(folderMatch && textMatch);
       });
     }
-    overlay
-      .find("#cfm-wi-preset-edit-folder-filter")
-      .on("change", applyEditFilters);
+    overlay.find("#cfm-wi-preset-edit-folder-btn").on("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      showPresetEditFolderFilterPanel($(this), {
+        panelKey: "wi_preset_edit",
+        folderTree: wiTree,
+        getDisplayName: (id) => getResFolderDisplayName("worldinfo", id),
+        getItemCount: (folderId) => {
+          if (folderId === "__ungrouped__") {
+            return allNames.filter((name) => {
+              const grp = wiGroups[name];
+              return !grp || !wiTree[grp];
+            }).length;
+          }
+          const allowedFolders = new Set();
+          function collectChildren(pid) {
+            allowedFolders.add(pid);
+            const children = Object.keys(wiTree).filter(
+              (id) => wiTree[id].parentId === pid,
+            );
+            for (const c of children) collectChildren(c);
+          }
+          collectChildren(folderId);
+          return allNames.filter((name) => allowedFolders.has(wiGroups[name]))
+            .length;
+        },
+        ungroupedLabel: "未归类世界书",
+        currentFilter:
+          overlay.find("#cfm-wi-preset-edit-folder-filter").val() || "__all__",
+        onSelect: (folderId) => {
+          overlay.find("#cfm-wi-preset-edit-folder-filter").val(folderId);
+          applyEditFilters();
+        },
+      });
+    });
     overlay.find("#cfm-wi-preset-edit-filter").on("input", applyEditFilters);
+    applyEditFilters();
     overlay.find(".cfm-edit-popup-cancel").on("click", () => overlay.remove());
     overlay.on("click", (e) => {
       if ($(e.target).is(overlay)) overlay.remove();
@@ -8229,6 +8967,7 @@ jQuery(async () => {
         }
       });
       overlay.find(".cfm-edit-popup-clear").on("click", () => {
+        if (!window.confirm("确认清除备注吗？")) return;
         overlay.remove();
         resolve({ note: "", clear: true });
       });
@@ -8424,6 +9163,7 @@ jQuery(async () => {
         }
       });
       overlay.find(".cfm-edit-popup-clear").on("click", () => {
+        if (!window.confirm("确认清除备注吗？")) return;
         overlay.remove();
         resolve({ note: "", clear: true });
       });
@@ -9424,6 +10164,4017 @@ jQuery(async () => {
     return null;
   }
 
+  function getPresetDataForDetail(pm, name) {
+    return getPresetDataForRename(pm, name);
+  }
+
+  const PRESET_PROMPT_ORDER_DUMMY_ID = 100001;
+
+  function getPresetPromptIdentifier(prompt) {
+    if (!prompt || typeof prompt !== "object") return "";
+    return String(
+      prompt.identifier ?? prompt.id ?? prompt.key ?? prompt.prompt ?? "",
+    ).trim();
+  }
+
+  function getPresetPromptText(promptValue) {
+    if (typeof promptValue === "string") return promptValue;
+    if (promptValue && typeof promptValue === "object") {
+      return String(
+        promptValue.value ?? promptValue.content ?? promptValue.text ?? "",
+      );
+    }
+    return "";
+  }
+
+  function getPresetPromptLabel(promptValue, fallback = "") {
+    if (promptValue && typeof promptValue === "object") {
+      const label = String(
+        promptValue.name ??
+          promptValue.title ??
+          promptValue.label ??
+          fallback ??
+          "",
+      ).trim();
+      if (label) return label;
+    }
+    return String(fallback ?? "").trim();
+  }
+
+  function ensurePresetPromptList(presetData) {
+    if (!presetData || typeof presetData !== "object") return [];
+
+    const existingPrompts = presetData.prompts;
+
+    if (Array.isArray(existingPrompts)) {
+      const normalizedPrompts = existingPrompts
+        .filter((prompt) => prompt !== null && prompt !== undefined)
+        .map((prompt, index) => {
+          if (prompt && typeof prompt === "object") {
+            const identifier =
+              getPresetPromptIdentifier(prompt) || `prompt_${index + 1}`;
+            prompt.identifier = identifier;
+            return prompt;
+          }
+          return {
+            identifier: `prompt_${index + 1}`,
+            content: String(prompt ?? ""),
+          };
+        });
+
+      existingPrompts.length = 0;
+      existingPrompts.push(...normalizedPrompts);
+      presetData.prompts = existingPrompts;
+      return existingPrompts;
+    }
+
+    let normalizedPrompts = [];
+    if (existingPrompts && typeof existingPrompts === "object") {
+      normalizedPrompts = Object.entries(existingPrompts)
+        .map(([identifier, prompt]) => {
+          const normalizedId = String(identifier || "").trim();
+          if (!normalizedId) return null;
+          if (prompt && typeof prompt === "object") {
+            prompt.identifier =
+              getPresetPromptIdentifier(prompt) || normalizedId;
+            return prompt;
+          }
+          return {
+            identifier: normalizedId,
+            content: String(prompt ?? ""),
+          };
+        })
+        .filter(Boolean);
+    }
+
+    presetData.prompts = normalizedPrompts;
+    return presetData.prompts;
+  }
+
+  function normalizePresetPromptOrderItem(item) {
+    if (typeof item === "string") {
+      const identifier = String(item || "").trim();
+      return identifier ? { identifier } : null;
+    }
+    if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+    const identifier = getPresetPromptOrderIdentifier(item);
+    if (!identifier) return null;
+    item.identifier = identifier;
+    return item;
+  }
+
+  function sanitizePresetPromptOrderEntries(
+    orderEntries,
+    validIdentifierSet = null,
+  ) {
+    const normalizedEntries = [];
+    const seen = new Set();
+
+    for (const item of Array.isArray(orderEntries) ? orderEntries : []) {
+      const normalizedItem = normalizePresetPromptOrderItem(item);
+      if (!normalizedItem) continue;
+      const identifier = getPresetPromptOrderIdentifier(normalizedItem);
+      if (!identifier) continue;
+      if (
+        validIdentifierSet instanceof Set &&
+        validIdentifierSet.size > 0 &&
+        !validIdentifierSet.has(identifier)
+      ) {
+        continue;
+      }
+      if (seen.has(identifier)) continue;
+      seen.add(identifier);
+      normalizedEntries.push(normalizedItem);
+    }
+
+    return normalizedEntries;
+  }
+
+  function ensurePresetPromptOrderContainers(presetData) {
+    if (!presetData || typeof presetData !== "object") return [];
+
+    const validIdentifierSet = new Set(
+      ensurePresetPromptList(presetData)
+        .map((prompt) => getPresetPromptIdentifier(prompt))
+        .filter(Boolean),
+    );
+
+    const existingPromptOrder = presetData.prompt_order;
+    if (!Array.isArray(existingPromptOrder)) {
+      presetData.prompt_order = [];
+      return presetData.prompt_order;
+    }
+
+    const hasContainerShape = existingPromptOrder.some(
+      (item) =>
+        item &&
+        typeof item === "object" &&
+        !Array.isArray(item) &&
+        Array.isArray(item.order),
+    );
+
+    if (!hasContainerShape) {
+      const flatOrder = sanitizePresetPromptOrderEntries(
+        existingPromptOrder,
+        validIdentifierSet,
+      );
+      presetData.prompt_order = flatOrder.length
+        ? [
+            {
+              character_id: PRESET_PROMPT_ORDER_DUMMY_ID,
+              order: flatOrder,
+            },
+          ]
+        : [];
+      return presetData.prompt_order;
+    }
+
+    presetData.prompt_order = existingPromptOrder
+      .filter(
+        (item) =>
+          item &&
+          typeof item === "object" &&
+          !Array.isArray(item) &&
+          Array.isArray(item.order),
+      )
+      .map((item) => {
+        item.order = sanitizePresetPromptOrderEntries(
+          item.order,
+          validIdentifierSet,
+        );
+        return item;
+      });
+
+    return presetData.prompt_order;
+  }
+
+  function sanitizePresetPromptStructure(presetData) {
+    if (!presetData || typeof presetData !== "object") return presetData;
+    ensurePresetPromptList(presetData);
+    ensurePresetPromptOrderContainers(presetData);
+    return presetData;
+  }
+
+  function getAllPresetPromptOrderContainers(presetData, create = false) {
+    const containers = ensurePresetPromptOrderContainers(presetData);
+    if (!containers.length && create) {
+      containers.push({
+        character_id: PRESET_PROMPT_ORDER_DUMMY_ID,
+        order: [],
+      });
+    }
+    return containers;
+  }
+
+  function getPresetPromptOrderContainer(presetData, create = false) {
+    const containers = getAllPresetPromptOrderContainers(presetData, create);
+    let container = containers.find(
+      (item) =>
+        String(item?.character_id ?? "") ===
+        String(PRESET_PROMPT_ORDER_DUMMY_ID),
+    );
+
+    if (!container && containers.length > 0) {
+      container = containers[0];
+    }
+
+    if (container && !Array.isArray(container.order)) {
+      container.order = [];
+    }
+
+    return container || null;
+  }
+
+  function getPresetPromptOrderEntries(presetData, create = false) {
+    return getPresetPromptOrderContainer(presetData, create)?.order ?? [];
+  }
+
+  function getAllPresetPromptOrderEntries(presetData) {
+    return getAllPresetPromptOrderContainers(presetData).flatMap((container) =>
+      Array.isArray(container?.order) ? container.order : [],
+    );
+  }
+
+  function findPresetPromptOrderEntryLocation(
+    presetData,
+    promptKey,
+    create = false,
+  ) {
+    const normalizedKey = String(promptKey || "").trim();
+    if (!normalizedKey) return null;
+
+    for (const container of getAllPresetPromptOrderContainers(
+      presetData,
+      create,
+    )) {
+      const order = Array.isArray(container?.order) ? container.order : [];
+      const index = order.findIndex(
+        (item) => getPresetPromptOrderIdentifier(item) === normalizedKey,
+      );
+      if (index !== -1) {
+        return {
+          container,
+          order,
+          index,
+          item: order[index],
+        };
+      }
+    }
+
+    if (!create) return null;
+    const fallbackContainer = getPresetPromptOrderContainer(presetData, true);
+    if (!fallbackContainer) return null;
+    return {
+      container: fallbackContainer,
+      order: fallbackContainer.order,
+      index: -1,
+      item: null,
+    };
+  }
+
+  function getPresetPromptMap(presetData) {
+    const promptMap = new Map();
+    for (const prompt of ensurePresetPromptList(presetData)) {
+      const identifier = getPresetPromptIdentifier(prompt);
+      if (!identifier) continue;
+      promptMap.set(identifier, prompt);
+    }
+    return promptMap;
+  }
+
+  function getPresetPromptByKey(presetData, promptKey) {
+    return getPresetPromptMap(presetData).get(String(promptKey || "")) ?? null;
+  }
+
+  function getPresetPromptIndexByKey(presetData, promptKey) {
+    const normalizedKey = String(promptKey || "").trim();
+    if (!normalizedKey) return -1;
+    return ensurePresetPromptList(presetData).findIndex(
+      (prompt) => getPresetPromptIdentifier(prompt) === normalizedKey,
+    );
+  }
+
+  function getPresetDetailFields(preset) {
+    if (!preset || typeof preset !== "object") return [];
+
+    const promptMap = getPresetPromptMap(preset);
+    const promptOrder = getPresetPromptOrderEntries(preset);
+    const fields = [];
+    const seen = new Set();
+
+    const normalizeLabel = (label, fallback) => {
+      const text = String(label ?? "").trim();
+      return text || fallback;
+    };
+
+    const promptSourceLabels = {
+      charDescription: "Character Description",
+      charPersonality: "Character Personality",
+      scenario: "Character Scenario",
+      personaDescription: "Persona Description",
+      worldInfoBefore: "World Info (↑Char)",
+      worldInfoAfter: "World Info (↓Char)",
+    };
+
+    const addPromptField = (
+      identifier,
+      labelHint,
+      promptValue,
+      enabledHint,
+    ) => {
+      if (identifier === null || identifier === undefined) return;
+      const keyId = String(identifier);
+      if (!keyId || seen.has(keyId)) return;
+      seen.add(keyId);
+      fields.push({
+        key: `prompts.${keyId}`,
+        label: normalizeLabel(labelHint, keyId),
+        value: getPresetPromptText(promptValue),
+        enabled: enabledHint !== false,
+        sourceLabel: promptSourceLabels[keyId] || "",
+      });
+    };
+
+    for (const item of promptOrder) {
+      const identifier = getPresetPromptOrderIdentifier(item);
+      if (!identifier) continue;
+
+      const promptValue = promptMap.get(identifier) ?? null;
+      const promptLabel = getPresetPromptLabel(
+        promptValue,
+        item?.name ?? item?.title ?? item?.label ?? identifier,
+      );
+      const promptEnabled =
+        typeof item?.enabled === "boolean"
+          ? item.enabled
+          : typeof promptValue?.enabled === "boolean"
+            ? promptValue.enabled
+            : true;
+
+      addPromptField(identifier, promptLabel, promptValue, promptEnabled);
+    }
+
+    for (const promptValue of promptMap.values()) {
+      const identifier = getPresetPromptIdentifier(promptValue);
+      if (!identifier) continue;
+      const promptEnabled =
+        typeof promptValue?.enabled === "boolean" ? promptValue.enabled : true;
+      addPromptField(
+        identifier,
+        getPresetPromptLabel(promptValue, identifier),
+        promptValue,
+        promptEnabled,
+      );
+    }
+
+    return fields;
+  }
+
+  function getPresetFieldCurrentValue(preset, fieldKey) {
+    if (!preset || !fieldKey) return "";
+    if (fieldKey.startsWith("prompts.")) {
+      const promptKey = fieldKey.slice("prompts.".length);
+      return getPresetPromptText(getPresetPromptByKey(preset, promptKey));
+    }
+    return String(preset[fieldKey] ?? "");
+  }
+
+  function setPresetPromptEnabled(presetData, promptKey, enabled) {
+    if (!presetData || !promptKey) return;
+
+    sanitizePresetPromptStructure(presetData);
+    const normalizedKey = String(promptKey || "").trim();
+    if (!normalizedKey) return;
+
+    const currentPrompt = getPresetPromptByKey(presetData, normalizedKey);
+    if (currentPrompt && typeof currentPrompt === "object") {
+      currentPrompt.enabled = !!enabled;
+    }
+
+    const entryLocation = findPresetPromptOrderEntryLocation(
+      presetData,
+      normalizedKey,
+      true,
+    );
+    const existingEntry = entryLocation?.item ?? null;
+
+    if (existingEntry) {
+      existingEntry.enabled = !!enabled;
+      return;
+    }
+
+    entryLocation?.order?.push({
+      identifier: normalizedKey,
+      enabled: !!enabled,
+    });
+  }
+
+  function syncCurrentPresetSelection(pm, presetName, preservedValue = null) {
+    try {
+      if (!pm?.select) return;
+      const effectiveValue =
+        preservedValue !== undefined && preservedValue !== null
+          ? preservedValue
+          : pm.select.val();
+      const currentPreset = getCurrentPresets().find(
+        (p) => String(p.value) === String(effectiveValue),
+      );
+      if (currentPreset?.name === presetName) {
+        pm.select.val(effectiveValue).trigger("change");
+      }
+    } catch (e) {
+      console.warn("[CFM] 同步当前预设状态失败", e);
+    }
+  }
+
+  function sanitizeCurrentOpenAIPresetRuntimeState(save = false) {
+    try {
+      const context = getContext();
+      const pm = context?.getPresetManager?.();
+      if (!pm || String(pm.apiId || "") !== "openai") return false;
+
+      const presetList =
+        typeof pm.getPresetList === "function" ? pm.getPresetList() : null;
+      const runtimeSettings = presetList?.settings;
+      if (!runtimeSettings || typeof runtimeSettings !== "object") return false;
+
+      const beforeState = JSON.stringify({
+        prompts: runtimeSettings.prompts ?? null,
+        prompt_order: runtimeSettings.prompt_order ?? null,
+      });
+
+      sanitizePresetPromptStructure(runtimeSettings);
+
+      const afterState = JSON.stringify({
+        prompts: runtimeSettings.prompts ?? null,
+        prompt_order: runtimeSettings.prompt_order ?? null,
+      });
+      const changed = beforeState !== afterState;
+
+      if (
+        changed &&
+        save &&
+        typeof context.saveSettingsDebounced === "function"
+      ) {
+        context.saveSettingsDebounced();
+      }
+
+      return changed;
+    } catch (error) {
+      console.warn("[CFM] 清理当前 OpenAI 运行时预设状态失败", error);
+      return false;
+    }
+  }
+
+  async function saveNormalizedPresetData(pm, presetName, presetData) {
+    sanitizePresetPromptStructure(presetData);
+
+    const preservedSelectValue = pm?.select?.val();
+    const preservedPreset = getCurrentPresets().find(
+      (p) => String(p.value) === String(preservedSelectValue),
+    );
+    const preservedPresetName = String(preservedPreset?.name || "").trim();
+    const isCurrentPreset = preservedPresetName === presetName;
+
+    if (isCurrentPreset) {
+      // 当前预设：正常保存并触发 updateList（含 change 事件）
+      await pm.savePreset(presetName, presetData);
+
+      if (
+        pm?.select &&
+        preservedSelectValue !== undefined &&
+        preservedSelectValue !== null &&
+        String(preservedSelectValue) !== "" &&
+        String(pm.select.val()) !== String(preservedSelectValue)
+      ) {
+        pm.select.val(preservedSelectValue);
+      }
+
+      syncCurrentPresetSelection(pm, preservedPresetName, preservedSelectValue);
+    } else {
+      // 非当前预设：使用 skipUpdate 避免触发 PRESET_CHANGED 事件，
+      // 然后手动更新内存中的预设数据
+      await pm.savePreset(presetName, presetData, { skipUpdate: true });
+
+      // 手动更新内存中的预设列表数据
+      try {
+        const presetList =
+          typeof pm.getPresetList === "function" ? pm.getPresetList() : null;
+        if (presetList) {
+          const { presets, preset_names } = presetList;
+          if (Array.isArray(presets) && preset_names) {
+            const isKeyed = Array.isArray(preset_names);
+            if (isKeyed) {
+              const idx = preset_names.indexOf(presetName);
+              if (idx >= 0) presets[idx] = presetData;
+            } else {
+              const val = preset_names[presetName];
+              if (val !== undefined) presets[val] = presetData;
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("[CFM] 手动更新非当前预设内存数据失败", e);
+      }
+    }
+    sanitizeCurrentOpenAIPresetRuntimeState(true);
+  }
+
+  async function duplicatePreset(sourcePreset) {
+    const sourceName = String(sourcePreset?.name || "").trim();
+    if (!sourceName) return;
+    const pm = getContext().getPresetManager();
+    if (!pm) {
+      toastr.error("无法获取预设管理器");
+      return;
+    }
+
+    const presetData = getPresetDataForDetail(pm, sourceName);
+    if (!presetData) {
+      toastr.error(`找不到预设「${sourceName}」的数据`);
+      return;
+    }
+
+    const newPresetName = buildDuplicatedPresetName(sourceName);
+    const sourceValue =
+      sourcePreset?.value ??
+      getCurrentPresets().find((preset) => preset.name === sourceName)?.value ??
+      pm.select?.val();
+
+    try {
+      const duplicatedPresetData = sanitizePresetPromptStructure(
+        structuredClone(presetData),
+      );
+      await pm.savePreset(newPresetName, duplicatedPresetData);
+      const groups = extension_settings[extensionName].presetGroups;
+      if (groups && groups[sourceName]) {
+        groups[newPresetName] = groups[sourceName];
+      }
+      const notes = extension_settings[extensionName].presetNotes;
+      if (notes && notes[sourceName] !== undefined) {
+        notes[newPresetName] = notes[sourceName];
+      }
+      insertPresetAfterInCustomOrder(sourceName, newPresetName);
+      if (pm?.select) {
+        const restoreValue =
+          sourceValue ??
+          getCurrentPresets().find((preset) => preset.name === sourceName)
+            ?.value;
+        if (
+          restoreValue !== undefined &&
+          restoreValue !== null &&
+          String(restoreValue) !== ""
+        ) {
+          pm.select.val(restoreValue).trigger("change");
+        } else {
+          syncCurrentPresetSelection(pm, sourceName);
+        }
+      }
+      refreshPresetPanelView();
+      toastr.success(`已复制预设「${sourceName}」`);
+    } catch (error) {
+      console.error("[CFM] 复制预设失败:", error);
+      toastr.error(`复制失败: ${error.message || error}`);
+    }
+  }
+
+  async function deleteSinglePreset(presetName) {
+    const name = String(presetName || "").trim();
+    if (!name) return;
+    if (!confirm(`确定删除预设「${name}」？`)) return;
+
+    const pm = getContext().getPresetManager();
+    if (!pm) {
+      toastr.error("预设管理器不可用");
+      return;
+    }
+
+    try {
+      const ok = await pm.deletePreset(name);
+      if (ok === false) {
+        toastr.error(`删除预设「${name}」失败`);
+        return;
+      }
+      const groups = extension_settings[extensionName].presetGroups;
+      if (groups && groups[name]) delete groups[name];
+      const notes = extension_settings[extensionName].presetNotes;
+      if (notes && notes[name] !== undefined) delete notes[name];
+      removePresetFromCustomOrder(name);
+      cfmPresetDetailExpandedNames.delete(name);
+      cfmPresetRegexExpandedNames.delete(name);
+      if (_presetDetachedOptions && _presetDetachedOptions.length > 0) {
+        _presetDetachedOptions = _presetDetachedOptions.filter(
+          (opt) => $(opt).text() !== name,
+        );
+      }
+      getContext().saveSettingsDebounced();
+      refreshPresetPanelView();
+      toastr.success(`已删除预设「${name}」`);
+    } catch (error) {
+      console.error("[CFM] 删除预设失败:", error);
+      toastr.error(`删除失败: ${error.message || error}`);
+    }
+  }
+
+  async function togglePresetDetailFieldActivation(
+    presetName,
+    fieldKey,
+    activate,
+  ) {
+    if (!fieldKey || !fieldKey.startsWith("prompts.")) return;
+
+    const pm = getContext().getPresetManager();
+    if (!pm) {
+      toastr.error("无法获取预设管理器");
+      return;
+    }
+
+    const presetData = getPresetDataForDetail(pm, presetName);
+    if (!presetData) {
+      toastr.error(`找不到预设「${presetName}」的数据`);
+      return;
+    }
+
+    const promptKey = fieldKey.slice("prompts.".length);
+    setPresetPromptEnabled(presetData, promptKey, activate);
+
+    try {
+      await saveNormalizedPresetData(pm, presetName, presetData);
+      refreshPresetPanelView();
+    } catch (error) {
+      console.error("[CFM] 切换预设条目激活状态失败:", error);
+      toastr.error(`保存失败: ${error.message || error}`);
+    }
+  }
+
+  function togglePresetDetailBatchItem(fieldKey, shiftKey, fields) {
+    const normalizedFields = Array.isArray(fields) ? fields : [];
+    const visibleKeys = normalizedFields
+      .map((field) => String(field?.key || ""))
+      .filter(Boolean);
+    const normalizedFieldKey = String(fieldKey || "");
+    if (!normalizedFieldKey) return;
+
+    if (
+      (shiftKey || cfmPresetDetailBatchRangeMode) &&
+      cfmPresetDetailBatchLastClicked
+    ) {
+      const lastIdx = visibleKeys.indexOf(cfmPresetDetailBatchLastClicked);
+      const curIdx = visibleKeys.indexOf(normalizedFieldKey);
+      if (lastIdx !== -1 && curIdx !== -1) {
+        const start = Math.min(lastIdx, curIdx);
+        const end = Math.max(lastIdx, curIdx);
+        for (let i = start; i <= end; i++) {
+          if (visibleKeys[i]) cfmPresetDetailBatchSelected.add(visibleKeys[i]);
+        }
+      }
+    } else if (cfmPresetDetailBatchSelected.has(normalizedFieldKey)) {
+      cfmPresetDetailBatchSelected.delete(normalizedFieldKey);
+    } else {
+      cfmPresetDetailBatchSelected.add(normalizedFieldKey);
+    }
+
+    cfmPresetDetailBatchLastClicked = normalizedFieldKey;
+  }
+
+  async function applyPresetDetailBatchActivation(
+    presetName,
+    fieldKeys,
+    activate,
+  ) {
+    if (!ensureCurrentAppliedPreset(presetName, "批量操作")) return;
+    const normalizedKeys = Array.from(
+      new Set(
+        (Array.isArray(fieldKeys) ? fieldKeys : [])
+          .map((fieldKey) => String(fieldKey || ""))
+          .filter(Boolean),
+      ),
+    );
+    if (!normalizedKeys.length) {
+      toastr.warning("请先选择要操作的预设条目");
+      return;
+    }
+
+    const pm = getContext().getPresetManager();
+    if (!pm) {
+      toastr.error("无法获取预设管理器");
+      return;
+    }
+
+    const presetData = getPresetDataForDetail(pm, presetName);
+    if (!presetData) {
+      toastr.error(`找不到预设「${presetName}」的数据`);
+      return;
+    }
+
+    let changedCount = 0;
+    for (const fieldKey of normalizedKeys) {
+      if (!fieldKey.startsWith("prompts.")) continue;
+      const promptKey = fieldKey.slice("prompts.".length);
+      if (!promptKey) continue;
+      setPresetPromptEnabled(presetData, promptKey, activate);
+      changedCount++;
+    }
+
+    if (!changedCount) {
+      toastr.warning("所选条目不支持批量激活操作");
+      return;
+    }
+
+    try {
+      await saveNormalizedPresetData(pm, presetName, presetData);
+      toastr.success(
+        `已${activate ? "激活" : "取消激活"} ${changedCount} 个预设条目`,
+      );
+      refreshPresetPanelView();
+    } catch (error) {
+      console.error("[CFM] 批量切换预设条目激活状态失败:", error);
+      toastr.error(`保存失败: ${error.message || error}`);
+    }
+  }
+
+  function refreshWorldInfoPanelView() {
+    const q = String($("#cfm-worldinfo-global-search").val() || "").trim();
+    if (q) executeWorldInfoSearch();
+    else renderWorldInfoView();
+  }
+
+  function getWorldInfoEntrySelectionKey(bookName, uid) {
+    return `${String(bookName || "")}::${String(uid ?? "")}`;
+  }
+
+  function getWorldInfoEntryOpenSet(bookName, create = false) {
+    const normalizedName = String(bookName || "");
+    if (!normalizedName) return null;
+    let openSet = cfmWorldInfoEntryOpenDetails.get(normalizedName);
+    if (!openSet && create) {
+      openSet = new Set();
+      cfmWorldInfoEntryOpenDetails.set(normalizedName, openSet);
+    }
+    return openSet || null;
+  }
+
+  function isWorldInfoEntryDetailOpen(bookName, uid) {
+    return !!getWorldInfoEntryOpenSet(bookName)?.has(String(uid ?? ""));
+  }
+
+  function toggleWorldInfoEntryDetail(bookName, uid) {
+    const normalizedName = String(bookName || "");
+    const normalizedUid = String(uid ?? "");
+    if (!normalizedName || !normalizedUid) return false;
+    const openSet = getWorldInfoEntryOpenSet(normalizedName, true);
+    const willOpen = !openSet.has(normalizedUid);
+    openSet.clear();
+    if (willOpen) {
+      openSet.add(normalizedUid);
+    } else {
+      cfmWorldInfoEntryOpenDetails.delete(normalizedName);
+    }
+    return willOpen;
+  }
+
+  function collapseWorldInfoEntryDetails(bookName = null) {
+    if (bookName === null || bookName === undefined) {
+      cfmWorldInfoEntryOpenDetails.clear();
+      return;
+    }
+    cfmWorldInfoEntryOpenDetails.delete(String(bookName || ""));
+  }
+
+  async function fetchWorldInfoDetailData(bookName) {
+    const normalizedName = String(bookName || "");
+    if (!normalizedName) return null;
+    const resp = await fetch("/api/worldinfo/get", {
+      method: "POST",
+      headers: getContext().getRequestHeaders(),
+      body: JSON.stringify({ name: normalizedName }),
+    });
+    if (!resp.ok) {
+      throw new Error(`获取世界书「${normalizedName}」失败`);
+    }
+    return await resp.json();
+  }
+
+  async function saveWorldInfoDetailData(bookName, worldInfoData) {
+    const normalizedName = String(bookName || "");
+    const resp = await fetch("/api/worldinfo/edit", {
+      method: "POST",
+      headers: getContext().getRequestHeaders(),
+      body: JSON.stringify({ name: normalizedName, data: worldInfoData }),
+    });
+    if (!resp.ok) {
+      throw new Error(`保存世界书「${normalizedName}」失败`);
+    }
+  }
+
+  function getWorldInfoEntryDetailSortMode() {
+    ensureResourceSettings();
+    const mode = String(
+      extension_settings[extensionName].worldInfoEntryDetailSortMode ||
+        "custom",
+    );
+    return mode === "priority" ? "priority" : "custom";
+  }
+
+  function setWorldInfoEntryDetailSortMode(mode) {
+    ensureResourceSettings();
+    extension_settings[extensionName].worldInfoEntryDetailSortMode =
+      mode === "priority" ? "priority" : "custom";
+    getContext().saveSettingsDebounced();
+  }
+
+  function sortWorldInfoEntriesForDetail(entries, sortMode = "custom") {
+    const normalizedEntries = Array.isArray(entries) ? Array.from(entries) : [];
+    const normalizedMode =
+      String(sortMode || "custom") === "priority" ? "priority" : "custom";
+
+    // Secondary and tertiary sorts (matching SillyTavern native behavior)
+    const secondarySort = (a, b) =>
+      Number(b?.order ?? 0) - Number(a?.order ?? 0);
+    const tertiarySort = (a, b) => Number(a?.uid ?? 0) - Number(b?.uid ?? 0);
+
+    return normalizedEntries.sort((a, b) => {
+      let primaryResult;
+      if (normalizedMode === "priority") {
+        // Match SillyTavern native: constant first, then normal, then disabled
+        const aValue = a?.enabled === false ? 2 : a?.constant ? 0 : 1;
+        const bValue = b?.enabled === false ? 2 : b?.constant ? 0 : 1;
+        primaryResult = aValue - bValue;
+      } else {
+        primaryResult =
+          Number(a?.displayIndex ?? Number.MAX_SAFE_INTEGER) -
+          Number(b?.displayIndex ?? Number.MAX_SAFE_INTEGER);
+      }
+      return primaryResult || secondarySort(a, b) || tertiarySort(a, b);
+    });
+  }
+
+  function getWorldInfoEntriesForDetail(
+    bookName,
+    worldInfoData,
+    sortMode = "custom",
+  ) {
+    const entryMap =
+      worldInfoData?.entries && typeof worldInfoData.entries === "object"
+        ? worldInfoData.entries
+        : {};
+    return sortWorldInfoEntriesForDetail(
+      Object.values(entryMap)
+        .filter((entry) => entry && typeof entry === "object")
+        .map((entry) => {
+          const uid = String(entry.uid ?? entry.id ?? "");
+          const primaryKeys = Array.isArray(entry.key)
+            ? entry.key.map((item) => String(item || "")).filter(Boolean)
+            : [];
+          const secondaryKeys = Array.isArray(entry.keysecondary)
+            ? entry.keysecondary
+                .map((item) => String(item || ""))
+                .filter(Boolean)
+            : [];
+          const label = String(
+            entry.comment || primaryKeys[0] || `条目 ${uid || "未命名"}`,
+          );
+          return {
+            bookName: String(bookName || ""),
+            uid,
+            label,
+            comment: String(entry.comment || ""),
+            content: String(entry.content || ""),
+            primaryKeys,
+            secondaryKeys,
+            order: Number(entry.order ?? 0),
+            displayIndex: Number(entry.displayIndex ?? Number.MAX_SAFE_INTEGER),
+            depth: Number(entry.depth ?? 0),
+            constant: !!entry.constant,
+            enabled: !entry.disable,
+            raw: entry,
+          };
+        }),
+      sortMode,
+    );
+  }
+
+  function toggleWorldInfoEntryBatchItem(bookName, uid, shiftKey, entries) {
+    const normalizedUid = String(uid ?? "");
+    if (!normalizedUid) return;
+    const normalizedEntries = Array.isArray(entries) ? entries : [];
+    const visibleKeys = normalizedEntries
+      .map((entry) => getWorldInfoEntrySelectionKey(bookName, entry?.uid))
+      .filter((key) => !key.endsWith("::"));
+    const normalizedKey = getWorldInfoEntrySelectionKey(
+      bookName,
+      normalizedUid,
+    );
+
+    if (
+      (shiftKey || cfmWorldInfoEntryBatchRangeMode) &&
+      cfmWorldInfoEntryBatchLastClicked
+    ) {
+      const lastIdx = visibleKeys.indexOf(cfmWorldInfoEntryBatchLastClicked);
+      const curIdx = visibleKeys.indexOf(normalizedKey);
+      if (lastIdx !== -1 && curIdx !== -1) {
+        const start = Math.min(lastIdx, curIdx);
+        const end = Math.max(lastIdx, curIdx);
+        for (let i = start; i <= end; i++) {
+          if (visibleKeys[i])
+            cfmWorldInfoEntryBatchSelected.add(visibleKeys[i]);
+        }
+      }
+    } else if (cfmWorldInfoEntryBatchSelected.has(normalizedKey)) {
+      cfmWorldInfoEntryBatchSelected.delete(normalizedKey);
+    } else {
+      cfmWorldInfoEntryBatchSelected.add(normalizedKey);
+    }
+
+    cfmWorldInfoEntryBatchLastClicked = normalizedKey;
+  }
+
+  async function toggleWorldInfoEntryActivation(bookName, uid, activate) {
+    const normalizedName = String(bookName || "");
+    const normalizedUid = String(uid ?? "");
+    if (!normalizedName || !normalizedUid) return false;
+
+    const worldInfoData = await fetchWorldInfoDetailData(normalizedName);
+    const targetEntry = worldInfoData?.entries?.[normalizedUid];
+    if (!targetEntry) {
+      throw new Error(`找不到世界书条目 UID=${normalizedUid}`);
+    }
+
+    targetEntry.disable = !activate;
+    targetEntry.enabled = activate;
+    await saveWorldInfoDetailData(normalizedName, worldInfoData);
+    return true;
+  }
+
+  /**
+   * 复制世界书条目（在同一世界书内创建副本）
+   * @param {string} bookName - 世界书名称
+   * @param {string} uid - 要复制的条目 UID
+   * @returns {Promise<object|null>} 新创建的条目，失败返回 null
+   */
+  async function duplicateWorldInfoEntryInBook(bookName, uid) {
+    const normalizedName = String(bookName || "");
+    const normalizedUid = String(uid ?? "");
+    if (!normalizedName || !normalizedUid) return null;
+
+    const worldInfoData = await fetchWorldInfoDetailData(normalizedName);
+    if (!worldInfoData?.entries?.[normalizedUid]) {
+      throw new Error(`找不到世界书条目 UID=${normalizedUid}`);
+    }
+
+    // 深拷贝原条目数据
+    const originalEntry = structuredClone(worldInfoData.entries[normalizedUid]);
+    delete originalEntry.uid;
+
+    // 给副本的 comment 加"副本"后缀（参考预设条目复制的命名逻辑）
+    const existingComments = new Set(
+      Object.values(worldInfoData.entries)
+        .filter((e) => e && typeof e === "object")
+        .map((e) => String(e.comment || "")),
+    );
+    const baseComment = String(originalEntry.comment || "").trim();
+    if (baseComment) {
+      let newComment = `${baseComment} 副本`;
+      let idx = 2;
+      while (existingComments.has(newComment)) {
+        newComment = `${baseComment} 副本${idx}`;
+        idx++;
+      }
+      originalEntry.comment = newComment;
+    }
+
+    // 找到最大 UID 并分配新 UID
+    const existingUids = Object.keys(worldInfoData.entries)
+      .map(Number)
+      .filter((n) => !isNaN(n));
+    const newUid = existingUids.length > 0 ? Math.max(...existingUids) + 1 : 0;
+
+    // 创建新条目
+    const newEntry = { ...originalEntry, uid: newUid };
+    worldInfoData.entries[newUid] = newEntry;
+
+    await saveWorldInfoDetailData(normalizedName, worldInfoData);
+    return newEntry;
+  }
+
+  /**
+   * 删除世界书条目
+   * @param {string} bookName - 世界书名称
+   * @param {string} uid - 要删除的条目 UID
+   * @param {Object} [options] - 选项
+   * @param {boolean} [options.silent=false] - 是否跳过确认弹窗
+   * @returns {Promise<boolean>} 是否成功删除
+   */
+  async function deleteWorldInfoEntryInBook(
+    bookName,
+    uid,
+    { silent = false } = {},
+  ) {
+    const normalizedName = String(bookName || "");
+    const normalizedUid = String(uid ?? "");
+    if (!normalizedName || !normalizedUid) return false;
+
+    const worldInfoData = await fetchWorldInfoDetailData(normalizedName);
+    if (!worldInfoData?.entries?.[normalizedUid]) {
+      throw new Error(`找不到世界书条目 UID=${normalizedUid}`);
+    }
+
+    if (!silent) {
+      const entry = worldInfoData.entries[normalizedUid];
+      const entryLabel =
+        entry?.comment || (entry?.key || [])[0] || `UID ${normalizedUid}`;
+      const confirmed = confirm(
+        `确定要删除条目「${entryLabel}」吗？\n此操作不可撤销！`,
+      );
+      if (!confirmed) return false;
+    }
+
+    // 删除条目
+    delete worldInfoData.entries[normalizedUid];
+
+    // 清理 originalData（如果存在）
+    if (
+      worldInfoData.originalData &&
+      Array.isArray(worldInfoData.originalData.entries)
+    ) {
+      const originalIndex = worldInfoData.originalData.entries.findIndex(
+        (e) => e?.uid == normalizedUid,
+      );
+      if (originalIndex !== -1) {
+        worldInfoData.originalData.entries.splice(originalIndex, 1);
+      }
+    }
+
+    await saveWorldInfoDetailData(normalizedName, worldInfoData);
+    return true;
+  }
+
+  /**
+   * 批量复制世界书条目
+   * @param {string} bookName - 世界书名称
+   * @param {string[]} selectionKeys - 选中的条目 key 列表（格式：bookName::uid）
+   * @returns {Promise<number>} 成功复制的条目数
+   */
+  async function batchDuplicateWorldInfoEntries(bookName, selectionKeys) {
+    const normalizedName = String(bookName || "");
+    const prefix = `${normalizedName}::`;
+    const targetUids = Array.from(
+      new Set(
+        (Array.isArray(selectionKeys) ? selectionKeys : [])
+          .map((key) => String(key || ""))
+          .filter((key) => key.startsWith(prefix))
+          .map((key) => key.slice(prefix.length))
+          .filter(Boolean),
+      ),
+    );
+    if (!targetUids.length) {
+      toastr.warning("请先选择要复制的世界书条目");
+      return 0;
+    }
+
+    const worldInfoData = await fetchWorldInfoDetailData(normalizedName);
+    const existingUids = Object.keys(worldInfoData.entries)
+      .map(Number)
+      .filter((n) => !isNaN(n));
+    let nextUid = existingUids.length > 0 ? Math.max(...existingUids) + 1 : 0;
+    let duplicatedCount = 0;
+
+    for (const uid of targetUids) {
+      const entry = worldInfoData?.entries?.[uid];
+      if (!entry) continue;
+      const cloned = structuredClone(entry);
+      delete cloned.uid;
+      cloned.uid = nextUid;
+      worldInfoData.entries[nextUid] = cloned;
+      nextUid++;
+      duplicatedCount++;
+    }
+
+    if (!duplicatedCount) {
+      toastr.warning("所选条目不支持复制操作");
+      return 0;
+    }
+
+    await saveWorldInfoDetailData(normalizedName, worldInfoData);
+    toastr.success(`已复制 ${duplicatedCount} 个世界书条目`);
+    refreshWorldInfoPanelView();
+    return duplicatedCount;
+  }
+
+  /**
+   * 批量删除世界书条目
+   * @param {string} bookName - 世界书名称
+   * @param {string[]} selectionKeys - 选中的条目 key 列表（格式：bookName::uid）
+   * @returns {Promise<number>} 成功删除的条目数
+   */
+  async function batchDeleteWorldInfoEntries(bookName, selectionKeys) {
+    const normalizedName = String(bookName || "");
+    const prefix = `${normalizedName}::`;
+    const targetUids = Array.from(
+      new Set(
+        (Array.isArray(selectionKeys) ? selectionKeys : [])
+          .map((key) => String(key || ""))
+          .filter((key) => key.startsWith(prefix))
+          .map((key) => key.slice(prefix.length))
+          .filter(Boolean),
+      ),
+    );
+    if (!targetUids.length) {
+      toastr.warning("请先选择要删除的世界书条目");
+      return 0;
+    }
+
+    const confirmed = confirm(
+      `确定要删除选中的 ${targetUids.length} 个条目吗？\n此操作不可撤销！`,
+    );
+    if (!confirmed) return 0;
+
+    const worldInfoData = await fetchWorldInfoDetailData(normalizedName);
+    let deletedCount = 0;
+
+    for (const uid of targetUids) {
+      if (!worldInfoData?.entries?.[uid]) continue;
+      delete worldInfoData.entries[uid];
+      // 清理 originalData
+      if (
+        worldInfoData.originalData &&
+        Array.isArray(worldInfoData.originalData.entries)
+      ) {
+        const originalIndex = worldInfoData.originalData.entries.findIndex(
+          (e) => e?.uid == uid,
+        );
+        if (originalIndex !== -1) {
+          worldInfoData.originalData.entries.splice(originalIndex, 1);
+        }
+      }
+      deletedCount++;
+    }
+
+    if (!deletedCount) {
+      toastr.warning("所选条目不支持删除操作");
+      return 0;
+    }
+
+    await saveWorldInfoDetailData(normalizedName, worldInfoData);
+    toastr.success(`已删除 ${deletedCount} 个世界书条目`);
+    refreshWorldInfoPanelView();
+    return deletedCount;
+  }
+
+  async function applyWorldInfoEntryBatchActivation(
+    bookName,
+    selectionKeys,
+    activate,
+  ) {
+    const normalizedName = String(bookName || "");
+    const prefix = `${normalizedName}::`;
+    const targetUids = Array.from(
+      new Set(
+        (Array.isArray(selectionKeys) ? selectionKeys : [])
+          .map((key) => String(key || ""))
+          .filter((key) => key.startsWith(prefix))
+          .map((key) => key.slice(prefix.length))
+          .filter(Boolean),
+      ),
+    );
+    if (!targetUids.length) {
+      toastr.warning("请先选择要操作的世界书条目");
+      return;
+    }
+
+    const worldInfoData = await fetchWorldInfoDetailData(normalizedName);
+    let changedCount = 0;
+    for (const uid of targetUids) {
+      const entry = worldInfoData?.entries?.[uid];
+      if (!entry) continue;
+      entry.disable = !activate;
+      entry.enabled = activate;
+      changedCount++;
+    }
+
+    if (!changedCount) {
+      toastr.warning("所选条目不支持批量激活操作");
+      return;
+    }
+
+    await saveWorldInfoDetailData(normalizedName, worldInfoData);
+    toastr.success(
+      `已${activate ? "激活" : "取消激活"} ${changedCount} 个世界书条目`,
+    );
+    refreshWorldInfoPanelView();
+  }
+
+  function getPresetDetailActivePresets(presetName) {
+    ensureSettings();
+    const presetKey = String(presetName || "");
+    if (!presetKey) return [];
+    const store =
+      extension_settings[extensionName].presetDetailActivePresets || {};
+    if (!Array.isArray(store[presetKey])) store[presetKey] = [];
+    extension_settings[extensionName].presetDetailActivePresets = store;
+    return store[presetKey];
+  }
+
+  function getPresetDetailAppliedPresetIndices(presetName) {
+    ensureSettings();
+    const presetKey = String(presetName || "");
+    if (!presetKey) return [];
+    const store =
+      extension_settings[extensionName]._presetDetailAppliedPresetIndices || {};
+    if (!Array.isArray(store[presetKey])) store[presetKey] = [];
+    extension_settings[extensionName]._presetDetailAppliedPresetIndices = store;
+    return store[presetKey];
+  }
+
+  function setPresetDetailAppliedPresetIndices(presetName, indices) {
+    ensureSettings();
+    const presetKey = String(presetName || "");
+    if (!presetKey) return;
+    const store =
+      extension_settings[extensionName]._presetDetailAppliedPresetIndices || {};
+    store[presetKey] = Array.from(
+      new Set(
+        (Array.isArray(indices) ? indices : []).filter(
+          (idx) => Number.isInteger(idx) && idx >= 0,
+        ),
+      ),
+    );
+    extension_settings[extensionName]._presetDetailAppliedPresetIndices = store;
+    getContext().saveSettingsDebounced();
+  }
+
+  function normalizePresetDetailFieldKeys(fieldKeys) {
+    return Array.from(
+      new Set(
+        (Array.isArray(fieldKeys) ? fieldKeys : [])
+          .map((fieldKey) => String(fieldKey || ""))
+          .filter((fieldKey) => fieldKey.startsWith("prompts.")),
+      ),
+    );
+  }
+
+  function getAvailablePresetDetailFieldKeySet(presetData) {
+    return new Set(
+      getPresetDetailFields(presetData)
+        .filter((field) => String(field?.key || "").startsWith("prompts."))
+        .map((field) => String(field.key || ""))
+        .filter(Boolean),
+    );
+  }
+
+  function sanitizePresetDetailGroupState(
+    presetName,
+    presetData,
+    save = false,
+  ) {
+    const presets = getPresetDetailActivePresets(presetName);
+    const validFieldKeySet = getAvailablePresetDetailFieldKeySet(presetData);
+    let presetChanged = false;
+    for (const preset of presets) {
+      if (!preset || typeof preset !== "object") continue;
+      const prevFields = normalizePresetDetailFieldKeys(preset.fields);
+      const nextFields = prevFields.filter((fieldKey) =>
+        validFieldKeySet.has(fieldKey),
+      );
+      const sameFields =
+        prevFields.length === nextFields.length &&
+        prevFields.every((fieldKey, idx) => fieldKey === nextFields[idx]);
+      if (!sameFields || !Array.isArray(preset.fields)) {
+        preset.fields = nextFields;
+        presetChanged = true;
+      }
+    }
+    const applied = getPresetDetailAppliedPresetIndices(presetName);
+    const nextApplied = applied.filter(
+      (idx) =>
+        presets[idx] &&
+        Array.isArray(presets[idx].fields) &&
+        normalizePresetDetailFieldKeys(presets[idx].fields).length > 0,
+    );
+    const appliedChanged =
+      applied.length !== nextApplied.length ||
+      applied.some((idx, i) => idx !== nextApplied[i]);
+    if (appliedChanged) {
+      setPresetDetailAppliedPresetIndices(presetName, nextApplied);
+    } else if (save && presetChanged) {
+      getContext().saveSettingsDebounced();
+    }
+    return {
+      presets,
+      validFieldKeySet,
+      changed: presetChanged || appliedChanged,
+    };
+  }
+
+  function savePresetDetailActivePreset(presetName, name, fieldKeys) {
+    const presets = getPresetDetailActivePresets(presetName);
+    const normalizedKeys = normalizePresetDetailFieldKeys(fieldKeys);
+    const existing = presets.find((p) => p.name === name);
+    if (existing) {
+      existing.fields = normalizedKeys;
+    } else {
+      presets.push({ name, fields: normalizedKeys });
+    }
+    getContext().saveSettingsDebounced();
+  }
+
+  function deletePresetDetailActivePreset(presetName, name) {
+    const presets = getPresetDetailActivePresets(presetName);
+    const remaining = presets.filter((p) => p.name !== name);
+    extension_settings[extensionName].presetDetailActivePresets[
+      String(presetName || "")
+    ] = remaining;
+    getContext().saveSettingsDebounced();
+  }
+
+  function renamePresetDetailActivePreset(presetName, oldName, newName) {
+    const presets = getPresetDetailActivePresets(presetName);
+    const target = presets.find((p) => p.name === oldName);
+    if (target) {
+      target.name = newName;
+      getContext().saveSettingsDebounced();
+    }
+  }
+
+  function getEnabledPresetDetailFieldKeys(presetData) {
+    return getPresetDetailFields(presetData)
+      .filter(
+        (field) =>
+          !!field?.enabled && String(field?.key || "").startsWith("prompts."),
+      )
+      .map((field) => String(field.key || ""));
+  }
+
+  function setPresetDetailFieldsEnabled(presetData, fieldKeys, enabled) {
+    const normalizedKeys = normalizePresetDetailFieldKeys(fieldKeys);
+    let changedCount = 0;
+    for (const fieldKey of normalizedKeys) {
+      const promptKey = fieldKey.slice("prompts.".length);
+      if (!promptKey) continue;
+      setPresetPromptEnabled(presetData, promptKey, enabled);
+      changedCount++;
+    }
+    return changedCount;
+  }
+
+  async function showPresetDetailGroupPanel(presetName) {
+    if ($("#cfm-preset-detail-group-panel-overlay").length > 0) return;
+    if (!ensureCurrentAppliedPreset(presetName, "预设分组")) return;
+
+    const pm = getContext().getPresetManager();
+    if (!pm) {
+      toastr.error("无法获取预设管理器");
+      return;
+    }
+    const presetData = getPresetDataForDetail(pm, presetName);
+    if (!presetData) {
+      toastr.error(`找不到预设「${presetName}」的数据`);
+      return;
+    }
+    const ensureCurrent = () =>
+      ensureCurrentAppliedPreset(presetName, "预设分组");
+
+    const fields = getPresetDetailFields(presetData).filter((field) =>
+      String(field?.key || "").startsWith("prompts."),
+    );
+    const enabledIds = getEnabledPresetDetailFieldKeys(presetData);
+    const { presets } = sanitizePresetDetailGroupState(
+      presetName,
+      presetData,
+      true,
+    );
+    const enabledSet = new Set(enabledIds);
+    let matchedPresetName = null;
+    for (const p of presets) {
+      const presetFields = normalizePresetDetailFieldKeys(p.fields);
+      if (
+        presetFields.length === enabledIds.length &&
+        presetFields.every((fieldKey) => enabledSet.has(fieldKey))
+      ) {
+        matchedPresetName = p.name;
+        break;
+      }
+    }
+
+    const presetsHtml =
+      presets.length === 0
+        ? `<div class="cfm-wi-preset-empty">暂无已保存的分组</div>`
+        : presets
+            .map((p, idx) => {
+              const presetFields = normalizePresetDetailFieldKeys(p.fields);
+              return `
+        <div class="cfm-wi-preset-item" data-preset-idx="${idx}">
+          <div class="cfm-wi-preset-item-left">
+            <span class="cfm-wi-preset-item-name"><i class="fa-solid fa-layer-group"></i> ${escapeHtml(p.name)}</span>
+            <span class="cfm-wi-preset-item-count">${presetFields.length} 个</span>
+          </div>
+          <span class="cfm-wi-preset-item-actions">
+            <i class="fa-solid fa-play cfm-wi-preset-apply" title="应用分组"></i>
+            <i class="fa-solid fa-stop cfm-wi-preset-unapply" title="取消应用"></i>
+            <i class="fa-solid fa-pen cfm-wi-preset-edit" title="编辑"></i>
+            <i class="fa-solid fa-trash cfm-wi-preset-del" title="删除"></i>
+          </span>
+        </div>
+      `;
+            })
+            .join("");
+
+    const overlay = $(`
+      <div class="cfm-edit-popup-overlay" id="cfm-preset-detail-group-panel-overlay">
+        <div class="cfm-edit-popup cfm-wi-preset-panel">
+          <div class="cfm-edit-popup-title"><i class="fa-solid fa-layer-group" style="margin-right:6px;"></i>预设条目激活分组</div>
+          <div class="cfm-edit-popup-names"><div class="cfm-edit-name-item">${escapeHtml(presetName)}</div></div>
+          <div class="cfm-wi-preset-save-section">
+            <div class="cfm-wi-preset-save-row">
+              <input type="text" class="cfm-edit-input" id="cfm-preset-detail-group-name-input" placeholder="输入分组名称，保存当前激活的 ${enabledIds.length} 个预设条目">
+              <button class="cfm-edit-popup-confirm" id="cfm-preset-detail-group-save-confirm" ${enabledIds.length === 0 ? "disabled" : ""}><i class="fa-solid fa-floppy-disk"></i> 保存</button>
+            </div>
+            ${enabledIds.length === 0 ? '<div class="cfm-wi-preset-save-hint">当前没有激活的预设条目可保存</div>' : ""}
+            ${matchedPresetName ? `<div class="cfm-wi-preset-save-hint" style="color:#f9e2af;">当前激活组合与已有分组「${escapeHtml(matchedPresetName)}」相同</div>` : ""}
+          </div>
+          <div class="cfm-wi-preset-divider"></div>
+          <div class="cfm-wi-preset-list-section">
+            <div class="cfm-wi-preset-list-title">已保存的分组</div>
+            <div class="cfm-wi-preset-list">${presetsHtml}</div>
+          </div>
+          <div class="cfm-edit-popup-actions">
+            <button class="cfm-edit-popup-cancel">关闭</button>
+          </div>
+        </div>
+      </div>
+    `);
+    $("body").append(overlay);
+    overlay.find("#cfm-preset-detail-group-name-input").focus();
+
+    overlay.find(".cfm-edit-popup-cancel").on("click", () => overlay.remove());
+    overlay.on("click", (e) => {
+      if ($(e.target).is(overlay)) overlay.remove();
+    });
+
+    overlay.find("#cfm-preset-detail-group-name-input").on("keydown", (e) => {
+      if (e.key === "Enter")
+        overlay.find("#cfm-preset-detail-group-save-confirm").trigger("click");
+      if (e.key === "Escape") overlay.remove();
+    });
+    overlay.find("#cfm-preset-detail-group-save-confirm").on("click", () => {
+      if (!ensureCurrent()) return;
+      if (enabledIds.length === 0) return;
+      const name = overlay
+        .find("#cfm-preset-detail-group-name-input")
+        .val()
+        .trim();
+      if (!name) {
+        toastr.warning("请输入分组名称");
+        return;
+      }
+      const existing = getPresetDetailActivePresets(presetName).find(
+        (p) => p.name === name,
+      );
+      if (existing) {
+        if (!confirm(`分组「${name}」已存在，是否覆盖？`)) return;
+      }
+      savePresetDetailActivePreset(presetName, name, enabledIds);
+      toastr.success(
+        `已保存激活分组「${name}」（${enabledIds.length} 个预设条目）`,
+      );
+      overlay.remove();
+    });
+
+    overlay.find(".cfm-wi-preset-apply").on("click", async function (e) {
+      e.stopPropagation();
+      e.preventDefault();
+      if (!ensureCurrent()) return;
+      const idx = parseInt(
+        $(this).closest(".cfm-wi-preset-item").attr("data-preset-idx"),
+        10,
+      );
+      const currentPresets = getPresetDetailActivePresets(presetName);
+      const preset = currentPresets[idx];
+      if (!preset) {
+        toastr.error("分组不存在");
+        return;
+      }
+      try {
+        const applied = getPresetDetailAppliedPresetIndices(presetName);
+        const otherApplied = applied.filter(
+          (i) => i !== idx && currentPresets[i],
+        );
+
+        let mode = "stack";
+        if (otherApplied.length > 0) {
+          const otherNames = otherApplied
+            .map((i) => currentPresets[i].name)
+            .join("、");
+          const choice = await new Promise((resolve) => {
+            const confirmOverlay = $(`
+              <div class="cfm-edit-popup-overlay" style="z-index:100001;">
+                <div class="cfm-edit-popup" style="max-width:380px;">
+                  <div class="cfm-edit-popup-title">应用方式</div>
+                  <div class="cfm-edit-field" style="font-size:13px;line-height:1.6;">
+                    当前已有分组「${escapeHtml(otherNames)}」处于应用状态。<br>请选择应用方式：
+                  </div>
+                  <div class="cfm-edit-popup-actions" style="gap:8px;">
+                    <button class="cfm-edit-popup-cancel" data-choice="cancel">取消</button>
+                    <button class="cfm-edit-popup-confirm" data-choice="replace" style="background:#f38ba8;">替换</button>
+                    <button class="cfm-edit-popup-confirm" data-choice="stack">叠加</button>
+                  </div>
+                </div>
+              </div>
+            `);
+            $("body").append(confirmOverlay);
+            confirmOverlay.find("[data-choice]").on("click", function () {
+              resolve($(this).attr("data-choice"));
+              confirmOverlay.remove();
+            });
+            confirmOverlay.on("click", function (ev) {
+              if ($(ev.target).is(confirmOverlay)) {
+                resolve("cancel");
+                confirmOverlay.remove();
+              }
+            });
+          });
+          if (choice === "cancel") return;
+          mode = choice;
+        }
+
+        const latestPresetData = getPresetDataForDetail(pm, presetName);
+        if (!latestPresetData) {
+          toastr.error(`找不到预设「${presetName}」的数据`);
+          return;
+        }
+
+        const presetFields = normalizePresetDetailFieldKeys(preset.fields);
+        if (mode === "replace") {
+          const keepFields = new Set(presetFields);
+          for (const oi of otherApplied) {
+            const otherFields = normalizePresetDetailFieldKeys(
+              currentPresets[oi]?.fields,
+            );
+            for (const fieldKey of otherFields) {
+              if (!keepFields.has(fieldKey)) {
+                setPresetDetailFieldsEnabled(
+                  latestPresetData,
+                  [fieldKey],
+                  false,
+                );
+              }
+            }
+          }
+        }
+
+        setPresetDetailFieldsEnabled(latestPresetData, presetFields, true);
+        await saveNormalizedPresetData(pm, presetName, latestPresetData);
+
+        const newApplied =
+          mode === "replace"
+            ? [idx]
+            : [...otherApplied.filter((i) => i !== idx), idx];
+        setPresetDetailAppliedPresetIndices(presetName, newApplied);
+
+        toastr.success(
+          `已${mode === "replace" ? "替换" : "叠加"}应用分组「${preset.name}」`,
+        );
+        overlay.remove();
+        refreshPresetPanelView();
+      } catch (err) {
+        console.error("[CFM] 应用预设详情分组失败", err);
+        toastr.error("应用分组失败");
+      }
+    });
+
+    overlay.find(".cfm-wi-preset-unapply").on("click", async function (e) {
+      e.stopPropagation();
+      e.preventDefault();
+      if (!ensureCurrent()) return;
+      const idx = parseInt(
+        $(this).closest(".cfm-wi-preset-item").attr("data-preset-idx"),
+        10,
+      );
+      const currentPresets = getPresetDetailActivePresets(presetName);
+      const preset = currentPresets[idx];
+      if (!preset) {
+        toastr.error("分组不存在");
+        return;
+      }
+      try {
+        const applied = getPresetDetailAppliedPresetIndices(presetName);
+        if (!applied.includes(idx)) {
+          toastr.warning(`分组「${preset.name}」当前未处于应用状态`);
+          return;
+        }
+        const otherApplied = applied.filter(
+          (i) => i !== idx && currentPresets[i],
+        );
+        const otherFields = new Set();
+        for (const oi of otherApplied) {
+          for (const fieldKey of normalizePresetDetailFieldKeys(
+            currentPresets[oi]?.fields,
+          )) {
+            otherFields.add(fieldKey);
+          }
+        }
+
+        const latestPresetData = getPresetDataForDetail(pm, presetName);
+        if (!latestPresetData) {
+          toastr.error(`找不到预设「${presetName}」的数据`);
+          return;
+        }
+
+        let removedCount = 0;
+        for (const fieldKey of normalizePresetDetailFieldKeys(preset.fields)) {
+          if (!otherFields.has(fieldKey)) {
+            removedCount += setPresetDetailFieldsEnabled(
+              latestPresetData,
+              [fieldKey],
+              false,
+            );
+          }
+        }
+
+        await saveNormalizedPresetData(pm, presetName, latestPresetData);
+        setPresetDetailAppliedPresetIndices(presetName, otherApplied);
+
+        toastr.success(
+          `已取消应用分组「${preset.name}」（取消激活 ${removedCount} 个独占预设条目）`,
+        );
+        overlay.remove();
+        refreshPresetPanelView();
+      } catch (err) {
+        console.error("[CFM] 取消应用预设详情分组失败", err);
+        toastr.error("取消应用分组失败");
+      }
+    });
+
+    overlay.find(".cfm-wi-preset-edit").on("click", function (e) {
+      e.stopPropagation();
+      e.preventDefault();
+      if (!ensureCurrent()) return;
+      const idx = parseInt(
+        $(this).closest(".cfm-wi-preset-item").attr("data-preset-idx"),
+        10,
+      );
+      const currentPresets = getPresetDetailActivePresets(presetName);
+      const preset = currentPresets[idx];
+      if (!preset) return;
+      overlay.remove();
+      showPresetDetailGroupEditPopup(presetName, preset);
+    });
+
+    overlay.find(".cfm-wi-preset-del").on("click", function (e) {
+      e.stopPropagation();
+      e.preventDefault();
+      if (!ensureCurrent()) return;
+      const idx = parseInt(
+        $(this).closest(".cfm-wi-preset-item").attr("data-preset-idx"),
+        10,
+      );
+      const currentPresets = getPresetDetailActivePresets(presetName);
+      const preset = currentPresets[idx];
+      if (!preset) return;
+      if (!confirm(`确定删除激活分组「${preset.name}」？`)) return;
+      const applied = getPresetDetailAppliedPresetIndices(presetName);
+      if (applied.includes(idx)) {
+        setPresetDetailAppliedPresetIndices(
+          presetName,
+          applied.filter((i) => i !== idx),
+        );
+      }
+      deletePresetDetailActivePreset(presetName, preset.name);
+      toastr.success(`已删除激活分组「${preset.name}」`);
+      overlay.remove();
+      showPresetDetailGroupPanel(presetName);
+    });
+  }
+
+  function showPresetDetailGroupEditPopup(presetName, preset) {
+    if ($("#cfm-preset-detail-group-edit-overlay").length > 0) return;
+    if (!ensureCurrentAppliedPreset(presetName, "预设分组")) return;
+
+    const pm = getContext().getPresetManager();
+    if (!pm) {
+      toastr.error("无法获取预设管理器");
+      return;
+    }
+    const presetData = getPresetDataForDetail(pm, presetName);
+    if (!presetData) {
+      toastr.error(`找不到预设「${presetName}」的数据`);
+      return;
+    }
+
+    const fields = getPresetDetailFields(presetData).filter((field) =>
+      String(field?.key || "").startsWith("prompts."),
+    );
+    const fieldSet = new Set(normalizePresetDetailFieldKeys(preset?.fields));
+    const fieldsHtml =
+      fields.length === 0
+        ? '<div class="cfm-wi-preset-empty">暂无可编辑的预设条目</div>'
+        : fields
+            .map((field) => {
+              const checked = fieldSet.has(String(field.key || ""))
+                ? "checked"
+                : "";
+              return `<label class="cfm-wi-preset-edit-item">
+          <input type="checkbox" value="${escapeHtml(String(field.key || ""))}" ${checked}>
+          <i class="fa-solid fa-list-check" style="color:#a6e3a1;"></i>
+          <span>${escapeHtml(String(field.label || field.key || "(未命名)"))}</span>
+        </label>`;
+            })
+            .join("");
+
+    const overlay = $(`
+      <div class="cfm-edit-popup-overlay" id="cfm-preset-detail-group-edit-overlay">
+        <div class="cfm-edit-popup cfm-wi-preset-edit-popup">
+          <div class="cfm-edit-popup-title">编辑预设条目激活分组</div>
+          <div class="cfm-edit-popup-names"><div class="cfm-edit-name-item">${escapeHtml(presetName)}</div></div>
+          <div class="cfm-edit-field">
+            <label>分组名称</label>
+            <input type="text" class="cfm-edit-input" id="cfm-preset-detail-group-edit-name" value="${escapeHtml(preset.name)}">
+          </div>
+          <div class="cfm-edit-field">
+            <label>包含的预设条目</label>
+            <div class="cfm-wi-preset-edit-search">
+              <input type="text" class="cfm-edit-input" id="cfm-preset-detail-group-edit-filter" placeholder="搜索...">
+            </div>
+            <div class="cfm-wi-preset-edit-list">${fieldsHtml}</div>
+          </div>
+          <div class="cfm-edit-popup-actions">
+            <button class="cfm-edit-popup-cancel">取消</button>
+            <button class="cfm-edit-popup-confirm">保存</button>
+          </div>
+        </div>
+      </div>
+    `);
+    $("body").append(overlay);
+
+    function applyEditFilters() {
+      const q = overlay
+        .find("#cfm-preset-detail-group-edit-filter")
+        .val()
+        .toLowerCase()
+        .trim();
+      overlay.find(".cfm-wi-preset-edit-item").each(function () {
+        const name = $(this).find("span").text().toLowerCase();
+        $(this).toggle(!q || name.includes(q));
+      });
+    }
+
+    overlay
+      .find("#cfm-preset-detail-group-edit-filter")
+      .on("input", applyEditFilters);
+    applyEditFilters();
+    overlay.find(".cfm-edit-popup-cancel").on("click", () => overlay.remove());
+    overlay.on("click", (e) => {
+      if ($(e.target).is(overlay)) overlay.remove();
+    });
+    overlay.find(".cfm-edit-popup-confirm").on("click", () => {
+      if (!ensureCurrentAppliedPreset(presetName, "预设分组")) return;
+      const newName = overlay
+        .find("#cfm-preset-detail-group-edit-name")
+        .val()
+        .trim();
+      if (!newName) {
+        toastr.warning("请输入分组名称");
+        return;
+      }
+      const existingOther = getPresetDetailActivePresets(presetName).find(
+        (p) => p.name === newName && p.name !== preset.name,
+      );
+      if (existingOther) {
+        toastr.warning(`分组名称「${newName}」已被使用`);
+        return;
+      }
+      const newFields = [];
+      overlay.find(".cfm-wi-preset-edit-item input:checked").each(function () {
+        newFields.push($(this).val());
+      });
+      if (newFields.length === 0) {
+        toastr.warning("请至少选择一个预设条目");
+        return;
+      }
+      if (newName !== preset.name) {
+        renamePresetDetailActivePreset(presetName, preset.name, newName);
+      }
+      savePresetDetailActivePreset(presetName, newName, newFields);
+      toastr.success(
+        `已更新激活分组「${newName}」（${newFields.length} 个预设条目）`,
+      );
+      overlay.remove();
+    });
+  }
+
+  async function showPresetDetailFieldPopup(presetName, field) {
+    if (!presetName || !field) return null;
+    const currentValue = String(field.value || "");
+    const multiline = currentValue.includes("\n") || currentValue.length > 120;
+    const rows = multiline ? 10 : 6;
+    const inputHtml = multiline
+      ? `<textarea class="cfm-edit-input" id="cfm-preset-detail-input" rows="${rows}" placeholder="输入${escapeHtml(field.label)}，留空则清空">${escapeHtml(currentValue)}</textarea>`
+      : `<input type="text" class="cfm-edit-input" id="cfm-preset-detail-input" value="${escapeHtml(currentValue)}" placeholder="输入${escapeHtml(field.label)}，留空则清空">`;
+
+    const overlay = $(`
+      <div class="cfm-edit-popup-overlay">
+        <div class="cfm-edit-popup cfm-preset-detail-popup">
+          <div class="cfm-edit-popup-title">编辑预设条目</div>
+          <div class="cfm-edit-popup-names"><div class="cfm-edit-name-item">${escapeHtml(presetName)}</div></div>
+          <div class="cfm-edit-popup-field">
+            <label>${escapeHtml(field.label)}</label>
+            ${inputHtml}
+          </div>
+          <div class="cfm-edit-popup-actions">
+            <button class="cfm-btn cfm-edit-popup-cancel">取消</button>
+            ${currentValue ? '<button class="cfm-btn cfm-edit-popup-clear">清空</button>' : ""}
+            <button class="cfm-btn cfm-edit-popup-confirm">确认</button>
+          </div>
+        </div>
+      </div>
+    `);
+
+    $("body").append(overlay);
+    const input = overlay.find("#cfm-preset-detail-input");
+    input.trigger("focus");
+    if (input.is("textarea")) {
+      const node = input[0];
+      if (node && typeof node.selectionStart === "number") {
+        node.selectionStart = node.selectionEnd = node.value.length;
+      }
+    }
+
+    return new Promise((resolve) => {
+      const close = (result) => {
+        overlay.remove();
+        resolve(result);
+      };
+      overlay.find(".cfm-edit-popup-cancel").on("click", () => close(null));
+      overlay.on("click", (e) => {
+        if ($(e.target).hasClass("cfm-edit-popup-overlay")) close(null);
+      });
+      overlay.find(".cfm-edit-popup-clear").on("click", () => {
+        if (!window.confirm(`确认清空${field.label}吗？`)) return;
+        close("");
+      });
+      overlay.find(".cfm-edit-popup-confirm").on("click", () => {
+        close(String(input.val() || "").trim());
+      });
+      input.on("keydown", (e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          close(null);
+        }
+        if (e.key === "Enter" && !input.is("textarea")) {
+          e.preventDefault();
+          overlay.find(".cfm-edit-popup-confirm").trigger("click");
+        }
+      });
+    });
+  }
+
+  function getPresetPromptOrderIdentifier(item) {
+    if (typeof item === "string") return item;
+    if (!item || typeof item !== "object") return "";
+    return String(
+      item.identifier ?? item.id ?? item.key ?? item.prompt ?? item.name ?? "",
+    );
+  }
+
+  function buildDuplicatedPresetPromptKey(existingPromptIds, sourcePromptKey) {
+    const normalizedSource = String(sourcePromptKey || "").trim() || "prompt";
+    const existingIds =
+      existingPromptIds instanceof Set
+        ? existingPromptIds
+        : new Set(
+            (Array.isArray(existingPromptIds)
+              ? existingPromptIds
+              : Object.keys(existingPromptIds || {})
+            )
+              .map((item) => String(item || "").trim())
+              .filter(Boolean),
+          );
+    const baseKey = `${normalizedSource}_copy`;
+    let candidate = baseKey;
+    let index = 2;
+    while (existingIds.has(candidate)) {
+      candidate = `${baseKey}_${index}`;
+      index += 1;
+    }
+    return candidate;
+  }
+
+  function buildDuplicatedPresetPromptLabel(existingLabels, sourceLabel) {
+    const baseLabel = String(sourceLabel || "").trim() || "新条目";
+    let candidate = `${baseLabel} 副本`;
+    let index = 2;
+    while (existingLabels.has(candidate)) {
+      candidate = `${baseLabel} 副本${index}`;
+      index += 1;
+    }
+    return candidate;
+  }
+
+  function normalizePresetPromptOrderItemKeyFields(item, promptKey) {
+    const normalizedKey = String(promptKey || "").trim();
+    if (!normalizedKey) return item;
+    const normalizedItem =
+      item && typeof item === "object" ? item : { identifier: normalizedKey };
+
+    normalizedItem.identifier = normalizedKey;
+    if (Object.prototype.hasOwnProperty.call(normalizedItem, "id")) {
+      normalizedItem.id = normalizedKey;
+    }
+    if (Object.prototype.hasOwnProperty.call(normalizedItem, "key")) {
+      normalizedItem.key = normalizedKey;
+    }
+    if (Object.prototype.hasOwnProperty.call(normalizedItem, "prompt")) {
+      normalizedItem.prompt = normalizedKey;
+    }
+
+    return normalizedItem;
+  }
+
+  async function savePresetDetailPromptOrder(presetName, orderedFieldKeys) {
+    const normalizedOrderedFieldKeys = Array.isArray(orderedFieldKeys)
+      ? orderedFieldKeys
+          .map((item) => String(item || "").trim())
+          .filter((item) => item.startsWith("prompts."))
+      : [];
+
+    const pm = getContext().getPresetManager();
+    if (!pm) {
+      toastr.error("无法获取预设管理器");
+      return false;
+    }
+
+    const presetData = getPresetDataForDetail(pm, presetName);
+    if (!presetData) {
+      toastr.error(`找不到预设「${presetName}」的数据`);
+      return false;
+    }
+
+    sanitizePresetPromptStructure(presetData);
+
+    const currentOrderedFieldKeys = getPresetDetailFields(presetData)
+      .map((item) => String(item?.key || "").trim())
+      .filter((item) => item.startsWith("prompts."));
+    if (currentOrderedFieldKeys.length < 2) return false;
+
+    const currentOrderedFieldKeySet = new Set(currentOrderedFieldKeys);
+    const seenFieldKeys = new Set();
+    const mergedOrderedFieldKeys = [];
+
+    for (const fieldKey of normalizedOrderedFieldKeys) {
+      if (
+        !currentOrderedFieldKeySet.has(fieldKey) ||
+        seenFieldKeys.has(fieldKey)
+      ) {
+        continue;
+      }
+      seenFieldKeys.add(fieldKey);
+      mergedOrderedFieldKeys.push(fieldKey);
+    }
+
+    for (const fieldKey of currentOrderedFieldKeys) {
+      if (seenFieldKeys.has(fieldKey)) continue;
+      seenFieldKeys.add(fieldKey);
+      mergedOrderedFieldKeys.push(fieldKey);
+    }
+
+    const orderChanged = currentOrderedFieldKeys.some(
+      (fieldKey, index) => mergedOrderedFieldKeys[index] !== fieldKey,
+    );
+    if (!orderChanged) return false;
+
+    const orderedPromptIds = mergedOrderedFieldKeys.map((item) =>
+      item.slice("prompts.".length),
+    );
+
+    const promptList = ensurePresetPromptList(presetData);
+    const promptMap = new Map(
+      promptList
+        .map((prompt) => [getPresetPromptIdentifier(prompt), prompt])
+        .filter(([identifier]) => !!identifier),
+    );
+    const reorderedPromptIdSet = new Set(orderedPromptIds);
+    const reorderedPrompts = orderedPromptIds
+      .map((promptId) => promptMap.get(promptId))
+      .filter(Boolean);
+    const leftoverPrompts = promptList.filter((prompt) => {
+      const identifier = getPresetPromptIdentifier(prompt);
+      return identifier && !reorderedPromptIdSet.has(identifier);
+    });
+    promptList.length = 0;
+    promptList.push(...reorderedPrompts, ...leftoverPrompts);
+
+    const existingOrderItemMap = new Map();
+    for (const item of getAllPresetPromptOrderEntries(presetData)) {
+      const identifier = getPresetPromptOrderIdentifier(item);
+      if (!identifier || existingOrderItemMap.has(identifier)) continue;
+      existingOrderItemMap.set(identifier, item);
+    }
+
+    const primaryOrderContainer = getPresetPromptOrderContainer(
+      presetData,
+      true,
+    );
+    const primaryOrder = Array.isArray(primaryOrderContainer?.order)
+      ? primaryOrderContainer.order
+      : (primaryOrderContainer.order = []);
+    primaryOrder.length = 0;
+
+    for (const promptId of orderedPromptIds) {
+      let orderItem = existingOrderItemMap.get(promptId);
+      orderItem =
+        orderItem && typeof orderItem === "object"
+          ? structuredClone(orderItem)
+          : { identifier: promptId };
+      orderItem = normalizePresetPromptOrderItemKeyFields(orderItem, promptId);
+
+      const promptValue = promptMap.get(promptId);
+      if (
+        promptValue &&
+        typeof orderItem?.enabled !== "boolean" &&
+        typeof promptValue?.enabled === "boolean"
+      ) {
+        orderItem.enabled = promptValue.enabled;
+      }
+
+      primaryOrder.push(orderItem);
+    }
+
+    for (const container of getAllPresetPromptOrderContainers(presetData)) {
+      if (
+        container === primaryOrderContainer ||
+        !Array.isArray(container?.order)
+      ) {
+        continue;
+      }
+      container.order = container.order.filter(
+        (item) =>
+          !reorderedPromptIdSet.has(getPresetPromptOrderIdentifier(item)),
+      );
+    }
+
+    try {
+      await saveNormalizedPresetData(pm, presetName, presetData);
+      refreshPresetPanelView();
+      return true;
+    } catch (error) {
+      console.error("[CFM] 预设条目排序失败:", error);
+      toastr.error(`排序失败: ${error.message || error}`);
+      return false;
+    }
+  }
+
+  async function reorderPresetDetailField(
+    presetName,
+    sourceFieldKey,
+    targetFieldKey,
+  ) {
+    const normalizedSourceFieldKey = String(sourceFieldKey || "").trim();
+    const normalizedTargetFieldKey = String(targetFieldKey || "").trim();
+    if (
+      !normalizedSourceFieldKey.startsWith("prompts.") ||
+      !normalizedTargetFieldKey.startsWith("prompts.")
+    ) {
+      return false;
+    }
+
+    const pm = getContext().getPresetManager();
+    const presetData = pm ? getPresetDataForDetail(pm, presetName) : null;
+    if (!presetData) return false;
+
+    const orderedFieldKeys = getPresetDetailFields(presetData)
+      .map((item) => String(item?.key || "").trim())
+      .filter((item) => item.startsWith("prompts."));
+    const sourceIndex = orderedFieldKeys.indexOf(normalizedSourceFieldKey);
+    const targetIndex = orderedFieldKeys.indexOf(normalizedTargetFieldKey);
+    if (
+      sourceIndex === -1 ||
+      targetIndex === -1 ||
+      sourceIndex === targetIndex
+    ) {
+      return false;
+    }
+
+    const [movedFieldKey] = orderedFieldKeys.splice(sourceIndex, 1);
+    orderedFieldKeys.splice(targetIndex, 0, movedFieldKey);
+    return savePresetDetailPromptOrder(presetName, orderedFieldKeys);
+  }
+
+  async function movePresetDetailFieldByStep(presetName, fieldKey, step) {
+    const normalizedFieldKey = String(fieldKey || "").trim();
+    const normalizedStep = Number(step);
+    if (
+      !normalizedFieldKey.startsWith("prompts.") ||
+      !Number.isInteger(normalizedStep) ||
+      normalizedStep === 0
+    ) {
+      return false;
+    }
+
+    const pm = getContext().getPresetManager();
+    const presetData = pm ? getPresetDataForDetail(pm, presetName) : null;
+    if (!presetData) return false;
+
+    const orderedFieldKeys = getPresetDetailFields(presetData)
+      .map((item) => String(item?.key || "").trim())
+      .filter((item) => item.startsWith("prompts."));
+    const sourceIndex = orderedFieldKeys.indexOf(normalizedFieldKey);
+    const targetIndex = sourceIndex + normalizedStep;
+    if (
+      sourceIndex === -1 ||
+      targetIndex < 0 ||
+      targetIndex >= orderedFieldKeys.length
+    ) {
+      return false;
+    }
+
+    return reorderPresetDetailField(
+      presetName,
+      normalizedFieldKey,
+      orderedFieldKeys[targetIndex],
+    );
+  }
+
+  async function duplicatePresetDetailField(presetName, fieldKey) {
+    if (!String(fieldKey || "").startsWith("prompts.")) return;
+
+    const pm = getContext().getPresetManager();
+    if (!pm) {
+      toastr.error("无法获取预设管理器");
+      return;
+    }
+
+    const presetData = getPresetDataForDetail(pm, presetName);
+    if (!presetData) {
+      toastr.error(`找不到预设「${presetName}」的数据`);
+      return;
+    }
+
+    const promptList = ensurePresetPromptList(presetData);
+    const promptKey = fieldKey.slice("prompts.".length);
+    const sourceField = getPresetDetailFields(presetData).find(
+      (item) => item.key === fieldKey,
+    );
+    if (!sourceField) {
+      toastr.error("未找到可复制的预设条目");
+      return;
+    }
+
+    const sourcePrompt = getPresetPromptByKey(presetData, promptKey);
+    if (!sourcePrompt) {
+      toastr.error("预设条目不存在，无法复制");
+      return;
+    }
+
+    const newPromptKey = buildDuplicatedPresetPromptKey(
+      new Set(
+        promptList
+          .map((prompt) => getPresetPromptIdentifier(prompt))
+          .filter(Boolean),
+      ),
+      promptKey,
+    );
+    const existingLabels = new Set(
+      getPresetDetailFields(presetData)
+        .map((item) => String(item?.label || "").trim())
+        .filter(Boolean),
+    );
+    const newPromptLabel = buildDuplicatedPresetPromptLabel(
+      existingLabels,
+      sourceField.label,
+    );
+
+    let duplicatedPrompt =
+      sourcePrompt && typeof sourcePrompt === "object"
+        ? structuredClone(sourcePrompt)
+        : {
+            identifier: newPromptKey,
+            content: String(sourcePrompt ?? ""),
+          };
+
+    if (!duplicatedPrompt || typeof duplicatedPrompt !== "object") {
+      duplicatedPrompt = {
+        identifier: newPromptKey,
+        content: "",
+      };
+    }
+
+    duplicatedPrompt.identifier = newPromptKey;
+    if (Object.prototype.hasOwnProperty.call(duplicatedPrompt, "id")) {
+      duplicatedPrompt.id = newPromptKey;
+    }
+    if (Object.prototype.hasOwnProperty.call(duplicatedPrompt, "key")) {
+      duplicatedPrompt.key = newPromptKey;
+    }
+    if (Object.prototype.hasOwnProperty.call(duplicatedPrompt, "prompt")) {
+      duplicatedPrompt.prompt = newPromptKey;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(duplicatedPrompt, "name")) {
+      duplicatedPrompt.name = newPromptLabel;
+    } else if (
+      Object.prototype.hasOwnProperty.call(duplicatedPrompt, "title")
+    ) {
+      duplicatedPrompt.title = newPromptLabel;
+    } else if (
+      Object.prototype.hasOwnProperty.call(duplicatedPrompt, "label")
+    ) {
+      duplicatedPrompt.label = newPromptLabel;
+    } else {
+      duplicatedPrompt.name = newPromptLabel;
+    }
+
+    const sourcePromptIndex = getPresetPromptIndexByKey(presetData, promptKey);
+    if (sourcePromptIndex === -1) {
+      promptList.push(duplicatedPrompt);
+    } else {
+      promptList.splice(sourcePromptIndex + 1, 0, duplicatedPrompt);
+    }
+
+    const sourceOrderLocation = findPresetPromptOrderEntryLocation(
+      presetData,
+      promptKey,
+      true,
+    );
+    const promptOrderEntries = sourceOrderLocation?.order ?? [];
+    const sourceOrderIndex = sourceOrderLocation?.index ?? -1;
+    const sourceOrderItem = sourceOrderLocation?.item ?? null;
+    const newOrderItem =
+      sourceOrderItem && typeof sourceOrderItem === "object"
+        ? structuredClone(sourceOrderItem)
+        : { identifier: newPromptKey };
+
+    newOrderItem.identifier = newPromptKey;
+    if (Object.prototype.hasOwnProperty.call(newOrderItem, "id")) {
+      newOrderItem.id = newPromptKey;
+    }
+    if (Object.prototype.hasOwnProperty.call(newOrderItem, "key")) {
+      newOrderItem.key = newPromptKey;
+    }
+    if (Object.prototype.hasOwnProperty.call(newOrderItem, "prompt")) {
+      newOrderItem.prompt = newPromptKey;
+    }
+    newOrderItem.enabled = sourceField.enabled !== false;
+    if (Object.prototype.hasOwnProperty.call(newOrderItem, "name")) {
+      newOrderItem.name = newPromptLabel;
+    }
+    if (Object.prototype.hasOwnProperty.call(newOrderItem, "title")) {
+      newOrderItem.title = newPromptLabel;
+    }
+    if (Object.prototype.hasOwnProperty.call(newOrderItem, "label")) {
+      newOrderItem.label = newPromptLabel;
+    }
+
+    if (sourceOrderIndex === -1) {
+      promptOrderEntries.push(newOrderItem);
+    } else {
+      promptOrderEntries.splice(sourceOrderIndex + 1, 0, newOrderItem);
+    }
+
+    try {
+      await saveNormalizedPresetData(pm, presetName, presetData);
+      toastr.success(`已复制预设条目「${sourceField.label}」`);
+      refreshPresetPanelView();
+      // 高亮闪烁新复制的预设条目
+      flashDraggedElement(
+        `.cfm-preset-detail-row[data-field="prompts.${$.escapeSelector(newPromptKey)}"]`,
+        300,
+      );
+    } catch (error) {
+      console.error("[CFM] 复制预设条目失败:", error);
+      toastr.error(`复制失败: ${error.message || error}`);
+    }
+  }
+
+  async function deletePresetDetailField(presetName, fieldKey) {
+    if (!String(fieldKey || "").startsWith("prompts.")) return;
+
+    const pm = getContext().getPresetManager();
+    if (!pm) {
+      toastr.error("无法获取预设管理器");
+      return;
+    }
+
+    const presetData = getPresetDataForDetail(pm, presetName);
+    if (!presetData) {
+      toastr.error(`找不到预设「${presetName}」的数据`);
+      return;
+    }
+
+    const field = getPresetDetailFields(presetData).find(
+      (item) => item.key === fieldKey,
+    );
+    if (!field) {
+      toastr.error("未找到可删除的预设条目");
+      return;
+    }
+
+    if (!confirm(`确定删除预设条目「${field.label}」？`)) return;
+
+    const promptKey = fieldKey.slice("prompts.".length);
+    const promptList = ensurePresetPromptList(presetData);
+    const promptIndex = getPresetPromptIndexByKey(presetData, promptKey);
+    if (promptIndex !== -1) {
+      promptList.splice(promptIndex, 1);
+    }
+
+    for (const container of ensurePresetPromptOrderContainers(presetData)) {
+      if (!Array.isArray(container?.order)) continue;
+      container.order = container.order.filter(
+        (item) => getPresetPromptOrderIdentifier(item) !== promptKey,
+      );
+    }
+
+    cfmPresetDetailBatchSelected.delete(fieldKey);
+    if (cfmPresetDetailBatchLastClicked === fieldKey) {
+      cfmPresetDetailBatchLastClicked = null;
+    }
+
+    try {
+      await saveNormalizedPresetData(pm, presetName, presetData);
+      toastr.success(`已删除预设条目「${field.label}」`);
+      refreshPresetPanelView();
+    } catch (error) {
+      console.error("[CFM] 删除预设条目失败:", error);
+      toastr.error(`删除失败: ${error.message || error}`);
+    }
+  }
+
+  function findNativePresetPromptRow(promptKey, promptLabel = "") {
+    const normalizedPromptKey = String(promptKey || "").trim();
+    const normalizedPromptLabel = String(promptLabel || "").trim();
+    const rows = $(
+      "#completion_prompt_manager .completion_prompt_manager_prompt",
+    );
+    if (!rows.length) return $();
+
+    if (normalizedPromptKey) {
+      const keyMatch = rows
+        .filter(function () {
+          return (
+            String($(this).attr("data-pm-identifier") || "") ===
+            normalizedPromptKey
+          );
+        })
+        .first();
+      if (keyMatch.length) return keyMatch;
+    }
+
+    if (normalizedPromptLabel) {
+      const labelMatch = rows
+        .filter(function () {
+          const row = $(this);
+          const dataName = String(
+            row
+              .find(".completion_prompt_manager_prompt_name")
+              .attr("data-pm-name") || "",
+          ).trim();
+          const visibleName = String(
+            row.find(".completion_prompt_manager_prompt_name").text() || "",
+          )
+            .replace(/\s+/g, " ")
+            .trim();
+          return (
+            dataName === normalizedPromptLabel ||
+            visibleName.includes(normalizedPromptLabel)
+          );
+        })
+        .first();
+      if (labelMatch.length) return labelMatch;
+    }
+
+    return $();
+  }
+
+  function findPresetSelectValueByName(pm, presetName) {
+    const normalizedPresetName = String(presetName || "").trim();
+    if (!pm?.select || !normalizedPresetName) return null;
+
+    const optionPools = [pm.select.find("option").toArray()];
+    if (
+      Array.isArray(_presetDetachedOptions) &&
+      _presetDetachedOptions.length
+    ) {
+      optionPools.push(_presetDetachedOptions);
+    }
+
+    for (const pool of optionPools) {
+      for (const option of pool) {
+        const $option = $(option);
+        const optionText = String($option.text() || "").trim();
+        if (optionText === normalizedPresetName) {
+          const optionValue = $option.val();
+          if (
+            optionValue !== undefined &&
+            optionValue !== null &&
+            optionValue !== ""
+          ) {
+            return String(optionValue);
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  async function openNativePresetPromptEditor(
+    presetName,
+    promptKey,
+    promptLabel = "",
+  ) {
+    const normalizedPresetName = String(presetName || "").trim();
+    const normalizedPromptKey = String(promptKey || "").trim();
+    const normalizedPromptLabel = String(promptLabel || "").trim();
+    if (
+      !normalizedPresetName ||
+      (!normalizedPromptKey && !normalizedPromptLabel)
+    )
+      return false;
+
+    const pm = getContext().getPresetManager();
+    if (!pm?.select) return false;
+
+    const bringNativePresetPromptPopupToFront = () => {
+      const popupEl = document.getElementById(
+        "completion_prompt_manager_popup",
+      );
+      if (!popupEl) return false;
+
+      const overlayEl = document.getElementById("cfm-overlay");
+      const overlayZ = Number.parseInt(
+        overlayEl ? window.getComputedStyle(overlayEl).zIndex : "",
+        10,
+      );
+      let nextZ = Number.isFinite(overlayZ) ? overlayZ + 2 : 10002;
+
+      const applyLayerStyle = (el, { position = null } = {}) => {
+        if (!(el instanceof HTMLElement)) return false;
+        if (position) {
+          el.style.setProperty("position", position, "important");
+        }
+        el.style.setProperty("z-index", String(nextZ), "important");
+        nextZ += 1;
+        return true;
+      };
+
+      const wrapperEl = popupEl.parentElement;
+      let applied = false;
+
+      if (wrapperEl instanceof HTMLElement) {
+        applied =
+          applyLayerStyle(wrapperEl, { position: "relative" }) || applied;
+      }
+
+      popupEl.style.setProperty("position", "fixed", "important");
+      popupEl.style.setProperty("top", "50%", "important");
+      popupEl.style.setProperty("left", "50%", "important");
+      popupEl.style.setProperty("right", "auto", "important");
+      popupEl.style.setProperty("bottom", "auto", "important");
+      popupEl.style.setProperty(
+        "transform",
+        "translate(-50%, -50%)",
+        "important",
+      );
+      popupEl.style.setProperty("margin", "0", "important");
+      popupEl.style.setProperty(
+        "max-height",
+        `${Math.max(240, window.innerHeight - 24)}px`,
+        "important",
+      );
+      popupEl.style.setProperty("max-width", `calc(100vw - 32px)`, "important");
+      applied = applyLayerStyle(popupEl, { position: "fixed" }) || applied;
+
+      return applied;
+    };
+
+    const scheduleBringNativePresetPromptPopupToFront = () => {
+      bringNativePresetPromptPopupToFront();
+      let attempts = 0;
+      const maxAttempts = 20;
+      const timer = window.setInterval(() => {
+        attempts += 1;
+        bringNativePresetPromptPopupToFront();
+        if (attempts >= maxAttempts) {
+          window.clearInterval(timer);
+        }
+      }, 50);
+    };
+
+    const clickNativeEditButton = () => {
+      const row = findNativePresetPromptRow(
+        normalizedPromptKey,
+        normalizedPromptLabel,
+      );
+      const editButton = row.find(".prompt-manager-edit-action").first();
+      const nativeButton = editButton.get(0);
+      if (!nativeButton) return false;
+      nativeButton.click();
+      nativeButton.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true }),
+      );
+      scheduleBringNativePresetPromptPopupToFront();
+      return true;
+    };
+
+    if (clickNativeEditButton()) {
+      return true;
+    }
+
+    const targetValue = findPresetSelectValueByName(pm, normalizedPresetName);
+    const currentValue = String(pm.select.val() || "");
+
+    if (targetValue && currentValue !== targetValue) {
+      pm.select.val(targetValue);
+      pm.select.trigger("change");
+      pm.select.trigger("input");
+    } else {
+      syncCurrentPresetSelection(pm, normalizedPresetName);
+    }
+
+    const startTime = Date.now();
+    while (Date.now() - startTime < 2500) {
+      if (clickNativeEditButton()) {
+        return true;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    return false;
+  }
+
+  async function editPresetDetailField(presetName, fieldKey) {
+    const pm = getContext().getPresetManager();
+    if (!pm) {
+      toastr.error("无法获取预设管理器");
+      return;
+    }
+    const presetData = getPresetDataForDetail(pm, presetName);
+    if (!presetData) {
+      toastr.error(`找不到预设「${presetName}」的数据`);
+      return;
+    }
+
+    const field = getPresetDetailFields(presetData).find(
+      (item) => item.key === fieldKey,
+    );
+    if (!field) {
+      toastr.error("未找到可编辑的预设条目");
+      return;
+    }
+
+    if (!String(fieldKey || "").startsWith("prompts.")) {
+      toastr.error("仅支持通过原生界面编辑预设条目");
+      return;
+    }
+
+    const promptKey = fieldKey.slice("prompts.".length);
+    const opened = await openNativePresetPromptEditor(
+      presetName,
+      promptKey,
+      field.label,
+    );
+    if (!opened) {
+      toastr.error(`无法打开预设条目「${field.label}」的原生编辑弹窗`);
+    }
+  }
+
+  function isWorldInfoEntryBookExpanded(bookName) {
+    return cfmWorldInfoEntryExpandedNames.has(String(bookName || ""));
+  }
+
+  function setWorldInfoEntryBookExpanded(bookName, expanded) {
+    const normalizedName = String(bookName || "");
+    if (!normalizedName) return false;
+    if (expanded) {
+      cfmWorldInfoEntryExpandedNames.add(normalizedName);
+    } else {
+      cfmWorldInfoEntryExpandedNames.delete(normalizedName);
+      collapseWorldInfoEntryDetails(normalizedName);
+      if (cfmWorldInfoEntryBatchOwnerName === normalizedName) {
+        cfmWorldInfoEntryBatchMode = false;
+        cfmWorldInfoEntryBatchOwnerName = null;
+        cfmWorldInfoEntryBatchSelected.clear();
+        cfmWorldInfoEntryBatchRangeMode = false;
+        cfmWorldInfoEntryBatchLastClicked = null;
+      }
+    }
+    return expanded;
+  }
+
+  function toggleWorldInfoEntryBookExpanded(bookName) {
+    const willExpand = !isWorldInfoEntryBookExpanded(bookName);
+    setWorldInfoEntryBookExpanded(bookName, willExpand);
+    return willExpand;
+  }
+
+  function closeWorldInfoEntryPanels() {
+    cfmWorldInfoEntryExpandedNames.clear();
+    collapseWorldInfoEntryDetails();
+    cfmWorldInfoEntryBatchMode = false;
+    cfmWorldInfoEntryBatchOwnerName = null;
+    cfmWorldInfoEntryBatchSelected.clear();
+    cfmWorldInfoEntryBatchRangeMode = false;
+    cfmWorldInfoEntryBatchLastClicked = null;
+  }
+
+  let cfmWorldInfoEntryLastTouchAt = 0;
+  function shouldIgnoreWorldInfoEntryTap(e) {
+    const eventType = e?.type || "";
+    if (eventType === "touchend") {
+      cfmWorldInfoEntryLastTouchAt = Date.now();
+      return false;
+    }
+    return (
+      eventType === "click" && Date.now() - cfmWorldInfoEntryLastTouchAt < 500
+    );
+  }
+
+  function bindWorldInfoEntryCollapseTargets(
+    refreshFn = refreshWorldInfoPanelView,
+  ) {
+    $("#cfm-worldinfo-left-tree, #cfm-worldinfo-right-list")
+      .off("click.cfmWorldInfoEntryCollapse touchend.cfmWorldInfoEntryCollapse")
+      .on(
+        "click.cfmWorldInfoEntryCollapse touchend.cfmWorldInfoEntryCollapse",
+        (e) => {
+          if (shouldIgnoreWorldInfoEntryTap(e)) {
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+          }
+          if (
+            $(e.target).closest(
+              ".cfm-row, .cfm-preset-detail-row, .cfm-tnode, .cfm-multisel-toolbar, .cfm-regex-toolbar, .cfm-regex-batch-toolbar, .cfm-chat-action-btn, .cfm-wi-toggle, .cfm-edit-checkbox, button, a, input, textarea, select, label",
+            ).length
+          ) {
+            return;
+          }
+          const hasExpandedPanels =
+            cfmWorldInfoEntryExpandedNames.size > 0 ||
+            cfmWorldInfoEntryOpenDetails.size > 0;
+          if (!hasExpandedPanels) return;
+          const targetName = getLatestWorldInfoCollapseTargetName();
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          closeWorldInfoEntryPanels();
+          refreshFn();
+          scrollWorldInfoRowIntoView(targetName);
+        },
+      );
+  }
+
+  /**
+   * 构建世界书条目完整编辑详情面板 HTML
+   * @param {object} entry - CFM 条目对象（含 raw 原始数据）
+   * @returns {string} HTML 字符串
+   */
+  function buildWorldInfoEntryDetailHtml(entry) {
+    const r = entry.raw || {};
+    // --- 辅助：三态布尔 select 选项 ---
+    const triStateOpts = (val) => {
+      const isNull = val === null || val === undefined;
+      return `<option value="null"${isNull ? " selected" : ""}>使用全局</option><option value="true"${val === true ? " selected" : ""}>是</option><option value="false"${val === false ? " selected" : ""}>否</option>`;
+    };
+    // --- 辅助：selectiveLogic 选项 ---
+    const logicVal = Number(r.selectiveLogic ?? 0);
+    const logicOpts = [
+      { v: 0, l: "AND ANY" },
+      { v: 3, l: "AND ALL" },
+      { v: 1, l: "NOT ALL" },
+      { v: 2, l: "NOT ANY" },
+    ].map(o => `<option value="${o.v}"${logicVal === o.v ? " selected" : ""}>${o.l}</option>`).join("");
+    // --- 辅助：triggers checkboxes ---
+    const triggersArr = Array.isArray(r.triggers) ? r.triggers : [];
+    const triggerOptions = [
+      { v: "normal", l: "常规" },
+      { v: "continue", l: "继续" },
+      { v: "impersonate", l: "扮演" },
+      { v: "swipe", l: "滑动" },
+      { v: "regenerate", l: "重生成" },
+      { v: "quiet", l: "静默" },
+    ];
+    const triggersHtml = triggerOptions.map(o =>
+      `<label class="cfm-wi-de-cb-label"><input type="checkbox" name="cfm_wi_trigger" value="${o.v}"${triggersArr.includes(o.v) ? " checked" : ""} />${o.l}</label>`
+    ).join("");
+    // --- 辅助：characterFilter ---
+    const charFilter = r.characterFilter || {};
+    const charFilterNames = Array.isArray(charFilter.names) ? charFilter.names.join(", ") : "";
+    const charFilterTags = Array.isArray(charFilter.tags) ? charFilter.tags.join(", ") : "";
+    const charFilterStr = [charFilterNames, charFilterTags].filter(Boolean).join(", ");
+    const charFilterExclude = !!charFilter.isExclude;
+    // --- 辅助：delayUntilRecursion ---
+    const durVal = r.delayUntilRecursion;
+    const durChecked = !!durVal;
+    const durLevel = typeof durVal === "number" ? durVal : (typeof durVal === "string" ? durVal : "");
+    // --- 主触发词 / 次触发词 ---
+    const primaryKeysStr = entry.primaryKeys.join(", ");
+    const secondaryKeysStr = entry.secondaryKeys.join(", ");
+
+    return `
+      <div class="cfm-persona-detail-card cfm-preset-detail-card cfm-worldinfo-entry-detail-card cfm-wi-de" data-entry-uid="${escapeHtml(entry.uid)}">
+        <!-- 区域1: 关键词与逻辑 -->
+        <div class="cfm-wi-de-section">
+          <div class="cfm-wi-de-row cfm-wi-de-keys-row">
+            <div class="cfm-wi-de-field cfm-wi-de-field-flex">
+              <label class="cfm-wi-de-label">主触发词</label>
+              <textarea class="cfm-wi-de-input cfm-wi-de-keys" name="cfm_wi_key" rows="2" placeholder="逗号分隔的关键词">${escapeHtml(primaryKeysStr)}</textarea>
+            </div>
+            <div class="cfm-wi-de-field cfm-wi-de-field-narrow">
+              <label class="cfm-wi-de-label">逻辑</label>
+              <select class="cfm-wi-de-select" name="cfm_wi_logic">${logicOpts}</select>
+            </div>
+            <div class="cfm-wi-de-field cfm-wi-de-field-flex">
+              <label class="cfm-wi-de-label">次触发词</label>
+              <textarea class="cfm-wi-de-input cfm-wi-de-keys" name="cfm_wi_keysecondary" rows="2" placeholder="逗号分隔（为空则忽略）">${escapeHtml(secondaryKeysStr)}</textarea>
+            </div>
+          </div>
+        </div>
+        <!-- 区域2: 条目备注 -->
+        <div class="cfm-wi-de-section">
+          <label class="cfm-wi-de-label">条目备注 (Comment)</label>
+          <textarea class="cfm-wi-de-input" name="cfm_wi_comment" rows="2" placeholder="条目的备注/标签">${escapeHtml(entry.comment)}</textarea>
+        </div>
+        <!-- 区域3: 内容 -->
+        <div class="cfm-wi-de-section">
+          <div class="cfm-wi-de-row cfm-wi-de-content-header">
+            <label class="cfm-wi-de-label">内容 (Content)</label>
+            <span class="cfm-wi-de-meta">UID: ${escapeHtml(entry.uid)} | Tokens: <span class="cfm-wi-de-token-count">计算中...</span></span>
+          </div>
+          <textarea class="cfm-wi-de-input cfm-wi-de-content" name="cfm_wi_content" rows="6" placeholder="发送给 AI 的文本内容">${escapeHtml(entry.content)}</textarea>
+        </div>
+        <!-- 区域4: 条目覆盖设置 -->
+        <div class="cfm-wi-de-section">
+          <label class="cfm-wi-de-label cfm-wi-de-section-title">条目覆盖设置</label>
+          <div class="cfm-wi-de-row cfm-wi-de-grid">
+            <div class="cfm-wi-de-field">
+              <label class="cfm-wi-de-label">Outlet名称</label>
+              <input class="cfm-wi-de-input" name="cfm_wi_outletName" type="text" value="${escapeHtml(r.outletName || '')}" placeholder="Outlet Name" />
+            </div>
+            <div class="cfm-wi-de-field">
+              <label class="cfm-wi-de-label">扫描深度</label>
+              <input class="cfm-wi-de-input" name="cfm_wi_scanDepth" type="number" value="${r.scanDepth ?? ''}" placeholder="使用全局" max="1000" />
+            </div>
+            <div class="cfm-wi-de-field">
+              <label class="cfm-wi-de-label">区分大小写</label>
+              <select class="cfm-wi-de-select" name="cfm_wi_caseSensitive">${triStateOpts(r.caseSensitive ?? null)}</select>
+            </div>
+            <div class="cfm-wi-de-field">
+              <label class="cfm-wi-de-label">全词匹配</label>
+              <select class="cfm-wi-de-select" name="cfm_wi_matchWholeWords">${triStateOpts(r.matchWholeWords ?? null)}</select>
+            </div>
+            <div class="cfm-wi-de-field">
+              <label class="cfm-wi-de-label">分组评分</label>
+              <select class="cfm-wi-de-select" name="cfm_wi_useGroupScoring">${triStateOpts(r.useGroupScoring ?? null)}</select>
+            </div>
+            <div class="cfm-wi-de-field">
+              <label class="cfm-wi-de-label">自动化ID</label>
+              <input class="cfm-wi-de-input" name="cfm_wi_automationId" type="text" value="${escapeHtml(r.automationId || '')}" placeholder="(无)" />
+            </div>
+            <div class="cfm-wi-de-field">
+              <label class="cfm-wi-de-label">递归层级</label>
+              <input class="cfm-wi-de-input" name="cfm_wi_recursionLevel" type="text" value="${escapeHtml(String(durLevel))}" placeholder="1" />
+            </div>
+          </div>
+        </div>
+        <!-- 区域5: 分组与时间控制 -->
+        <div class="cfm-wi-de-section">
+          <label class="cfm-wi-de-label cfm-wi-de-section-title">分组与时间控制</label>
+          <div class="cfm-wi-de-row cfm-wi-de-grid">
+            <div class="cfm-wi-de-field cfm-wi-de-field-wide">
+              <label class="cfm-wi-de-label">包含组</label>
+              <input class="cfm-wi-de-input" name="cfm_wi_group" type="text" value="${escapeHtml(r.group || '')}" placeholder="分组标签（逗号分隔）" />
+            </div>
+            <div class="cfm-wi-de-field">
+              <label class="cfm-wi-de-label">组权重</label>
+              <input class="cfm-wi-de-input" name="cfm_wi_groupWeight" type="number" value="${r.groupWeight ?? 100}" min="1" max="999999" />
+            </div>
+            <div class="cfm-wi-de-field">
+              <label class="cfm-wi-de-label">粘性</label>
+              <input class="cfm-wi-de-input" name="cfm_wi_sticky" type="number" value="${r.sticky ?? ''}" placeholder="无" min="0" max="999999" />
+            </div>
+            <div class="cfm-wi-de-field">
+              <label class="cfm-wi-de-label">冷却</label>
+              <input class="cfm-wi-de-input" name="cfm_wi_cooldown" type="number" value="${r.cooldown ?? ''}" placeholder="无" min="0" max="999999" />
+            </div>
+            <div class="cfm-wi-de-field">
+              <label class="cfm-wi-de-label">延迟</label>
+              <input class="cfm-wi-de-input" name="cfm_wi_delay" type="number" value="${r.delay ?? ''}" placeholder="无" min="0" max="999999" />
+            </div>
+          </div>
+          <div class="cfm-wi-de-row">
+            <label class="cfm-wi-de-cb-label"><input type="checkbox" name="cfm_wi_groupOverride"${r.groupOverride ? " checked" : ""} />优先此条目 (Prioritize)</label>
+          </div>
+        </div>
+        <!-- 区域6: 选项复选框 -->
+        <div class="cfm-wi-de-section">
+          <label class="cfm-wi-de-label cfm-wi-de-section-title">选项</label>
+          <div class="cfm-wi-de-row cfm-wi-de-cb-grid">
+            <label class="cfm-wi-de-cb-label"><input type="checkbox" name="cfm_wi_excludeRecursion"${r.excludeRecursion ? " checked" : ""} />不可被递归激活</label>
+            <label class="cfm-wi-de-cb-label"><input type="checkbox" name="cfm_wi_preventRecursion"${r.preventRecursion ? " checked" : ""} />阻止进一步递归</label>
+            <label class="cfm-wi-de-cb-label"><input type="checkbox" name="cfm_wi_delayUntilRecursion"${durChecked ? " checked" : ""} />延迟到递归</label>
+            <label class="cfm-wi-de-cb-label"><input type="checkbox" name="cfm_wi_ignoreBudget"${r.ignoreBudget ? " checked" : ""} />忽略预算</label>
+            <label class="cfm-wi-de-cb-label"><input type="checkbox" name="cfm_wi_selective"${r.selective ? " checked" : ""} />选择性 (Selective)</label>
+            <label class="cfm-wi-de-cb-label"><input type="checkbox" name="cfm_wi_useProbability"${r.useProbability !== false ? " checked" : ""} />使用概率</label>
+          </div>
+        </div>
+        <!-- 区域7: 过滤器 -->
+        <div class="cfm-wi-de-section">
+          <label class="cfm-wi-de-label cfm-wi-de-section-title">过滤器</label>
+          <div class="cfm-wi-de-row">
+            <div class="cfm-wi-de-field cfm-wi-de-field-flex">
+              <label class="cfm-wi-de-label">角色/标签过滤</label>
+              <input class="cfm-wi-de-input" name="cfm_wi_charFilter" type="text" value="${escapeHtml(charFilterStr)}" placeholder="角色名或标签（逗号分隔）" />
+            </div>
+            <label class="cfm-wi-de-cb-label cfm-wi-de-cb-inline"><input type="checkbox" name="cfm_wi_charFilterExclude"${charFilterExclude ? " checked" : ""} />排除</label>
+          </div>
+          <div class="cfm-wi-de-row">
+            <div class="cfm-wi-de-field cfm-wi-de-field-flex">
+              <label class="cfm-wi-de-label">生成类型触发</label>
+              <div class="cfm-wi-de-cb-row">${triggersHtml}</div>
+            </div>
+          </div>
+        </div>
+        <!-- 区域8: 额外匹配源（可折叠） -->
+        <div class="cfm-wi-de-section cfm-wi-de-collapsible">
+          <div class="cfm-wi-de-collapse-header">
+            <label class="cfm-wi-de-label cfm-wi-de-section-title">额外匹配源</label>
+            <i class="fa-solid fa-chevron-down cfm-wi-de-collapse-icon"></i>
+          </div>
+          <div class="cfm-wi-de-collapse-body" style="display:none;">
+            <div class="cfm-wi-de-row cfm-wi-de-cb-grid">
+              <label class="cfm-wi-de-cb-label"><input type="checkbox" name="cfm_wi_matchCharacterDescription"${r.matchCharacterDescription ? " checked" : ""} />角色描述</label>
+              <label class="cfm-wi-de-cb-label"><input type="checkbox" name="cfm_wi_matchCharacterPersonality"${r.matchCharacterPersonality ? " checked" : ""} />角色个性</label>
+              <label class="cfm-wi-de-cb-label"><input type="checkbox" name="cfm_wi_matchScenario"${r.matchScenario ? " checked" : ""} />场景</label>
+              <label class="cfm-wi-de-cb-label"><input type="checkbox" name="cfm_wi_matchPersonaDescription"${r.matchPersonaDescription ? " checked" : ""} />角色面具描述</label>
+              <label class="cfm-wi-de-cb-label"><input type="checkbox" name="cfm_wi_matchCharacterDepthPrompt"${r.matchCharacterDepthPrompt ? " checked" : ""} />角色深度提示</label>
+              <label class="cfm-wi-de-cb-label"><input type="checkbox" name="cfm_wi_matchCreatorNotes"${r.matchCreatorNotes ? " checked" : ""} />创作者注释</label>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  async function renderWorldInfoEntrySubList(
+    bookRow,
+    bookName,
+    refreshFn = refreshWorldInfoPanelView,
+    renderOptions = null,
+  ) {
+    const normalizedName = String(bookName || "");
+    if (!normalizedName || !bookRow?.length) return;
+
+    const existingSubList = bookRow.next(".cfm-worldinfo-entry-sublist");
+    if (!isWorldInfoEntryBookExpanded(bookName)) {
+      existingSubList.remove();
+      return;
+    }
+
+    const subList = existingSubList.length
+      ? existingSubList
+      : $(
+          '<div class="cfm-chat-sublist cfm-preset-detail-sublist cfm-worldinfo-entry-sublist"></div>',
+        );
+    const existingDetailCard = subList
+      .children(".cfm-worldinfo-entry-detail-card")
+      .first();
+    const detailCard = existingDetailCard.length
+      ? existingDetailCard
+      : $(
+          '<div class="cfm-chat-toolbar cfm-persona-detail-card cfm-preset-detail-card cfm-worldinfo-entry-detail-card"></div>',
+        );
+
+    const renderMultiline = (value) =>
+      escapeHtml(String(value || "")).replace(/\n/g, "<br>");
+    const renderListValue = (values) => {
+      const normalized = Array.isArray(values)
+        ? values.map((item) => String(item || "").trim()).filter(Boolean)
+        : [];
+      return normalized.length
+        ? renderMultiline(normalized.join("、"))
+        : '<span class="cfm-persona-detail-empty">无</span>';
+    };
+
+    const cachedEntries = Array.isArray(renderOptions?.cachedEntries)
+      ? renderOptions.cachedEntries
+      : null;
+    const sortMode = getWorldInfoEntryDetailSortMode();
+    let worldInfoData = null;
+    let entries = cachedEntries ? Array.from(cachedEntries) : [];
+    const rerenderCurrentSubList = () => {
+      cfmWorldInfoEntryLastFocusedName = normalizedName;
+      renderWorldInfoEntrySubList(bookRow, normalizedName, refreshFn, {
+        cachedEntries: entries,
+      });
+    };
+    try {
+      if (!cachedEntries) {
+        worldInfoData = await fetchWorldInfoDetailData(normalizedName);
+        entries = getWorldInfoEntriesForDetail(
+          normalizedName,
+          worldInfoData,
+          sortMode,
+        );
+      }
+      entries = sortWorldInfoEntriesForDetail(entries, sortMode);
+    } catch (error) {
+      console.error("[CFM] 加载世界书条目失败:", error);
+      if (!bookRow.parent().length) return;
+      detailCard.append(`
+        <div class="cfm-persona-detail-section cfm-preset-detail-section">
+          <div class="cfm-persona-detail-label">世界书条目</div>
+          <div class="cfm-persona-detail-value"><span class="cfm-persona-detail-empty">加载失败：${escapeHtml(error.message || String(error))}</span></div>
+        </div>
+      `);
+      detailCard.empty();
+      if (!existingDetailCard.length) {
+        subList.append(detailCard);
+      }
+      if (!existingSubList.length) {
+        bookRow.after(subList);
+      }
+      return;
+    }
+
+    if (!bookRow.parent().length) return;
+    detailCard.empty();
+    if (!existingDetailCard.length) {
+      subList.append(detailCard);
+    }
+    if (!existingSubList.length) {
+      bookRow.after(subList);
+    }
+
+    const isBatchOwner =
+      cfmWorldInfoEntryBatchMode &&
+      cfmWorldInfoEntryBatchOwnerName === normalizedName;
+    const sortLabel = sortMode === "priority" ? "优先级" : "自定义";
+    const detailToolbar = $(`
+      <div class="cfm-regex-toolbar cfm-preset-detail-toolbar">
+        <button class="cfm-btn cfm-btn-sm cfm-worldinfo-entry-sort-toggle" ${entries.length === 0 ? "disabled" : ""}><i class="fa-solid fa-arrow-down-wide-short"></i> 排序：${sortLabel}</button>
+        <button class="cfm-btn cfm-btn-sm cfm-worldinfo-entry-batch-toggle ${isBatchOwner ? "cfm-regex-batch-active" : ""}" ${entries.length === 0 ? "disabled" : ""}><i class="fa-solid fa-list-check"></i> ${isBatchOwner ? "退出批量" : "批量操作"}</button>
+        <span class="cfm-regex-count">${entries.length} 个条目</span>
+      </div>
+    `);
+    detailToolbar
+      .find(".cfm-worldinfo-entry-sort-toggle")
+      .on("click touchend", (e) => {
+        if (shouldIgnoreWorldInfoEntryTap(e)) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        if (!entries.length) return;
+        setWorldInfoEntryDetailSortMode(
+          sortMode === "priority" ? "custom" : "priority",
+        );
+        rerenderCurrentSubList();
+      });
+    detailToolbar
+      .find(".cfm-worldinfo-entry-batch-toggle")
+      .on("click touchend", (e) => {
+        if (shouldIgnoreWorldInfoEntryTap(e)) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        if (!entries.length) return;
+        if (isBatchOwner) {
+          cfmWorldInfoEntryBatchMode = false;
+          cfmWorldInfoEntryBatchOwnerName = null;
+          cfmWorldInfoEntryBatchSelected.clear();
+          cfmWorldInfoEntryBatchRangeMode = false;
+          cfmWorldInfoEntryBatchLastClicked = null;
+        } else {
+          cfmWorldInfoEntryBatchMode = true;
+          cfmWorldInfoEntryBatchOwnerName = normalizedName;
+          cfmWorldInfoEntryBatchSelected.clear();
+          cfmWorldInfoEntryBatchRangeMode = false;
+          cfmWorldInfoEntryBatchLastClicked = null;
+          setWorldInfoEntryBookExpanded(normalizedName, true);
+        }
+        rerenderCurrentSubList();
+      });
+    detailCard.append(detailToolbar);
+
+    if (isBatchOwner && entries.length > 0) {
+      const entryKeys = entries.map((entry) =>
+        getWorldInfoEntrySelectionKey(normalizedName, entry.uid),
+      );
+      const allSel =
+        entryKeys.length > 0 &&
+        entryKeys.every((key) => cfmWorldInfoEntryBatchSelected.has(key));
+      const selCount = entryKeys.filter((key) =>
+        cfmWorldInfoEntryBatchSelected.has(key),
+      ).length;
+      const batchToolbar = $(`
+        <div class="cfm-regex-batch-toolbar">
+          <button class="cfm-btn cfm-btn-sm cfm-worldinfo-entry-batch-selall"><i class="fa-solid fa-${allSel ? "square-minus" : "square-check"}"></i> ${allSel ? "全不选" : "全选"}</button>
+          <button class="cfm-btn cfm-btn-sm cfm-worldinfo-entry-batch-range ${cfmWorldInfoEntryBatchRangeMode ? "cfm-range-active" : ""}"><i class="fa-solid fa-arrow-down-short-wide"></i> 框选${cfmWorldInfoEntryBatchRangeMode ? "(开)" : ""}</button>
+          <span class="cfm-regex-batch-count">${selCount > 0 ? `已选 ${selCount} 项` : ""}</span>
+          <button class="cfm-btn cfm-btn-sm cfm-worldinfo-entry-batch-activate"><i class="fa-solid fa-play"></i> 激活</button>
+          <button class="cfm-btn cfm-btn-sm cfm-worldinfo-entry-batch-deactivate"><i class="fa-solid fa-stop"></i> 取消激活</button>
+        </div>
+      `);
+      batchToolbar
+        .find(".cfm-worldinfo-entry-batch-selall")
+        .on("click touchend", (e) => {
+          if (shouldIgnoreWorldInfoEntryTap(e)) {
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+          }
+          e.preventDefault();
+          e.stopPropagation();
+          if (allSel) {
+            entryKeys.forEach((key) =>
+              cfmWorldInfoEntryBatchSelected.delete(key),
+            );
+          } else {
+            entryKeys.forEach((key) => cfmWorldInfoEntryBatchSelected.add(key));
+          }
+          rerenderCurrentSubList();
+        });
+      batchToolbar
+        .find(".cfm-worldinfo-entry-batch-range")
+        .on("click touchend", (e) => {
+          if (shouldIgnoreWorldInfoEntryTap(e)) {
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+          }
+          e.preventDefault();
+          e.stopPropagation();
+          cfmWorldInfoEntryBatchRangeMode = !cfmWorldInfoEntryBatchRangeMode;
+          if (cfmWorldInfoEntryBatchRangeMode)
+            cfmWorldInfoEntryBatchLastClicked = null;
+          rerenderCurrentSubList();
+        });
+      batchToolbar
+        .find(".cfm-worldinfo-entry-batch-activate")
+        .on("click touchend", async (e) => {
+          if (shouldIgnoreWorldInfoEntryTap(e)) {
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+          }
+          e.preventDefault();
+          e.stopPropagation();
+          try {
+            await applyWorldInfoEntryBatchActivation(
+              normalizedName,
+              Array.from(cfmWorldInfoEntryBatchSelected),
+              true,
+            );
+          } catch (error) {
+            console.error("[CFM] 批量激活世界书条目失败:", error);
+            toastr.error(`保存失败: ${error.message || error}`);
+          }
+        });
+      batchToolbar
+        .find(".cfm-worldinfo-entry-batch-deactivate")
+        .on("click touchend", async (e) => {
+          if (shouldIgnoreWorldInfoEntryTap(e)) {
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+          }
+          e.preventDefault();
+          e.stopPropagation();
+          try {
+            await applyWorldInfoEntryBatchActivation(
+              normalizedName,
+              Array.from(cfmWorldInfoEntryBatchSelected),
+              false,
+            );
+          } catch (error) {
+            console.error("[CFM] 批量取消激活世界书条目失败:", error);
+            toastr.error(`保存失败: ${error.message || error}`);
+          }
+        });
+      detailCard.append(batchToolbar);
+    }
+
+    if (entries.length === 0) {
+      detailCard.append(`
+        <div class="cfm-persona-detail-section cfm-preset-detail-section">
+          <div class="cfm-persona-detail-label">世界书条目</div>
+          <div class="cfm-persona-detail-value"><span class="cfm-persona-detail-empty">暂无条目</span></div>
+        </div>
+      `);
+      return;
+    }
+
+    for (const entry of entries) {
+      const entryKey = getWorldInfoEntrySelectionKey(normalizedName, entry.uid);
+      const isBatchSel =
+        isBatchOwner && cfmWorldInfoEntryBatchSelected.has(entryKey);
+      const isDetailOpen = isWorldInfoEntryDetailOpen(
+        normalizedName,
+        entry.uid,
+      );
+      const flags = [
+        entry.raw?.constant ? "常量" : null,
+        entry.raw?.vectorized ? "向量" : null,
+        entry.raw?.selective ? "选择性" : null,
+      ].filter(Boolean);
+      // 构建条目可编辑控件
+      const rawPos = Number(entry.raw?.position ?? 0);
+      const rawDepth = Number(entry.raw?.depth ?? 4);
+      const rawRole = Number(entry.raw?.role ?? 0);
+      const rawOrder = Number(entry.raw?.order ?? 0);
+      const rawProb = Number(entry.raw?.probability ?? 100);
+      const isAtDepth = rawPos === 4;
+      // 计算条目状态：constant > vectorized > normal
+      const entryState = entry.raw?.constant ? "constant" : (entry.raw?.vectorized ? "vectorized" : "normal");
+      // 构建条目状态下拉菜单选项（🔵常量 / 🟢普通 / 🔗向量化）
+      const stateOptions = [
+        { value: "constant", label: "🔵" },
+        { value: "normal", label: "🟢" },
+        { value: "vectorized", label: "🔗" },
+      ];
+      const stateSelectHtml = stateOptions.map(opt => {
+        const selected = entryState === opt.value ? " selected" : "";
+        return `<option value="${opt.value}"${selected}>${opt.label}</option>`;
+      }).join("");
+      // 构建 Position 下拉菜单选项（中文标签与酒馆原生一致）
+      const posOptions = [
+        { value: "0", role: "", label: "角色定义之前" },
+        { value: "1", role: "", label: "角色定义之后" },
+        { value: "5", role: "", label: "示例消息前（↑EM）" },
+        { value: "6", role: "", label: "示例消息后（↓EM）" },
+        { value: "2", role: "", label: "作者注释之前" },
+        { value: "3", role: "", label: "作者注释之后" },
+        { value: "4", role: "0", label: "@D ⚙️ [系统]在深度" },
+        { value: "4", role: "1", label: "@D 👤 [用户]在深度" },
+        { value: "4", role: "2", label: "@D 🤖 [AI]在深度" },
+        { value: "7", role: "", label: "➡️ Outlet" },
+      ];
+      const posSelectHtml = posOptions
+        .map((opt) => {
+          const selected =
+            String(rawPos) === opt.value &&
+            (opt.value !== "4" || String(rawRole) === opt.role)
+              ? " selected"
+              : "";
+          return `<option value="${opt.value}" data-role="${opt.role}"${selected}>${escapeHtml(opt.label)}</option>`;
+        })
+        .join("");
+      const row = $(`
+        <div class="cfm-persona-detail-section cfm-preset-detail-section cfm-preset-detail-row ${isBatchSel ? "cfm-edit-row-selected" : ""}" data-entry-uid="${escapeHtml(entry.uid)}">
+          <div class="cfm-persona-detail-label cfm-preset-detail-label">
+            ${isBatchOwner ? `<div class="cfm-edit-checkbox ${isBatchSel ? "cfm-edit-checked" : ""}"><i class="fa-${isBatchSel ? "solid" : "regular"} fa-square${isBatchSel ? "-check" : ""}"></i></div>` : ""}
+            <div class="cfm-wi-toggle cfm-worldinfo-entry-active-toggle ${entry.enabled ? "cfm-wi-toggle-on" : ""}" data-entry-uid="${escapeHtml(entry.uid)}" title="${entry.enabled ? "点击取消激活" : "点击激活"}"><i class="fa-solid fa-toggle-${entry.enabled ? "on" : "off"}"></i></div>
+            <span class="cfm-preset-detail-label-text">${escapeHtml(entry.label)}</span>
+            <div class="cfm-wi-entry-controls">
+              <select class="cfm-wi-ctrl cfm-wi-ctrl-state" title="条目状态：🔵常量 🟢普通 🔗向量化">${stateSelectHtml}</select>
+              <select class="cfm-wi-ctrl cfm-wi-ctrl-position" title="插入位置">${posSelectHtml}</select>
+              <input class="cfm-wi-ctrl cfm-wi-ctrl-depth" type="number" value="${rawDepth}" min="0" max="9999" title="深度" ${isAtDepth ? "" : "disabled"} />
+              <input class="cfm-wi-ctrl cfm-wi-ctrl-order" type="number" value="${rawOrder}" min="0" max="9999" title="顺序" />
+              <div class="cfm-wi-ctrl-prob-wrap"><input class="cfm-wi-ctrl cfm-wi-ctrl-prob" type="number" value="${rawProb}" min="0" max="100" title="触发概率%" /><span class="cfm-wi-ctrl-prob-suffix">%</span></div>
+            </div>
+            <div class="cfm-chat-actions">
+              <div class="cfm-chat-action-btn cfm-worldinfo-entry-duplicate" data-entry-uid="${escapeHtml(entry.uid)}" title="复制条目"><i class="fa-solid fa-paste"></i></div>
+              <div class="cfm-chat-action-btn cfm-worldinfo-entry-delete" data-entry-uid="${escapeHtml(entry.uid)}" title="删除条目"><i class="fa-solid fa-trash-can"></i></div>
+              <div class="cfm-chat-action-btn cfm-worldinfo-entry-edit" data-entry-uid="${escapeHtml(entry.uid)}" title="${isDetailOpen ? "收起条目详情" : "查看条目详情"}"><i class="fa-solid fa-chevron-${isDetailOpen ? "up" : "down"}"></i></div>
+            </div>
+          </div>
+          ${isDetailOpen ? buildWorldInfoEntryDetailHtml(entry) : ""}
+        </div>
+      `);
+
+      if (isBatchOwner) {
+        row.on("click", (e) => {
+          if (
+            $(e.target).closest(
+              ".cfm-chat-actions, .cfm-edit-checkbox, .cfm-worldinfo-entry-active-toggle, .cfm-wi-entry-controls",
+            ).length
+          ) {
+            return;
+          }
+          toggleWorldInfoEntryBatchItem(
+            normalizedName,
+            entry.uid,
+            e.shiftKey,
+            entries,
+          );
+          rerenderCurrentSubList();
+        });
+        row.find(".cfm-edit-checkbox").on("click touchend", (e) => {
+          if (shouldIgnoreWorldInfoEntryTap(e)) {
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+          }
+          e.preventDefault();
+          e.stopPropagation();
+          toggleWorldInfoEntryBatchItem(
+            normalizedName,
+            entry.uid,
+            e.shiftKey,
+            entries,
+          );
+          rerenderCurrentSubList();
+        });
+      }
+
+      row
+        .find(".cfm-worldinfo-entry-active-toggle")
+        .on("click touchend", async (e) => {
+          if (shouldIgnoreWorldInfoEntryTap(e)) {
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+          }
+          e.preventDefault();
+          e.stopPropagation();
+          const el = $(e.currentTarget);
+          if (el.data("pending")) return;
+          const currentUid = String(el.data("entry-uid") || "");
+          const newState = !el.hasClass("cfm-wi-toggle-on");
+          el.data("pending", true);
+          try {
+            await toggleWorldInfoEntryActivation(
+              normalizedName,
+              currentUid,
+              newState,
+            );
+            refreshFn();
+          } catch (error) {
+            console.error("[CFM] 切换世界书条目激活失败:", error);
+            toastr.error(`保存失败: ${error.message || error}`);
+          } finally {
+            el.data("pending", false);
+          }
+        });
+
+      row.find(".cfm-worldinfo-entry-edit").on("click touchend", (e) => {
+        if (shouldIgnoreWorldInfoEntryTap(e)) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        toggleWorldInfoEntryDetail(normalizedName, entry.uid);
+        setWorldInfoEntryBookExpanded(normalizedName, true);
+        rerenderCurrentSubList();
+      });
+
+      // 复制条目按钮事件
+      row
+        .find(".cfm-worldinfo-entry-duplicate")
+        .on("click touchend", async (e) => {
+          if (shouldIgnoreWorldInfoEntryTap(e)) {
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+          }
+          e.preventDefault();
+          e.stopPropagation();
+          const el = $(e.currentTarget);
+          if (el.data("pending")) return;
+          el.data("pending", true);
+          try {
+            const newEntry = await duplicateWorldInfoEntryInBook(
+              normalizedName,
+              entry.uid,
+            );
+            if (newEntry) {
+              toastr.success(`已复制条目「${escapeHtml(entry.label)}」`);
+              // 清除缓存，强制重新获取数据
+              refreshFn();
+              // 高亮闪烁新复制的条目
+              flashDraggedElement(
+                `.cfm-preset-detail-row[data-entry-uid="${newEntry.uid}"]`,
+                300,
+              );
+            }
+          } catch (error) {
+            console.error("[CFM] 复制世界书条目失败:", error);
+            toastr.error(`复制失败: ${error.message || error}`);
+          } finally {
+            el.data("pending", false);
+          }
+        });
+
+      // 删除条目按钮事件
+      row
+        .find(".cfm-worldinfo-entry-delete")
+        .on("click touchend", async (e) => {
+          if (shouldIgnoreWorldInfoEntryTap(e)) {
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+          }
+          e.preventDefault();
+          e.stopPropagation();
+          const el = $(e.currentTarget);
+          if (el.data("pending")) return;
+          el.data("pending", true);
+          try {
+            const deleted = await deleteWorldInfoEntryInBook(
+              normalizedName,
+              entry.uid,
+            );
+            if (deleted) {
+              toastr.success(`已删除条目「${escapeHtml(entry.label)}」`);
+              // 从批量选中集合中移除
+              const entryKey = getWorldInfoEntrySelectionKey(
+                normalizedName,
+                entry.uid,
+              );
+              cfmWorldInfoEntryBatchSelected.delete(entryKey);
+              // 关闭该条目的详情（如果已打开）
+              const openSet = getWorldInfoEntryOpenSet(normalizedName);
+              if (openSet) openSet.delete(String(entry.uid));
+              // 清除缓存，强制重新获取数据
+              refreshFn();
+            }
+          } catch (error) {
+            console.error("[CFM] 删除世界书条目失败:", error);
+            toastr.error(`删除失败: ${error.message || error}`);
+          } finally {
+            el.data("pending", false);
+          }
+        });
+
+      // 世界书条目行内编辑控件事件
+      row.find(".cfm-wi-ctrl-position").on("change", async function (e) {
+        e.stopPropagation();
+        const sel = $(this);
+        const selectedOption = sel.find("option:selected");
+        const newPos = Number(selectedOption.val());
+        const newRole =
+          selectedOption.data("role") !== ""
+            ? Number(selectedOption.data("role"))
+            : undefined;
+        const depthInput = row.find(".cfm-wi-ctrl-depth");
+        depthInput.prop("disabled", newPos !== 4);
+        try {
+          const wiData = await fetchWorldInfoDetailData(normalizedName);
+          const target = wiData?.entries?.[entry.uid];
+          if (!target) return;
+          target.position = newPos;
+          if (newRole !== undefined) target.role = newRole;
+          await saveWorldInfoDetailData(normalizedName, wiData);
+        } catch (err) {
+          console.error("[CFM] 保存插入位置失败:", err);
+          toastr.error(`保存失败: ${err.message || err}`);
+        }
+      });
+      row.find(".cfm-wi-ctrl-depth").on("change", async function (e) {
+        e.stopPropagation();
+        const val = Number($(this).val()) || 0;
+        try {
+          const wiData = await fetchWorldInfoDetailData(normalizedName);
+          const target = wiData?.entries?.[entry.uid];
+          if (!target) return;
+          target.depth = val;
+          await saveWorldInfoDetailData(normalizedName, wiData);
+        } catch (err) {
+          console.error("[CFM] 保存深度失败:", err);
+          toastr.error(`保存失败: ${err.message || err}`);
+        }
+      });
+      row.find(".cfm-wi-ctrl-order").on("change", async function (e) {
+        e.stopPropagation();
+        const val = Number($(this).val()) || 0;
+        try {
+          const wiData = await fetchWorldInfoDetailData(normalizedName);
+          const target = wiData?.entries?.[entry.uid];
+          if (!target) return;
+          target.order = val;
+          await saveWorldInfoDetailData(normalizedName, wiData);
+        } catch (err) {
+          console.error("[CFM] 保存顺序失败:", err);
+          toastr.error(`保存失败: ${err.message || err}`);
+        }
+      });
+      row.find(".cfm-wi-ctrl-prob").on("change", async function (e) {
+        e.stopPropagation();
+        let val = Number($(this).val());
+        if (isNaN(val)) val = 100;
+        val = Math.max(0, Math.min(100, val));
+        $(this).val(val);
+        try {
+          const wiData = await fetchWorldInfoDetailData(normalizedName);
+          const target = wiData?.entries?.[entry.uid];
+          if (!target) return;
+          target.probability = val;
+          await saveWorldInfoDetailData(normalizedName, wiData);
+        } catch (err) {
+          console.error("[CFM] 保存触发概率失败:", err);
+          toastr.error(`保存失败: ${err.message || err}`);
+        }
+      });
+      row.find(".cfm-wi-ctrl-state").on("change", async function (e) {
+        e.stopPropagation();
+        const val = $(this).val();
+        try {
+          const wiData = await fetchWorldInfoDetailData(normalizedName);
+          const target = wiData?.entries?.[entry.uid];
+          if (!target) return;
+          // 根据选择的状态设置 constant 和 vectorized
+          target.constant = val === "constant";
+          target.vectorized = val === "vectorized";
+          await saveWorldInfoDetailData(normalizedName, wiData);
+        } catch (err) {
+          console.error("[CFM] 保存条目状态失败:", err);
+          toastr.error(`保存失败: ${err.message || err}`);
+        }
+      });
+      // 阻止控件区域的 click 冒泡（避免影响批量选择等）
+      row
+        .find(".cfm-wi-entry-controls")
+        .on("click", (e) => e.stopPropagation());
+
+      // ===== 世界书条目详情编辑面板事件绑定 =====
+      if (isDetailOpen) {
+        const detailPanel = row.find(".cfm-wi-de");
+        // 阻止详情面板点击冒泡
+        detailPanel.on("click", (e) => e.stopPropagation());
+
+        // --- debounce 工具 ---
+        let _wiDetailSaveTimer = null;
+        const debouncedSave = (fn, delay = 500) => {
+          clearTimeout(_wiDetailSaveTimer);
+          _wiDetailSaveTimer = setTimeout(fn, delay);
+        };
+
+        // --- 通用保存辅助 ---
+        const saveField = async (fieldSetter, errorLabel = "保存") => {
+          try {
+            const wiData = await fetchWorldInfoDetailData(normalizedName);
+            const target = wiData?.entries?.[entry.uid];
+            if (!target) return;
+            fieldSetter(target, wiData);
+            await saveWorldInfoDetailData(normalizedName, wiData);
+          } catch (err) {
+            console.error(`[CFM] ${errorLabel}失败:`, err);
+            toastr.error(`${errorLabel}失败: ${err.message || err}`);
+          }
+        };
+
+        // --- 1. 主触发词 ---
+        detailPanel.find('[name="cfm_wi_key"]').on("input", function () {
+          const val = $(this).val();
+          debouncedSave(async () => {
+            await saveField((t) => {
+              t.key = val.split(",").map(s => s.trim()).filter(Boolean);
+            }, "保存主触发词");
+            refreshWorldInfoPanelView();
+          });
+        });
+
+        // --- 2. 逻辑类型 ---
+        detailPanel.find('[name="cfm_wi_logic"]').on("change", async function () {
+          const val = Number($(this).val());
+          await saveField((t) => { t.selectiveLogic = val; }, "保存逻辑类型");
+        });
+
+        // --- 3. 次触发词 ---
+        detailPanel.find('[name="cfm_wi_keysecondary"]').on("input", function () {
+          const val = $(this).val();
+          debouncedSave(async () => {
+            await saveField((t) => {
+              t.keysecondary = val.split(",").map(s => s.trim()).filter(Boolean);
+            }, "保存次触发词");
+          });
+        });
+
+        // --- 4. 条目备注 ---
+        detailPanel.find('[name="cfm_wi_comment"]').on("input", function () {
+          const val = $(this).val();
+          debouncedSave(async () => {
+            await saveField((t) => { t.comment = val; }, "保存条目备注");
+            refreshWorldInfoPanelView();
+          });
+        });
+
+        // --- 5. 内容 ---
+        detailPanel.find('[name="cfm_wi_content"]').on("input", function () {
+          const val = $(this).val();
+          debouncedSave(async () => {
+            await saveField((t) => { t.content = val; }, "保存内容");
+            // 更新 token 计数
+            try {
+              const tokenCount = await getContext().getTokenCountAsync(val);
+              detailPanel.find(".cfm-wi-de-token-count").text(tokenCount);
+            } catch (_) { /* ignore */ }
+          });
+        });
+        // 初始化 token 计数
+        (async () => {
+          try {
+            const tokenCount = await getContext().getTokenCountAsync(entry.content || "");
+            detailPanel.find(".cfm-wi-de-token-count").text(tokenCount);
+          } catch (_) { detailPanel.find(".cfm-wi-de-token-count").text("?"); }
+        })();
+
+        // --- 6. Outlet名称 ---
+        detailPanel.find('[name="cfm_wi_outletName"]').on("input", function () {
+          const val = $(this).val();
+          debouncedSave(async () => {
+            await saveField((t) => { t.outletName = val; }, "保存Outlet名称");
+          });
+        });
+
+        // --- 7. 扫描深度 ---
+        detailPanel.find('[name="cfm_wi_scanDepth"]').on("change", async function () {
+          const raw = $(this).val();
+          const val = raw === "" ? null : Number(raw);
+          await saveField((t) => { t.scanDepth = val; }, "保存扫描深度");
+        });
+
+        // --- 8. 三态布尔下拉 ---
+        const triStateSaves = [
+          { name: "cfm_wi_caseSensitive", field: "caseSensitive", label: "区分大小写" },
+          { name: "cfm_wi_matchWholeWords", field: "matchWholeWords", label: "全词匹配" },
+          { name: "cfm_wi_useGroupScoring", field: "useGroupScoring", label: "分组评分" },
+        ];
+        for (const ts of triStateSaves) {
+          detailPanel.find(`[name="${ts.name}"]`).on("change", async function () {
+            const raw = $(this).val();
+            const val = raw === "null" ? null : raw === "true";
+            await saveField((t) => { t[ts.field] = val; }, `保存${ts.label}`);
+          });
+        }
+
+        // --- 9. 自动化ID ---
+        detailPanel.find('[name="cfm_wi_automationId"]').on("input", function () {
+          const val = $(this).val();
+          debouncedSave(async () => {
+            await saveField((t) => { t.automationId = val; }, "保存自动化ID");
+          });
+        });
+
+        // --- 10. 递归层级 ---
+        detailPanel.find('[name="cfm_wi_recursionLevel"]').on("input", function () {
+          const val = $(this).val();
+          debouncedSave(async () => {
+            await saveField((t) => {
+              if (val === "" || val === "1") {
+                t.delayUntilRecursion = t.delayUntilRecursion ? true : false;
+              } else {
+                const num = Number(val);
+                t.delayUntilRecursion = !isNaN(num) ? num : false;
+              }
+            }, "保存递归层级");
+          });
+        });
+
+        // --- 11. 包含组 ---
+        detailPanel.find('[name="cfm_wi_group"]').on("input", function () {
+          const val = $(this).val();
+          debouncedSave(async () => {
+            await saveField((t) => { t.group = val.trim(); }, "保存包含组");
+          });
+        });
+
+        // --- 12. 组权重 ---
+        detailPanel.find('[name="cfm_wi_groupWeight"]').on("change", async function () {
+          const val = Number($(this).val()) || 100;
+          await saveField((t) => { t.groupWeight = Math.max(1, Math.min(999999, val)); }, "保存组权重");
+        });
+
+        // --- 13. 粘性 / 冷却 / 延迟 ---
+        const numericFields = [
+          { name: "cfm_wi_sticky", field: "sticky", label: "粘性" },
+          { name: "cfm_wi_cooldown", field: "cooldown", label: "冷却" },
+          { name: "cfm_wi_delay", field: "delay", label: "延迟" },
+        ];
+        for (const nf of numericFields) {
+          detailPanel.find(`[name="${nf.name}"]`).on("change", async function () {
+            const raw = $(this).val();
+            const val = raw === "" ? null : Math.max(0, Number(raw) || 0);
+            await saveField((t) => { t[nf.field] = val; }, `保存${nf.label}`);
+          });
+        }
+
+        // --- 14. 优先此条目 ---
+        detailPanel.find('[name="cfm_wi_groupOverride"]').on("change", async function () {
+          const val = $(this).prop("checked");
+          await saveField((t) => { t.groupOverride = val; }, "保存优先设置");
+        });
+
+        // --- 15. 选项复选框 ---
+        const checkboxFields = [
+          { name: "cfm_wi_excludeRecursion", field: "excludeRecursion", label: "不可被递归激活" },
+          { name: "cfm_wi_preventRecursion", field: "preventRecursion", label: "阻止进一步递归" },
+          { name: "cfm_wi_ignoreBudget", field: "ignoreBudget", label: "忽略预算" },
+          { name: "cfm_wi_selective", field: "selective", label: "选择性" },
+          { name: "cfm_wi_useProbability", field: "useProbability", label: "使用概率" },
+        ];
+        for (const cb of checkboxFields) {
+          detailPanel.find(`[name="${cb.name}"]`).on("change", async function () {
+            const val = $(this).prop("checked");
+            await saveField((t) => { t[cb.field] = val; }, `保存${cb.label}`);
+          });
+        }
+
+        // --- 16. 延迟到递归 checkbox ---
+        detailPanel.find('[name="cfm_wi_delayUntilRecursion"]').on("change", async function () {
+          const checked = $(this).prop("checked");
+          await saveField((t) => {
+            if (checked) {
+              const levelInput = detailPanel.find('[name="cfm_wi_recursionLevel"]').val();
+              const lvl = levelInput && levelInput !== "" && levelInput !== "1" ? Number(levelInput) : true;
+              t.delayUntilRecursion = (!isNaN(lvl) && typeof lvl === "number") ? lvl : true;
+            } else {
+              t.delayUntilRecursion = false;
+            }
+          }, "保存延迟到递归");
+        });
+
+        // --- 17. 角色/标签过滤 ---
+        detailPanel.find('[name="cfm_wi_charFilter"]').on("input", function () {
+          const val = $(this).val();
+          debouncedSave(async () => {
+            await saveField((t) => {
+              const names = val.split(",").map(s => s.trim()).filter(Boolean);
+              if (names.length === 0) {
+                delete t.characterFilter;
+              } else {
+                if (!t.characterFilter) t.characterFilter = { isExclude: false, names: [], tags: [] };
+                t.characterFilter.names = names;
+              }
+            }, "保存角色过滤");
+          });
+        });
+
+        // --- 18. 角色过滤排除模式 ---
+        detailPanel.find('[name="cfm_wi_charFilterExclude"]').on("change", async function () {
+          const val = $(this).prop("checked");
+          await saveField((t) => {
+            if (!t.characterFilter) t.characterFilter = { isExclude: false, names: [], tags: [] };
+            t.characterFilter.isExclude = val;
+          }, "保存角色过滤排除");
+        });
+
+        // --- 19. 生成类型触发 ---
+        detailPanel.find('[name="cfm_wi_trigger"]').on("change", async function () {
+          const triggers = [];
+          detailPanel.find('[name="cfm_wi_trigger"]:checked').each(function () {
+            triggers.push($(this).val());
+          });
+          await saveField((t) => { t.triggers = triggers; }, "保存生成类型触发");
+        });
+
+        // --- 20. 额外匹配源复选框 ---
+        const matchFields = [
+          { name: "cfm_wi_matchCharacterDescription", field: "matchCharacterDescription" },
+          { name: "cfm_wi_matchCharacterPersonality", field: "matchCharacterPersonality" },
+          { name: "cfm_wi_matchScenario", field: "matchScenario" },
+          { name: "cfm_wi_matchPersonaDescription", field: "matchPersonaDescription" },
+          { name: "cfm_wi_matchCharacterDepthPrompt", field: "matchCharacterDepthPrompt" },
+          { name: "cfm_wi_matchCreatorNotes", field: "matchCreatorNotes" },
+        ];
+        for (const mf of matchFields) {
+          detailPanel.find(`[name="${mf.name}"]`).on("change", async function () {
+            const val = $(this).prop("checked");
+            await saveField((t) => { t[mf.field] = val; }, "保存匹配源");
+          });
+        }
+
+        // --- 21. 额外匹配源折叠/展开 ---
+        detailPanel.find(".cfm-wi-de-collapse-header").on("click", function () {
+          const body = $(this).next(".cfm-wi-de-collapse-body");
+          const icon = $(this).find(".cfm-wi-de-collapse-icon");
+          body.slideToggle(200);
+          icon.toggleClass("cfm-wi-de-collapse-open");
+        });
+      }
+
+      detailCard.append(row);
+    }
+  }
+
+  function renderPresetDetailSubList(presetRow, preset) {
+    presetRow.next(".cfm-preset-detail-sublist").remove();
+
+    const pm = getContext().getPresetManager();
+    if (!pm) return;
+    const presetData = getPresetDataForDetail(pm, preset.name);
+    if (!presetData) return;
+
+    const fields = getPresetDetailFields(presetData);
+    const isCurrentApplied = isCurrentAppliedPreset(preset.name);
+    const isBatchOwner =
+      isCurrentApplied &&
+      cfmPresetDetailBatchMode &&
+      cfmPresetDetailBatchOwnerName === preset.name;
+    const subList = $(
+      '<div class="cfm-chat-sublist cfm-preset-detail-sublist"></div>',
+    );
+    const detailCard = $(
+      '<div class="cfm-chat-toolbar cfm-persona-detail-card cfm-preset-detail-card"></div>',
+    );
+
+    const detailToolbar = $(`
+      <div class="cfm-regex-toolbar cfm-preset-detail-toolbar">
+        <button class="cfm-btn cfm-btn-sm cfm-preset-detail-group-btn" title="${isCurrentApplied ? "预设条目激活分组" : "仅当前应用的预设可使用分组"}" ${fields.length === 0 || !isCurrentApplied ? "disabled" : ""}><i class="fa-solid fa-layer-group"></i> 分组</button>
+        <button class="cfm-btn cfm-btn-sm cfm-preset-detail-batch-toggle ${isBatchOwner ? "cfm-regex-batch-active" : ""}" title="${isCurrentApplied ? "批量操作模式" : "仅当前应用的预设可使用批量操作"}" ${fields.length === 0 || !isCurrentApplied ? "disabled" : ""}><i class="fa-solid fa-list-check"></i> ${isBatchOwner ? "退出批量" : "批量操作"}</button>
+        <span class="cfm-regex-count">${fields.length} 个条目</span>
+      </div>
+    `);
+    detailToolbar
+      .find(".cfm-preset-detail-group-btn")
+      .on("click touchend", async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!fields.length) return;
+        if (!ensureCurrentAppliedPreset(preset.name, "预设分组")) return;
+        await showPresetDetailGroupPanel(preset.name);
+      });
+    detailToolbar
+      .find(".cfm-preset-detail-batch-toggle")
+      .on("click touchend", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!fields.length) return;
+        if (!ensureCurrentAppliedPreset(preset.name, "批量操作")) return;
+        if (isBatchOwner) {
+          cfmPresetDetailBatchMode = false;
+          cfmPresetDetailBatchOwnerName = null;
+          cfmPresetDetailBatchSelected.clear();
+          cfmPresetDetailBatchRangeMode = false;
+          cfmPresetDetailBatchLastClicked = null;
+        } else {
+          cfmPresetDetailBatchMode = true;
+          cfmPresetDetailBatchOwnerName = preset.name;
+          cfmPresetDetailBatchSelected.clear();
+          cfmPresetDetailBatchRangeMode = false;
+          cfmPresetDetailBatchLastClicked = null;
+        }
+        refreshPresetPanelView();
+      });
+    detailCard.append(detailToolbar);
+
+    if (isBatchOwner && fields.length > 0) {
+      const allSel =
+        fields.length > 0 &&
+        fields.every((field) => cfmPresetDetailBatchSelected.has(field.key));
+      const selCount = fields.filter((field) =>
+        cfmPresetDetailBatchSelected.has(field.key),
+      ).length;
+      const batchToolbar = $(`
+        <div class="cfm-regex-batch-toolbar">
+          <button class="cfm-btn cfm-btn-sm cfm-preset-detail-batch-selall" title="全选/全不选">
+            <i class="fa-solid fa-${allSel ? "square-minus" : "square-check"}"></i> ${allSel ? "全不选" : "全选"}
+          </button>
+          <button class="cfm-btn cfm-btn-sm cfm-preset-detail-batch-range ${cfmPresetDetailBatchRangeMode ? "cfm-range-active" : ""}" title="框选模式">
+            <i class="fa-solid fa-arrow-down-short-wide"></i> 框选${cfmPresetDetailBatchRangeMode ? "(开)" : ""}
+          </button>
+          <span class="cfm-regex-batch-count">${selCount > 0 ? `已选 ${selCount} 项` : ""}</span>
+          <button class="cfm-btn cfm-btn-sm cfm-preset-detail-batch-activate" title="批量激活"><i class="fa-solid fa-play"></i> 激活</button>
+          <button class="cfm-btn cfm-btn-sm cfm-preset-detail-batch-deactivate" title="批量取消激活"><i class="fa-solid fa-stop"></i> 取消激活</button>
+        </div>
+      `);
+      batchToolbar
+        .find(".cfm-preset-detail-batch-selall")
+        .on("click touchend", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (allSel) {
+            fields.forEach((field) =>
+              cfmPresetDetailBatchSelected.delete(field.key),
+            );
+          } else {
+            fields.forEach((field) => {
+              if (field?.key) cfmPresetDetailBatchSelected.add(field.key);
+            });
+          }
+          refreshPresetPanelView();
+        });
+      batchToolbar
+        .find(".cfm-preset-detail-batch-range")
+        .on("click touchend", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          cfmPresetDetailBatchRangeMode = !cfmPresetDetailBatchRangeMode;
+          if (cfmPresetDetailBatchRangeMode)
+            cfmPresetDetailBatchLastClicked = null;
+          refreshPresetPanelView();
+        });
+      batchToolbar
+        .find(".cfm-preset-detail-batch-activate")
+        .on("click touchend", async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          await applyPresetDetailBatchActivation(
+            preset.name,
+            Array.from(cfmPresetDetailBatchSelected),
+            true,
+          );
+        });
+      batchToolbar
+        .find(".cfm-preset-detail-batch-deactivate")
+        .on("click touchend", async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          await applyPresetDetailBatchActivation(
+            preset.name,
+            Array.from(cfmPresetDetailBatchSelected),
+            false,
+          );
+        });
+      detailCard.append(batchToolbar);
+    }
+
+    if (fields.length === 0) {
+      detailCard.append(`
+        <div class="cfm-persona-detail-section cfm-preset-detail-section">
+          <div class="cfm-persona-detail-label">预设详情</div>
+          <div class="cfm-persona-detail-value"><span class="cfm-persona-detail-empty">无可展示条目</span></div>
+        </div>
+      `);
+    } else {
+      const canSortFields = fields.length > 1 && !isBatchOwner;
+      for (const [index, field] of fields.entries()) {
+        const fieldKey = String(field.key || "");
+        const sourceLabel = String(field.sourceLabel || "").trim();
+        const isExternalSourceField = !!sourceLabel;
+        const isSortableField =
+          canSortFields && fieldKey.startsWith("prompts.");
+        const canMoveUp = isSortableField && index > 0;
+        const canMoveDown = isSortableField && index < fields.length - 1;
+        const sourceMetaHtml = sourceLabel
+          ? `<div class="cfm-persona-detail-value cfm-preset-detail-value">来源地址：${escapeHtml(sourceLabel)}</div>`
+          : "";
+        const sortButtonsHtml = isSortableField
+          ? `<button class="cfm-sort-arrow-btn cfm-preset-detail-move-up ${canMoveUp ? "" : "cfm-sort-arrow-disabled"}" data-field="${escapeHtml(fieldKey)}" title="上移${escapeHtml(field.label)}"><i class="fa-solid fa-chevron-up"></i></button>
+                <button class="cfm-sort-arrow-btn cfm-preset-detail-move-down ${canMoveDown ? "" : "cfm-sort-arrow-disabled"}" data-field="${escapeHtml(fieldKey)}" title="下移${escapeHtml(field.label)}"><i class="fa-solid fa-chevron-down"></i></button>`
+          : "";
+        const actionButtonsHtml = isExternalSourceField
+          ? `<div class="cfm-chat-action-btn cfm-preset-detail-edit" data-field="${escapeHtml(fieldKey)}" title="编辑${escapeHtml(field.label)}"><i class="fa-solid fa-pen-to-square"></i></div>`
+          : `<div class="cfm-chat-action-btn cfm-preset-detail-copy" data-field="${escapeHtml(fieldKey)}" title="复制${escapeHtml(field.label)}"><i class="fa-solid fa-copy"></i></div>
+                <div class="cfm-chat-action-btn cfm-preset-detail-delete" data-field="${escapeHtml(fieldKey)}" title="删除${escapeHtml(field.label)}"><i class="fa-solid fa-trash-can"></i></div>
+                <div class="cfm-chat-action-btn cfm-preset-detail-edit" data-field="${escapeHtml(fieldKey)}" title="编辑${escapeHtml(field.label)}"><i class="fa-solid fa-pen-to-square"></i></div>`;
+        const isBatchSel =
+          isBatchOwner && cfmPresetDetailBatchSelected.has(fieldKey);
+        const row = $(`
+          <div class="cfm-persona-detail-section cfm-preset-detail-section cfm-preset-detail-row ${isBatchSel ? "cfm-edit-row-selected" : ""}" data-field="${escapeHtml(fieldKey)}">
+            <div class="cfm-persona-detail-label cfm-preset-detail-label">
+              ${sortButtonsHtml}
+              ${isBatchOwner ? `<div class="cfm-edit-checkbox ${isBatchSel ? "cfm-edit-checked" : ""}"><i class="fa-${isBatchSel ? "solid" : "regular"} fa-square${isBatchSel ? "-check" : ""}"></i></div>` : ""}
+              <div class="cfm-wi-toggle cfm-preset-field-active-toggle ${field.enabled ? "cfm-wi-toggle-on" : ""}" data-field="${escapeHtml(fieldKey)}" title="${field.enabled ? "点击禁用" : "点击启用"}"><i class="fa-solid fa-toggle-${field.enabled ? "on" : "off"}"></i></div>
+              <span class="cfm-preset-detail-label-text">${escapeHtml(field.label)}</span>
+              <div class="cfm-chat-actions">
+                ${actionButtonsHtml}
+              </div>
+            </div>
+            ${sourceMetaHtml}
+          </div>
+        `);
+
+        if (isBatchOwner) {
+          row.on("click", (e) => {
+            if (
+              $(e.target).closest(
+                ".cfm-chat-actions, .cfm-edit-checkbox, .cfm-preset-field-active-toggle, .cfm-sort-arrow-btn",
+              ).length
+            )
+              return;
+            togglePresetDetailBatchItem(fieldKey, e.shiftKey, fields);
+            refreshPresetPanelView();
+          });
+          row.find(".cfm-edit-checkbox").on("click touchend", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            togglePresetDetailBatchItem(fieldKey, e.shiftKey, fields);
+            refreshPresetPanelView();
+          });
+        }
+
+        row
+          .find(".cfm-preset-field-active-toggle")
+          .on("click touchend", async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const el = $(e.currentTarget);
+            if (el.data("pending")) return;
+            const currentFieldKey = String(el.data("field") || "");
+            const newState = !el.hasClass("cfm-wi-toggle-on");
+            el.data("pending", true);
+            try {
+              await togglePresetDetailFieldActivation(
+                preset.name,
+                currentFieldKey,
+                newState,
+              );
+            } finally {
+              el.data("pending", false);
+            }
+          });
+
+        row
+          .find(".cfm-preset-detail-move-up")
+          .on("click touchend", async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const currentFieldKey = $(e.currentTarget).data("field");
+            await movePresetDetailFieldByStep(preset.name, currentFieldKey, -1);
+            if (currentFieldKey) {
+              flashDraggedElement(
+                `.cfm-preset-detail-row[data-field="${$.escapeSelector(String(currentFieldKey))}"]`,
+              );
+            }
+          });
+
+        row
+          .find(".cfm-preset-detail-move-down")
+          .on("click touchend", async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const currentFieldKey = $(e.currentTarget).data("field");
+            await movePresetDetailFieldByStep(preset.name, currentFieldKey, 1);
+            if (currentFieldKey) {
+              flashDraggedElement(
+                `.cfm-preset-detail-row[data-field="${$.escapeSelector(String(currentFieldKey))}"]`,
+              );
+            }
+          });
+
+        row.find(".cfm-preset-detail-copy").on("click touchend", async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const currentFieldKey = $(e.currentTarget).data("field");
+          await duplicatePresetDetailField(preset.name, currentFieldKey);
+        });
+
+        row
+          .find(".cfm-preset-detail-delete")
+          .on("click touchend", async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const currentFieldKey = $(e.currentTarget).data("field");
+            await deletePresetDetailField(preset.name, currentFieldKey);
+          });
+
+        row.find(".cfm-preset-detail-edit").on("click touchend", async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const currentFieldKey = $(e.currentTarget).data("field");
+          await editPresetDetailField(preset.name, currentFieldKey);
+        });
+
+        detailCard.append(row);
+      }
+
+      if (
+        canSortFields &&
+        typeof detailCard.sortable === "function" &&
+        !cfmIsTouchDevice()
+      ) {
+        detailCard.sortable({
+          items: '.cfm-preset-detail-row[data-field^="prompts."]',
+          axis: "y",
+          tolerance: "pointer",
+          placeholder: "cfm-sort-placeholder",
+          forcePlaceholderSize: true,
+          distance: 4,
+          cancel:
+            ".cfm-chat-actions, .cfm-chat-action-btn, .cfm-edit-checkbox, .cfm-preset-field-active-toggle, .cfm-sort-arrow-btn, button, input, textarea, select, a",
+          start: (_event, ui) => {
+            ui.item.addClass("cfm-regex-dragging");
+          },
+          stop: async (_event, ui) => {
+            const movedFieldKey = String(ui.item.data("field") || "").trim();
+            ui.item.removeClass("cfm-regex-dragging");
+            const orderedFieldKeys = detailCard
+              .find('.cfm-preset-detail-row[data-field^="prompts."]')
+              .map(function () {
+                return String($(this).data("field") || "").trim();
+              })
+              .get()
+              .filter(Boolean);
+            await savePresetDetailPromptOrder(preset.name, orderedFieldKeys);
+            if (movedFieldKey) {
+              flashDraggedElement(
+                `.cfm-preset-detail-row[data-field="${$.escapeSelector(movedFieldKey)}"]`,
+              );
+            }
+          },
+        });
+        detailCard.disableSelection();
+      }
+    }
+
+    subList.append(detailCard);
+    presetRow.after(subList);
+  }
+
+  function refreshPresetPanelView() {
+    const q = String($("#cfm-preset-global-search").val() || "").trim();
+    if (q) executePresetSearch();
+    else renderPresetsView();
+  }
+
   // 同步更新预设管理器DOM中的option（重命名后立即同步，防止渲染清理逻辑误删分组）
   function syncPresetOptionInDOM(pm, oldName, newName) {
     if (!pm || !pm.select) return;
@@ -9493,21 +14244,22 @@ jQuery(async () => {
   }
 
   // 刷新预设管理器的下拉列表
-  async function refreshPresetManagerList(pm) {
+  async function refreshPresetManagerList(pm, preservedValue = null) {
     try {
       // 触发设置重新加载以同步预设列表
       if (pm && pm.select) {
-        // 记住当前选中的值
         const currentVal = $(pm.select).val();
-        // 触发 SillyTavern 重新加载设置
+        const restoreVal =
+          preservedValue !== undefined && preservedValue !== null
+            ? preservedValue
+            : currentVal;
         const resp = await fetch("/api/settings/get", {
           method: "POST",
           headers: getContext().getRequestHeaders(),
           body: JSON.stringify({}),
         });
-        if (resp.ok) {
-          // 简单方式：通过触发change事件让ST更新
-          $(pm.select).trigger("change");
+        if (resp.ok && restoreVal !== undefined && restoreVal !== null) {
+          $(pm.select).val(restoreVal);
         }
       }
     } catch (e) {
@@ -10278,6 +15030,7 @@ jQuery(async () => {
   // ==================== 角色卡/预设 正则查看模式 ====================
   let cfmCharRegexMode = false; // 角色卡正则展示模式
   let cfmCharRegexExpandedAvatars = new Set(); // 当前展开正则的角色avatar集合
+  let cfmCharDetailExpandedAvatars = new Set(); // 当前展开具体设定的角色avatar集合
   let cfmCharRegexTargetAvatar = null; // 当前正则查看目标角色avatar
   let cfmCharRegexHighlightPath = []; // 当前目标角色到达路径（文件夹ID列表）
   let cfmCharRegexPrevSelectedTreeNode = undefined; // 进入正则模式前的selectedTreeNode（用于退出时恢复）
@@ -10285,6 +15038,20 @@ jQuery(async () => {
   let cfmPresetRegexExpandedNames = new Set(); // 当前展开正则的预设name集合
   let cfmPresetRegexTargetName = null; // 当前正则查看目标预设名
   let cfmPresetRegexHighlightPath = []; // 当前目标预设到达路径（文件夹ID列表）
+  let cfmPresetDetailExpandedNames = new Set(); // 当前展开详情的预设name集合
+  let cfmPresetDetailBatchMode = false; // 预设详情批量操作模式
+  let cfmPresetDetailBatchOwnerName = null; // 当前批量操作所属预设名
+  let cfmPresetDetailBatchSelected = new Set(); // 当前批量选中的预设条目 key 集合
+  let cfmPresetDetailBatchRangeMode = false; // 预设详情框选模式
+  let cfmPresetDetailBatchLastClicked = null; // 预设详情框选锚点
+  let cfmWorldInfoEntryExpandedNames = new Set(); // 当前展开条目列表的世界书 name 集合
+  let cfmWorldInfoEntryBatchMode = false; // 世界书条目批量操作模式
+  let cfmWorldInfoEntryBatchOwnerName = null; // 当前条目批量操作所属世界书名
+  let cfmWorldInfoEntryBatchSelected = new Set(); // 当前批量选中的世界书条目 key 集合
+  let cfmWorldInfoEntryBatchRangeMode = false; // 世界书条目框选模式
+  let cfmWorldInfoEntryBatchLastClicked = null; // 世界书条目框选锚点
+  let cfmWorldInfoEntryOpenDetails = new Map(); // 当前展开详情的世界书条目（按世界书名记录）
+  let cfmWorldInfoEntryLastFocusedName = null; // 最近一次操作/展开的世界书名（用于收起后回定位）
 
   // 正则批量操作状态
   let cfmRegexBatchMode = false; // 正则批量操作模式
@@ -10423,6 +15190,162 @@ jQuery(async () => {
     else enterPresetRegexMode();
   }
 
+  function refreshChatModeTargetFromCurrent() {
+    if (!cfmChatMode) return;
+    const targetAvatar = getCurrentCharAvatar();
+    cfmChatExpandedAvatars.clear();
+    cfmChatCache.clear();
+
+    if (targetAvatar) {
+      const tagMap = getTagMap();
+      const charTags = tagMap[targetAvatar] || [];
+      const folderIds = getFolderTagIds();
+      const charFolderTags = charTags.filter((t) => folderIds.includes(t));
+      if (charFolderTags.length > 0) {
+        let deepest = charFolderTags[0];
+        let maxDepth = getFolderPath(deepest).length;
+        for (let i = 1; i < charFolderTags.length; i++) {
+          const depth = getFolderPath(charFolderTags[i]).length;
+          if (depth > maxDepth) {
+            deepest = charFolderTags[i];
+            maxDepth = depth;
+          }
+        }
+        for (const pid of getFolderPath(deepest)) expandedNodes.add(pid);
+        selectedTreeNode = deepest;
+      } else {
+        selectedTreeNode = "__uncategorized__";
+      }
+      cfmChatExpandedAvatars.add(targetAvatar);
+    }
+
+    renderLeftTree();
+    renderRightPane();
+
+    requestAnimationFrame(() => {
+      const targetRow = Array.from(
+        document.querySelectorAll("#cfm-right-list .cfm-row[data-avatar]"),
+      ).find((el) => el.getAttribute("data-avatar") === targetAvatar);
+      if (targetRow) {
+        targetRow.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    });
+
+    if (targetAvatar) {
+      getCharChats(targetAvatar)
+        .then(() => {
+          if (cfmChatMode && getCurrentCharAvatar() === targetAvatar) {
+            renderRightPane();
+            requestAnimationFrame(() => {
+              const targetRow = Array.from(
+                document.querySelectorAll(
+                  "#cfm-right-list .cfm-row[data-avatar]",
+                ),
+              ).find((el) => el.getAttribute("data-avatar") === targetAvatar);
+              if (targetRow) {
+                targetRow.scrollIntoView({
+                  behavior: "smooth",
+                  block: "center",
+                });
+              }
+            });
+          }
+        })
+        .catch((e) => console.warn("[CFM] 刷新聊天模式目标失败:", e));
+    }
+  }
+
+  function refreshCharRegexModeTargetFromCurrent() {
+    if (!cfmCharRegexMode) return;
+    cfmCharRegexExpandedAvatars.clear();
+    cfmCharRegexTargetAvatar = getCurrentCharAvatar();
+    cfmCharRegexHighlightPath = [];
+
+    if (cfmCharRegexTargetAvatar) {
+      const tagMap = getTagMap();
+      const charTags = tagMap[cfmCharRegexTargetAvatar] || [];
+      const folderIds = getFolderTagIds();
+      const charFolderTags = charTags.filter((t) => folderIds.includes(t));
+      if (charFolderTags.length > 0) {
+        let deepest = charFolderTags[0];
+        let maxDepth = getFolderPath(deepest).length;
+        for (let i = 1; i < charFolderTags.length; i++) {
+          const depth = getFolderPath(charFolderTags[i]).length;
+          if (depth > maxDepth) {
+            deepest = charFolderTags[i];
+            maxDepth = depth;
+          }
+        }
+        cfmCharRegexHighlightPath = getFolderPath(deepest);
+        for (const pid of cfmCharRegexHighlightPath) expandedNodes.add(pid);
+        selectedTreeNode = deepest;
+      } else {
+        cfmCharRegexHighlightPath = [];
+        selectedTreeNode = "__uncategorized__";
+      }
+      cfmCharRegexExpandedAvatars.add(cfmCharRegexTargetAvatar);
+    }
+
+    renderLeftTree();
+    renderRightPane();
+    requestAnimationFrame(() => {
+      const targetRow = document.querySelector(
+        "#cfm-right-list .cfm-regex-target-row",
+      );
+      if (targetRow) {
+        targetRow.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    });
+  }
+
+  function refreshPresetRegexModeTargetFromCurrent() {
+    if (!cfmPresetRegexMode) return;
+    cfmPresetRegexExpandedNames.clear();
+    cfmPresetRegexTargetName = getCurrentPresetName();
+    cfmPresetRegexHighlightPath = [];
+
+    if (cfmPresetRegexTargetName) {
+      const groups = getResourceGroups("presets");
+      const tree = getResFolderTree("presets");
+      const folderId = groups[cfmPresetRegexTargetName];
+      if (folderId && tree[folderId]) {
+        cfmPresetRegexHighlightPath = getResFolderPath("presets", folderId);
+        for (const pid of cfmPresetRegexHighlightPath) {
+          presetExpandedNodes.add(pid);
+        }
+        selectedPresetFolder = folderId;
+      } else {
+        cfmPresetRegexHighlightPath = [];
+        selectedPresetFolder = "__ungrouped__";
+      }
+      cfmPresetRegexExpandedNames.add(cfmPresetRegexTargetName);
+    }
+
+    renderPresetsView();
+    requestAnimationFrame(() => {
+      const targetRow = document.querySelector(
+        "#cfm-preset-right-list .cfm-regex-target-row",
+      );
+      if (targetRow) {
+        targetRow.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    });
+  }
+
+  function refreshActiveViewerStateAfterSelectionChange({
+    character = false,
+    preset = false,
+  } = {}) {
+    if (!$("#cfm-overlay").length && !$("#cfm-popup").length) return;
+    if (character) {
+      if (cfmChatMode) refreshChatModeTargetFromCurrent();
+      if (cfmCharRegexMode) refreshCharRegexModeTargetFromCurrent();
+    }
+    if (preset && cfmPresetRegexMode) {
+      refreshPresetRegexModeTargetFromCurrent();
+    }
+  }
+
   /**
    * 同步原生正则引擎状态：清除缓存并刷新原生正则UI面板
    */
@@ -10446,6 +15369,7 @@ jQuery(async () => {
           type: engine.SCRIPT_TYPES.PRESET,
         },
       ];
+      let hasMissingRows = false;
       for (const { sel, type } of containers) {
         const container = $(sel);
         if (!container.length) continue;
@@ -10456,7 +15380,7 @@ jQuery(async () => {
           const id = $(this).attr("id");
           if (id && !scriptIds.has(id)) $(this).remove();
         });
-        // 更新现有脚本行的状态并按新顺序排列
+        // 检查是否有新脚本缺少原生行
         for (const script of scripts) {
           if (!script.id) continue;
           const row = container.children("#" + $.escapeSelector(script.id));
@@ -10472,7 +15396,140 @@ jQuery(async () => {
               .prop("checked", script.disabled ?? false);
             // 移动到容器末尾以保持正确顺序
             container.append(row);
+          } else {
+            // 标记有缺失行，需要完整重建
+            hasMissingRows = true;
           }
+        }
+      }
+      // 如果有新脚本缺少原生行，完整重建面板
+      if (hasMissingRows) {
+        console.debug(
+          "[CFM] syncNativeRegexState: detected missing rows, rebuilding panels",
+        );
+        try {
+          // 尝试获取原生模板
+          let scriptTemplate;
+          try {
+            const { renderExtensionTemplateAsync } =
+              await import("../../extensions.js");
+            scriptTemplate = $(
+              await renderExtensionTemplateAsync("regex", "scriptTemplate"),
+            );
+          } catch (templateErr) {
+            console.debug(
+              "[CFM] syncNativeRegexState: template load failed, using fallback",
+              templateErr,
+            );
+          }
+          // 如果模板加载失败或为空，使用内联回退模板
+          if (!scriptTemplate || !scriptTemplate.length) {
+            scriptTemplate = $(`
+              <div class="regex-script-label flex-container flexnowrap">
+                <input type="checkbox" class="regex_bulk_checkbox" />
+                <span class="drag-handle menu-handle">&#9776;</span>
+                <div class="regex_script_name flex1 overflow-hidden"></div>
+                <div class="flex-container flexnowrap">
+                  <label class="checkbox flex-container margin-r5" for="regex_disable">
+                    <input type="checkbox" name="regex_disable" class="disable_regex" />
+                    <span class="regex-toggle-on fa-solid fa-toggle-on" title="Disable script"></span>
+                    <span class="regex-toggle-off fa-solid fa-toggle-off" title="Enable script"></span>
+                  </label>
+                  <div class="edit_existing_regex menu_button" title="Edit script">
+                    <i class="fa-solid fa-pencil"></i>
+                  </div>
+                  <div class="export_regex menu_button" title="Export script">
+                    <i class="fa-solid fa-file-export"></i>
+                  </div>
+                  <div class="delete_regex menu_button" title="Delete script">
+                    <i class="fa-solid fa-trash"></i>
+                  </div>
+                </div>
+              </div>
+            `);
+          }
+          for (const { sel, type } of containers) {
+            const container = $(sel);
+            if (!container.length) continue;
+            const scripts = engine.getScriptsByType(type);
+            // 清空容器后完整重建
+            container.empty();
+            scripts.forEach((script, index) => {
+              if (!script.id) {
+                script.id = getContext().uuidv4();
+              }
+              const scriptHtml = scriptTemplate.clone();
+              const saveFunc = async () => {
+                await engine.saveScriptsByType(
+                  engine.getScriptsByType(type),
+                  type,
+                );
+              };
+              scriptHtml.attr("id", script.id);
+              scriptHtml
+                .find(".regex_script_name")
+                .text(script.scriptName)
+                .attr("title", script.scriptName);
+              scriptHtml
+                .find(".disable_regex")
+                .prop("checked", script.disabled ?? false)
+                .on("input", async function () {
+                  script.disabled = !!$(this).prop("checked");
+                  await saveFunc();
+                });
+              scriptHtml.find(".regex-toggle-on").on("click", function () {
+                scriptHtml
+                  .find(".disable_regex")
+                  .prop("checked", true)
+                  .trigger("input");
+              });
+              scriptHtml.find(".regex-toggle-off").on("click", function () {
+                scriptHtml
+                  .find(".disable_regex")
+                  .prop("checked", false)
+                  .trigger("input");
+              });
+              scriptHtml.find(".edit_existing_regex").on("click", function () {
+                // 触发原生编辑对话框
+                const id = scriptHtml.attr("id");
+                const editBtn = $("#" + $.escapeSelector(String(id))).find(
+                  ".edit_existing_regex",
+                );
+                if (editBtn.length && editBtn[0] !== this) {
+                  editBtn.trigger("click");
+                }
+              });
+              scriptHtml.find(".export_regex").on("click", function () {
+                const fileName = `regex-${(script.scriptName || "").replace(/[\s.<>:"/\\|?*\x00-\x1F\x7F]/g, "_").toLowerCase()}.json`;
+                const fileData = JSON.stringify(script, null, 4);
+                const blob = new Blob([fileData], {
+                  type: "application/json",
+                });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = fileName;
+                a.click();
+                URL.revokeObjectURL(url);
+              });
+              scriptHtml.find(".delete_regex").on("click", async function () {
+                // 删除操作交由原生处理
+                const nativeRow = $("#" + $.escapeSelector(String(script.id)));
+                if (nativeRow.length) {
+                  nativeRow.find(".delete_regex").trigger("click");
+                }
+              });
+              container.append(scriptHtml);
+            });
+          }
+          console.debug(
+            "[CFM] syncNativeRegexState: rebuilt native regex panels",
+          );
+        } catch (rebuildErr) {
+          console.error(
+            "[CFM] syncNativeRegexState rebuild failed:",
+            rebuildErr,
+          );
         }
       }
     } catch (e) {
@@ -10487,16 +15544,29 @@ jQuery(async () => {
    * @param {Array} scripts - 正则脚本列表
    */
   async function saveCharRegexScripts(avatar, scripts) {
-    // 1. 同步更新内存中的角色数据
+    // 1. 同步更新内存中的角色数据（直接修改 characters 数组引用，与原生 writeExtensionField 保持一致）
     const chars = getCharacters();
     const ch = chars.find((c) => c.avatar === avatar);
     if (ch) {
       if (!ch.data) ch.data = {};
       if (!ch.data.extensions) ch.data.extensions = {};
       ch.data.extensions.regex_scripts = scripts;
+      // 同步更新 json_data（与原生 writeExtensionField 行为一致，防止后续保存时数据不同步）
+      if (ch.json_data) {
+        try {
+          const jsonData = JSON.parse(ch.json_data);
+          if (!jsonData.data) jsonData.data = {};
+          if (!jsonData.data.extensions) jsonData.data.extensions = {};
+          jsonData.data.extensions.regex_scripts = scripts;
+          ch.json_data = JSON.stringify(jsonData);
+        } catch (parseErr) {
+          console.debug("[CFM] json_data 同步失败:", parseErr);
+        }
+      }
     }
     // 2. 持久化到服务器
-    const headers = getContext().getRequestHeaders();
+    const ctx = getContext();
+    const headers = ctx.getRequestHeaders();
     await fetch("/api/characters/merge-attributes", {
       method: "POST",
       headers: headers,
@@ -10506,6 +15576,10 @@ jQuery(async () => {
       }),
     });
     // 3. 清除原生正则引擎缓存 & 刷新原生正则UI
+    // 注意：不再调用 ctx.getCharacters()，因为：
+    //  - 我们已经直接更新了 characters 数组中的角色对象
+    //  - getCharacters() 会触发 selectCharacterById → 异步重建原生正则面板，
+    //    导致与 syncNativeRegexState 的同步结果产生时序冲突
     await syncNativeRegexState();
   }
 
@@ -10533,6 +15607,7 @@ jQuery(async () => {
         <div class="cfm-regex-toolbar">
           <button class="cfm-btn cfm-btn-sm cfm-regex-import-btn" title="导入正则脚本"><i class="fa-solid fa-file-import"></i> 导入</button>
           <input type="file" class="cfm-regex-import-file" multiple accept=".json" style="display:none;">
+          <button class="cfm-btn cfm-btn-sm cfm-regex-create-btn" title="新增正则脚本"><i class="fa-solid fa-plus"></i> 新增</button>
           <button class="cfm-btn cfm-btn-sm cfm-regex-batch-toggle ${cfmRegexBatchMode ? "cfm-regex-batch-active" : ""}" title="批量操作模式"><i class="fa-solid fa-list-check"></i> ${cfmRegexBatchMode ? "退出批量" : "批量操作"}</button>
           <span class="cfm-regex-count">${scripts ? scripts.length : 0} 个脚本</span>
         </div>
@@ -10568,6 +15643,12 @@ jQuery(async () => {
           toastr.error("导入失败: " + err.message);
         }
       });
+      // 新增按钮
+      regexToolbar.find(".cfm-regex-create-btn").on("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        createCharScopedRegexFromManager(avatar, charName);
+      });
       // 批量操作切换
       regexToolbar.find(".cfm-regex-batch-toggle").on("click", (e) => {
         e.stopPropagation();
@@ -10593,7 +15674,10 @@ jQuery(async () => {
             <button class="cfm-btn cfm-btn-sm cfm-regex-batch-range ${cfmRegexBatchRangeMode ? "cfm-range-active" : ""}" title="框选模式">
               <i class="fa-solid fa-arrow-down-short-wide"></i> 框选${cfmRegexBatchRangeMode ? "(开)" : ""}
             </button>
+            <button class="cfm-btn cfm-btn-sm cfm-regex-batch-activate" title="批量激活"><i class="fa-solid fa-toggle-on"></i> 激活</button>
+            <button class="cfm-btn cfm-btn-sm cfm-regex-batch-deactivate" title="批量取消激活"><i class="fa-solid fa-toggle-off"></i> 取消激活</button>
             <span class="cfm-regex-batch-count">${selCount > 0 ? `已选 ${selCount} 项` : ""}</span>
+            <button class="cfm-btn cfm-btn-sm cfm-regex-batch-transfer" title="互通正则"><i class="fa-solid fa-right-left"></i> 互通</button>
             <button class="cfm-btn cfm-btn-sm cfm-regex-batch-export" title="批量导出"><i class="fa-solid fa-file-export"></i> 导出</button>
             <button class="cfm-btn cfm-btn-sm cfm-regex-batch-delete" title="批量删除"><i class="fa-solid fa-trash-can"></i> 删除</button>
           </div>
@@ -10617,6 +15701,43 @@ jQuery(async () => {
           if (cfmRegexBatchRangeMode) cfmRegexBatchLastClicked = null;
           rerenderCurrentView();
         });
+        batchToolbar
+          .find(".cfm-regex-batch-activate")
+          .on("click", async (e) => {
+            e.stopPropagation();
+            const changed = await applyOwnedRegexBatchActivation({
+              scripts,
+              selectedIds: Array.from(cfmRegexBatchSelected),
+              activate: true,
+              save: () => saveCharRegexScripts(avatar, scripts),
+            });
+            if (changed) rerenderCurrentView();
+          });
+        batchToolbar
+          .find(".cfm-regex-batch-deactivate")
+          .on("click", async (e) => {
+            e.stopPropagation();
+            const changed = await applyOwnedRegexBatchActivation({
+              scripts,
+              selectedIds: Array.from(cfmRegexBatchSelected),
+              activate: false,
+              save: () => saveCharRegexScripts(avatar, scripts),
+            });
+            if (changed) rerenderCurrentView();
+          });
+        // 互通按钮
+        batchToolbar
+          .find(".cfm-regex-batch-transfer")
+          .on("click", async (e) => {
+            e.stopPropagation();
+            await startOwnedRegexTransferFlow({
+              sourceType: "char",
+              sourceName: charName,
+              avatar,
+              scripts,
+              selectedIds: Array.from(cfmRegexBatchSelected),
+            });
+          });
         // 批量导出（JSON格式，与酒馆保持一致）
         batchToolbar.find(".cfm-regex-batch-export").on("click", async (e) => {
           e.stopPropagation();
@@ -10698,7 +15819,7 @@ jQuery(async () => {
           ? `<div class="cfm-wi-toggle ${isDisabled ? "" : "cfm-wi-toggle-on"}" title="${isDisabled ? "已禁用 - 点击启用" : "已启用 - 点击禁用"}"><i class="fa-solid fa-toggle-${isDisabled ? "off" : "on"}"></i></div>`
           : `<div class="cfm-wi-toggle cfm-toggle-readonly ${isDisabled ? "" : "cfm-wi-toggle-on"}" title="${isDisabled ? "已禁用" : "已启用"}（非当前角色，不可切换）"><i class="fa-solid fa-toggle-${isDisabled ? "off" : "on"}"></i></div>`;
         const row = $(`
-          <div class="cfm-row cfm-row-char cfm-regex-script-row ${isDisabled ? "cfm-regex-disabled" : ""} ${isBatchSel ? "cfm-regex-batch-selected" : ""}" ${isTarget ? 'draggable="true"' : ""}
+          <div class="cfm-row cfm-row-char cfm-regex-script-row ${isDisabled ? "cfm-regex-disabled" : ""} ${isBatchSel ? "cfm-regex-batch-selected" : ""}"
                data-script-id="${escapeHtml(script.id || "")}"
                data-script-idx="${i}"
                data-script-type="1"
@@ -10715,9 +15836,6 @@ jQuery(async () => {
                   ? `
               <div class="cfm-regex-action-btn cfm-regex-move-up-btn${i === 0 ? " cfm-regex-move-disabled" : ""}" title="上移"><i class="fa-solid fa-arrow-up"></i></div>
               <div class="cfm-regex-action-btn cfm-regex-move-down-btn${i === scripts.length - 1 ? " cfm-regex-move-disabled" : ""}" title="下移"><i class="fa-solid fa-arrow-down"></i></div>
-              <div class="cfm-regex-action-btn cfm-regex-rename-btn" title="重命名"><i class="fa-solid fa-i-cursor"></i></div>
-              <div class="cfm-regex-action-btn cfm-regex-export-btn" title="导出"><i class="fa-solid fa-file-export"></i></div>
-              <div class="cfm-regex-action-btn cfm-regex-delete-btn" title="删除"><i class="fa-solid fa-trash-can"></i></div>
               `
                   : ""
               }
@@ -10790,10 +15908,16 @@ jQuery(async () => {
           e.preventDefault();
           e.stopPropagation();
           if (i <= 0) return;
+          const movedScriptId = String(script?.id || "").trim();
           [scripts[i - 1], scripts[i]] = [scripts[i], scripts[i - 1]];
           try {
             await saveCharRegexScripts(avatar, scripts);
             rerenderCurrentView();
+            if (movedScriptId) {
+              flashDraggedElement(
+                `.cfm-regex-script-row[data-script-id="${$.escapeSelector(movedScriptId)}"]`,
+              );
+            }
           } catch (err) {
             console.error("[CFM] 正则上移失败:", err);
             [scripts[i - 1], scripts[i]] = [scripts[i], scripts[i - 1]];
@@ -10805,119 +15929,88 @@ jQuery(async () => {
           e.preventDefault();
           e.stopPropagation();
           if (i >= scripts.length - 1) return;
+          const movedScriptId = String(script?.id || "").trim();
           [scripts[i], scripts[i + 1]] = [scripts[i + 1], scripts[i]];
           try {
             await saveCharRegexScripts(avatar, scripts);
             rerenderCurrentView();
+            if (movedScriptId) {
+              flashDraggedElement(
+                `.cfm-regex-script-row[data-script-id="${$.escapeSelector(movedScriptId)}"]`,
+              );
+            }
           } catch (err) {
             console.error("[CFM] 正则下移失败:", err);
             [scripts[i], scripts[i + 1]] = [scripts[i + 1], scripts[i]];
             toastr.error("下移失败: " + err.message);
           }
         });
-        // 重命名按钮
-        row.find(".cfm-regex-rename-btn").on("click", async function (e) {
-          e.preventDefault();
-          e.stopPropagation();
-          const oldName = script.scriptName || "";
-          const newName = await showRegexRenamePopup(oldName);
-          if (!newName || newName === oldName) return;
-          try {
-            script.scriptName = newName;
-            await saveCharRegexScripts(avatar, scripts);
-            toastr.success(`已重命名: ${oldName} → ${newName}`);
-            rerenderCurrentView();
-          } catch (err) {
-            console.error("[CFM] 正则重命名失败:", err);
-            script.scriptName = oldName;
-            toastr.error("重命名失败: " + err.message);
-          }
-        });
-        // 导出按钮（单个导出，JSON格式）
-        row.find(".cfm-regex-export-btn").on("click", async function (e) {
-          e.preventDefault();
-          e.stopPropagation();
-          try {
-            const download = (await import("../../../utils.js")).download;
-            const fileName = `regex-${(script.scriptName || "unnamed").replace(/[^\w\-_.]/g, "_")}.json`;
-            download(
-              JSON.stringify(script, null, 4),
-              fileName,
-              "application/json",
-            );
-            toastr.success(`已导出: ${script.scriptName}`);
-          } catch (err) {
-            console.error("[CFM] 导出正则失败:", err);
-            toastr.error("导出失败: " + err.message);
-          }
-        });
-        // 删除按钮
-        row.find(".cfm-regex-delete-btn").on("click", async function (e) {
-          e.preventDefault();
-          e.stopPropagation();
-          if (
-            !confirm(
-              `确定要删除正则脚本「${script.scriptName || "(未命名)"}」吗？\n此操作不可撤销！`,
-            )
-          )
-            return;
-          try {
-            const idx = scripts.findIndex((s) => s.id === script.id);
-            if (idx !== -1) scripts.splice(idx, 1);
-            await saveCharRegexScripts(avatar, scripts);
-            toastr.success(`已删除: ${script.scriptName || "(未命名)"}`);
-            rerenderCurrentView();
-          } catch (err) {
-            console.error("[CFM] 删除正则失败:", err);
-            toastr.error("删除失败: " + err.message);
-          }
-        });
         subList.append(row);
       }
 
       // 拖拽排序（仅目标角色）
-      if (isTarget) {
-        let dragSrcRegex = null;
-        subList.on("dragstart", ".cfm-regex-script-row", function (e) {
-          dragSrcRegex = this;
-          $(this).addClass("cfm-regex-dragging");
-          e.originalEvent.dataTransfer.effectAllowed = "move";
-        });
-        subList.on("dragover", ".cfm-regex-script-row", function (e) {
-          e.preventDefault();
-          e.originalEvent.dataTransfer.dropEffect = "move";
-          $(this).addClass("cfm-regex-dragover");
-        });
-        subList.on("dragleave", ".cfm-regex-script-row", function () {
-          $(this).removeClass("cfm-regex-dragover");
-        });
-        subList.on("drop", ".cfm-regex-script-row", async function (e) {
-          e.preventDefault();
-          $(this).removeClass("cfm-regex-dragover");
-          if (dragSrcRegex && dragSrcRegex !== this) {
-            const srcIdx = parseInt($(dragSrcRegex).data("script-idx"), 10);
-            const tgtIdx = parseInt($(this).data("script-idx"), 10);
-            if (!isNaN(srcIdx) && !isNaN(tgtIdx) && srcIdx !== tgtIdx) {
-              const [moved] = scripts.splice(srcIdx, 1);
-              scripts.splice(tgtIdx, 0, moved);
-              try {
-                await saveCharRegexScripts(avatar, scripts);
-                rerenderCurrentView();
-              } catch (err) {
-                console.error("[CFM] 正则拖拽排序失败:", err);
-                toastr.error("排序失败: " + err.message);
-                // 回滚
-                const [back] = scripts.splice(tgtIdx, 1);
-                scripts.splice(srcIdx, 0, back);
-              }
+      if (
+        isTarget &&
+        typeof subList.sortable === "function" &&
+        !cfmIsTouchDevice()
+      ) {
+        subList.sortable({
+          items: ".cfm-regex-script-row",
+          axis: "y",
+          tolerance: "pointer",
+          placeholder: "cfm-sort-placeholder",
+          forcePlaceholderSize: true,
+          distance: 4,
+          cancel:
+            ".cfm-chat-actions, .cfm-regex-batch-check, .cfm-wi-toggle, .cfm-regex-edit-btn, .cfm-regex-move-up-btn, .cfm-regex-move-down-btn, button, input, textarea, select, a, label",
+          start: (_event, ui) => {
+            ui.item.addClass("cfm-regex-dragging");
+          },
+          stop: async (_event, ui) => {
+            const movedScriptId = String(
+              ui.item.data("script-id") || "",
+            ).trim();
+            ui.item.removeClass("cfm-regex-dragging");
+            const orderedIds = subList
+              .find(".cfm-regex-script-row")
+              .map(function () {
+                return String($(this).data("script-id") || "").trim();
+              })
+              .get()
+              .filter(Boolean);
+            const currentIds = scripts
+              .map((script) => String(script?.id || "").trim())
+              .filter(Boolean);
+            if (
+              orderedIds.length !== currentIds.length ||
+              orderedIds.every((id, index) => id === currentIds[index])
+            ) {
+              return;
             }
-          }
+            const scriptMap = new Map(
+              scripts
+                .map((script) => [String(script?.id || "").trim(), script])
+                .filter(([id]) => !!id),
+            );
+            const reorderedScripts = orderedIds
+              .map((id) => scriptMap.get(id))
+              .filter(Boolean);
+            try {
+              await saveCharRegexScripts(avatar, reorderedScripts);
+              rerenderCurrentView();
+              if (movedScriptId) {
+                flashDraggedElement(
+                  `.cfm-regex-script-row[data-script-id="${$.escapeSelector(movedScriptId)}"]`,
+                );
+              }
+            } catch (err) {
+              console.error("[CFM] 正则拖拽排序失败:", err);
+              toastr.error("排序失败: " + err.message);
+              rerenderCurrentView();
+            }
+          },
         });
-        subList.on("dragend", ".cfm-regex-script-row", function () {
-          $(this).removeClass("cfm-regex-dragging");
-          subList.find(".cfm-regex-dragover").removeClass("cfm-regex-dragover");
-          dragSrcRegex = null;
-        });
+        subList.disableSelection();
       }
     }
     charRow.after(subList);
@@ -10950,6 +16043,203 @@ jQuery(async () => {
       }
     }
     cfmRegexBatchLastClicked = scriptId;
+  }
+
+  async function applyOwnedRegexBatchActivation({
+    scripts,
+    selectedIds,
+    activate,
+    save,
+    successLabel = "正则脚本",
+  }) {
+    const normalizedIds = Array.from(
+      new Set(
+        (Array.isArray(selectedIds) ? selectedIds : [])
+          .map((id) => String(id || ""))
+          .filter(Boolean),
+      ),
+    );
+    if (!normalizedIds.length) {
+      toastr.warning("请先选择要操作的正则脚本");
+      return false;
+    }
+    if (!Array.isArray(scripts) || typeof save !== "function") {
+      toastr.error("批量激活正则脚本失败：缺少保存上下文");
+      return false;
+    }
+
+    const touched = [];
+    let changedCount = 0;
+    for (const scriptId of normalizedIds) {
+      const script = scripts.find((item) => item?.id === scriptId);
+      if (!script) continue;
+      const oldDisabled = !!script.disabled;
+      const nextDisabled = !activate;
+      if (oldDisabled === nextDisabled) continue;
+      touched.push([script, oldDisabled]);
+      script.disabled = nextDisabled;
+      changedCount++;
+    }
+
+    if (!changedCount) {
+      toastr.warning("所选正则脚本状态未发生变化");
+      return false;
+    }
+
+    try {
+      await save();
+      toastr.success(
+        `已${activate ? "激活" : "取消激活"} ${changedCount} 个${successLabel}`,
+      );
+      return true;
+    } catch (error) {
+      for (const [script, oldDisabled] of touched) {
+        script.disabled = oldDisabled;
+      }
+      console.error("[CFM] 批量切换正则脚本激活状态失败:", error);
+      toastr.error(`保存失败: ${error.message || error}`);
+      return false;
+    }
+  }
+
+  async function applyWorldInfoMultiActivation(bookNames, activate) {
+    const normalizedNames = Array.from(
+      new Set(
+        (Array.isArray(bookNames) ? bookNames : [])
+          .map((name) => String(name || ""))
+          .filter(Boolean),
+      ),
+    );
+    if (!normalizedNames.length) {
+      toastr.warning("请先选择要操作的世界书");
+      return false;
+    }
+
+    const charBound = await getCharBoundWorldBooks();
+    const activeSet = await getActiveWorldInfoSet();
+    let changedCount = 0;
+    let skippedCount = 0;
+
+    for (const name of normalizedNames) {
+      if (charBound.has(name)) {
+        skippedCount++;
+        continue;
+      }
+      if (activeSet.has(name) === activate) continue;
+      await toggleWorldInfoActivation(name, activate);
+      if (activate) activeSet.add(name);
+      else activeSet.delete(name);
+      syncWiPresetTrackingForManualToggle(name, activate);
+      changedCount++;
+    }
+
+    if (changedCount > 0) {
+      toastr.success(
+        `已${activate ? "激活" : "取消激活"} ${changedCount} 个世界书`,
+      );
+    } else {
+      toastr.warning(
+        `所选世界书状态未发生变化${skippedCount ? "（角色关联项已自动跳过）" : ""}`,
+      );
+    }
+    if (skippedCount > 0) {
+      toastr.info(`已跳过 ${skippedCount} 个角色关联世界书`);
+    }
+    return changedCount > 0;
+  }
+
+  async function applyQrMultiActivation(setNames, activate) {
+    const normalizedNames = Array.from(
+      new Set(
+        (Array.isArray(setNames) ? setNames : [])
+          .map((name) => String(name || "").trim())
+          .filter(Boolean),
+      ),
+    );
+    if (!normalizedNames.length) {
+      toastr.warning("请先选择要操作的快速回复集");
+      return false;
+    }
+
+    const existingNameSet = getExistingQrSetNameSet();
+    const validNames = normalizedNames.filter((name) =>
+      existingNameSet.has(name),
+    );
+    if (!validNames.length) {
+      toastr.warning("所选快速回复集已不存在");
+      return false;
+    }
+
+    const activeSet = getActiveQrSets();
+    let changedCount = 0;
+    for (const name of validNames) {
+      if (activeSet.has(name) === activate) continue;
+      const changed = await toggleQrSetActivation(name, activate);
+      if (!changed) continue;
+      if (activate) activeSet.add(name);
+      else activeSet.delete(name);
+      syncQrPresetTrackingForManualToggle(name, activate);
+      changedCount++;
+    }
+
+    if (!changedCount) {
+      toastr.warning("所选快速回复集状态未发生变化");
+      return false;
+    }
+
+    toastr.success(
+      `已${activate ? "激活" : "取消激活"} ${changedCount} 个快速回复集`,
+    );
+    return true;
+  }
+
+  async function applyGlobalRegexMultiActivation(scriptIds, activate) {
+    const normalizedIds = Array.from(
+      new Set(
+        (Array.isArray(scriptIds) ? scriptIds : [])
+          .map((id) => String(id || ""))
+          .filter(Boolean),
+      ),
+    );
+    if (!normalizedIds.length) {
+      toastr.warning("请先选择要操作的正则脚本");
+      return false;
+    }
+
+    const globalScripts = extension_settings.regex ?? [];
+    const touched = [];
+    let changedCount = 0;
+    for (const scriptId of normalizedIds) {
+      const script = globalScripts.find((item) => item?.id === scriptId);
+      if (!script) continue;
+      const oldDisabled = !!script.disabled;
+      const nextDisabled = !activate;
+      if (oldDisabled === nextDisabled) continue;
+      touched.push([script, oldDisabled]);
+      toggleRegexScriptActivation(scriptId, activate);
+      changedCount++;
+    }
+
+    if (!changedCount) {
+      toastr.warning("所选正则脚本状态未发生变化");
+      return false;
+    }
+
+    try {
+      getContext().saveSettingsDebounced();
+      await syncNativeRegexState();
+      toastr.success(
+        `已${activate ? "激活" : "取消激活"} ${changedCount} 个正则脚本`,
+      );
+      return true;
+    } catch (error) {
+      for (const [script, oldDisabled] of touched) {
+        script.disabled = oldDisabled;
+      }
+      console.error("[CFM] 批量切换全局正则激活状态失败:", error);
+      toastr.error(`保存失败: ${error.message || error}`);
+      return false;
+    }
   }
 
   /**
@@ -10990,6 +16280,7 @@ jQuery(async () => {
         <div class="cfm-regex-toolbar">
           <button class="cfm-btn cfm-btn-sm cfm-regex-import-btn" title="导入正则脚本"><i class="fa-solid fa-file-import"></i> 导入</button>
           <input type="file" class="cfm-regex-import-file" multiple accept=".json" style="display:none;">
+          <button class="cfm-btn cfm-btn-sm cfm-regex-create-btn" title="新增正则脚本"><i class="fa-solid fa-plus"></i> 新增</button>
           <button class="cfm-btn cfm-btn-sm cfm-regex-batch-toggle ${cfmRegexBatchMode ? "cfm-regex-batch-active" : ""}" title="批量操作模式"><i class="fa-solid fa-list-check"></i> ${cfmRegexBatchMode ? "退出批量" : "批量操作"}</button>
           <span class="cfm-regex-count">${scripts ? scripts.length : 0} 个脚本</span>
         </div>
@@ -11025,6 +16316,12 @@ jQuery(async () => {
           toastr.error("导入失败: " + err.message);
         }
       });
+      // 新增按钮
+      regexToolbar.find(".cfm-regex-create-btn").on("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        createPresetRegexFromManager(presetName);
+      });
       // 批量操作切换
       regexToolbar.find(".cfm-regex-batch-toggle").on("click", (e) => {
         e.stopPropagation();
@@ -11050,7 +16347,10 @@ jQuery(async () => {
             <button class="cfm-btn cfm-btn-sm cfm-regex-batch-range ${cfmRegexBatchRangeMode ? "cfm-range-active" : ""}" title="框选模式">
               <i class="fa-solid fa-arrow-down-short-wide"></i> 框选${cfmRegexBatchRangeMode ? "(开)" : ""}
             </button>
+            <button class="cfm-btn cfm-btn-sm cfm-regex-batch-activate" title="批量激活"><i class="fa-solid fa-toggle-on"></i> 激活</button>
+            <button class="cfm-btn cfm-btn-sm cfm-regex-batch-deactivate" title="批量取消激活"><i class="fa-solid fa-toggle-off"></i> 取消激活</button>
             <span class="cfm-regex-batch-count">${selCount > 0 ? `已选 ${selCount} 项` : ""}</span>
+            <button class="cfm-btn cfm-btn-sm cfm-regex-batch-transfer" title="互通正则"><i class="fa-solid fa-right-left"></i> 互通</button>
             <button class="cfm-btn cfm-btn-sm cfm-regex-batch-export" title="批量导出"><i class="fa-solid fa-file-export"></i> 导出</button>
             <button class="cfm-btn cfm-btn-sm cfm-regex-batch-delete" title="批量删除"><i class="fa-solid fa-trash-can"></i> 删除</button>
           </div>
@@ -11074,6 +16374,42 @@ jQuery(async () => {
           if (cfmRegexBatchRangeMode) cfmRegexBatchLastClicked = null;
           rerenderCurrentView();
         });
+        batchToolbar
+          .find(".cfm-regex-batch-activate")
+          .on("click", async (e) => {
+            e.stopPropagation();
+            const changed = await applyOwnedRegexBatchActivation({
+              scripts,
+              selectedIds: Array.from(cfmRegexBatchSelected),
+              activate: true,
+              save: () => savePresetRegexScripts(scripts),
+            });
+            if (changed) rerenderCurrentView();
+          });
+        batchToolbar
+          .find(".cfm-regex-batch-deactivate")
+          .on("click", async (e) => {
+            e.stopPropagation();
+            const changed = await applyOwnedRegexBatchActivation({
+              scripts,
+              selectedIds: Array.from(cfmRegexBatchSelected),
+              activate: false,
+              save: () => savePresetRegexScripts(scripts),
+            });
+            if (changed) rerenderCurrentView();
+          });
+        // 互通按钮
+        batchToolbar
+          .find(".cfm-regex-batch-transfer")
+          .on("click", async (e) => {
+            e.stopPropagation();
+            await startOwnedRegexTransferFlow({
+              sourceType: "preset",
+              sourceName: presetName,
+              scripts,
+              selectedIds: Array.from(cfmRegexBatchSelected),
+            });
+          });
         // 批量导出（JSON格式，与酒馆保持一致）
         batchToolbar.find(".cfm-regex-batch-export").on("click", async (e) => {
           e.stopPropagation();
@@ -11155,7 +16491,7 @@ jQuery(async () => {
           ? `<div class="cfm-wi-toggle ${isDisabled ? "" : "cfm-wi-toggle-on"}" title="${isDisabled ? "已禁用 - 点击启用" : "已启用 - 点击禁用"}"><i class="fa-solid fa-toggle-${isDisabled ? "off" : "on"}"></i></div>`
           : `<div class="cfm-wi-toggle cfm-toggle-readonly ${isDisabled ? "" : "cfm-wi-toggle-on"}" title="${isDisabled ? "已禁用" : "已启用"}（非当前预设，不可切换）"><i class="fa-solid fa-toggle-${isDisabled ? "off" : "on"}"></i></div>`;
         const row = $(`
-          <div class="cfm-row cfm-row-char cfm-regex-script-row ${isDisabled ? "cfm-regex-disabled" : ""} ${isBatchSel ? "cfm-regex-batch-selected" : ""}" ${isTarget ? 'draggable="true"' : ""}
+          <div class="cfm-row cfm-row-char cfm-regex-script-row ${isDisabled ? "cfm-regex-disabled" : ""} ${isBatchSel ? "cfm-regex-batch-selected" : ""}"
                data-script-id="${escapeHtml(script.id || "")}"
                data-script-idx="${i}"
                data-script-type="2"
@@ -11172,9 +16508,6 @@ jQuery(async () => {
                   ? `
               <div class="cfm-regex-action-btn cfm-regex-move-up-btn${i === 0 ? " cfm-regex-move-disabled" : ""}" title="上移"><i class="fa-solid fa-arrow-up"></i></div>
               <div class="cfm-regex-action-btn cfm-regex-move-down-btn${i === scripts.length - 1 ? " cfm-regex-move-disabled" : ""}" title="下移"><i class="fa-solid fa-arrow-down"></i></div>
-              <div class="cfm-regex-action-btn cfm-regex-rename-btn" title="重命名"><i class="fa-solid fa-i-cursor"></i></div>
-              <div class="cfm-regex-action-btn cfm-regex-export-btn" title="导出"><i class="fa-solid fa-file-export"></i></div>
-              <div class="cfm-regex-action-btn cfm-regex-delete-btn" title="删除"><i class="fa-solid fa-trash-can"></i></div>
               `
                   : ""
               }
@@ -11247,10 +16580,16 @@ jQuery(async () => {
           e.preventDefault();
           e.stopPropagation();
           if (i <= 0) return;
+          const movedScriptId = String(script?.id || "").trim();
           [scripts[i - 1], scripts[i]] = [scripts[i], scripts[i - 1]];
           try {
             await savePresetRegexScripts(scripts);
             rerenderCurrentView();
+            if (movedScriptId) {
+              flashDraggedElement(
+                `.cfm-regex-script-row[data-script-id="${$.escapeSelector(movedScriptId)}"]`,
+              );
+            }
           } catch (err) {
             console.error("[CFM] 正则上移失败:", err);
             [scripts[i - 1], scripts[i]] = [scripts[i], scripts[i - 1]];
@@ -11262,118 +16601,88 @@ jQuery(async () => {
           e.preventDefault();
           e.stopPropagation();
           if (i >= scripts.length - 1) return;
+          const movedScriptId = String(script?.id || "").trim();
           [scripts[i], scripts[i + 1]] = [scripts[i + 1], scripts[i]];
           try {
             await savePresetRegexScripts(scripts);
             rerenderCurrentView();
+            if (movedScriptId) {
+              flashDraggedElement(
+                `.cfm-regex-script-row[data-script-id="${$.escapeSelector(movedScriptId)}"]`,
+              );
+            }
           } catch (err) {
             console.error("[CFM] 正则下移失败:", err);
             [scripts[i], scripts[i + 1]] = [scripts[i + 1], scripts[i]];
             toastr.error("下移失败: " + err.message);
           }
         });
-        // 重命名按钮
-        row.find(".cfm-regex-rename-btn").on("click", async function (e) {
-          e.preventDefault();
-          e.stopPropagation();
-          const oldName = script.scriptName || "";
-          const newName = await showRegexRenamePopup(oldName);
-          if (!newName || newName === oldName) return;
-          try {
-            script.scriptName = newName;
-            await savePresetRegexScripts(scripts);
-            toastr.success(`已重命名: ${oldName} → ${newName}`);
-            rerenderCurrentView();
-          } catch (err) {
-            console.error("[CFM] 正则重命名失败:", err);
-            script.scriptName = oldName;
-            toastr.error("重命名失败: " + err.message);
-          }
-        });
-        // 导出按钮（单个导出，JSON格式）
-        row.find(".cfm-regex-export-btn").on("click", async function (e) {
-          e.preventDefault();
-          e.stopPropagation();
-          try {
-            const download = (await import("../../../utils.js")).download;
-            const fileName = `regex-${(script.scriptName || "unnamed").replace(/[^\w\-_.]/g, "_")}.json`;
-            download(
-              JSON.stringify(script, null, 4),
-              fileName,
-              "application/json",
-            );
-            toastr.success(`已导出: ${script.scriptName}`);
-          } catch (err) {
-            console.error("[CFM] 导出正则失败:", err);
-            toastr.error("导出失败: " + err.message);
-          }
-        });
-        // 删除按钮
-        row.find(".cfm-regex-delete-btn").on("click", async function (e) {
-          e.preventDefault();
-          e.stopPropagation();
-          if (
-            !confirm(
-              `确定要删除正则脚本「${script.scriptName || "(未命名)"}」吗？\n此操作不可撤销！`,
-            )
-          )
-            return;
-          try {
-            const idx = scripts.findIndex((s) => s.id === script.id);
-            if (idx !== -1) scripts.splice(idx, 1);
-            await savePresetRegexScripts(scripts);
-            toastr.success(`已删除: ${script.scriptName || "(未命名)"}`);
-            rerenderCurrentView();
-          } catch (err) {
-            console.error("[CFM] 删除正则失败:", err);
-            toastr.error("删除失败: " + err.message);
-          }
-        });
         subList.append(row);
       }
 
       // 拖拽排序（仅目标预设）
-      if (isTarget) {
-        let dragSrcRegex = null;
-        subList.on("dragstart", ".cfm-regex-script-row", function (e) {
-          dragSrcRegex = this;
-          $(this).addClass("cfm-regex-dragging");
-          e.originalEvent.dataTransfer.effectAllowed = "move";
-        });
-        subList.on("dragover", ".cfm-regex-script-row", function (e) {
-          e.preventDefault();
-          e.originalEvent.dataTransfer.dropEffect = "move";
-          $(this).addClass("cfm-regex-dragover");
-        });
-        subList.on("dragleave", ".cfm-regex-script-row", function () {
-          $(this).removeClass("cfm-regex-dragover");
-        });
-        subList.on("drop", ".cfm-regex-script-row", async function (e) {
-          e.preventDefault();
-          $(this).removeClass("cfm-regex-dragover");
-          if (dragSrcRegex && dragSrcRegex !== this) {
-            const srcIdx = parseInt($(dragSrcRegex).data("script-idx"), 10);
-            const tgtIdx = parseInt($(this).data("script-idx"), 10);
-            if (!isNaN(srcIdx) && !isNaN(tgtIdx) && srcIdx !== tgtIdx) {
-              const [moved] = scripts.splice(srcIdx, 1);
-              scripts.splice(tgtIdx, 0, moved);
-              try {
-                await savePresetRegexScripts(scripts);
-                rerenderCurrentView();
-              } catch (err) {
-                console.error("[CFM] 正则拖拽排序失败:", err);
-                toastr.error("排序失败: " + err.message);
-                const [back] = scripts.splice(tgtIdx, 1);
-                scripts.splice(srcIdx, 0, back);
-              }
+      if (
+        isTarget &&
+        typeof subList.sortable === "function" &&
+        !cfmIsTouchDevice()
+      ) {
+        subList.sortable({
+          items: ".cfm-regex-script-row",
+          axis: "y",
+          tolerance: "pointer",
+          placeholder: "cfm-sort-placeholder",
+          forcePlaceholderSize: true,
+          distance: 4,
+          cancel:
+            ".cfm-chat-actions, .cfm-regex-batch-check, .cfm-wi-toggle, .cfm-regex-edit-btn, .cfm-regex-move-up-btn, .cfm-regex-move-down-btn, button, input, textarea, select, a, label",
+          start: (_event, ui) => {
+            ui.item.addClass("cfm-regex-dragging");
+          },
+          stop: async (_event, ui) => {
+            const movedScriptId = String(
+              ui.item.data("script-id") || "",
+            ).trim();
+            ui.item.removeClass("cfm-regex-dragging");
+            const orderedIds = subList
+              .find(".cfm-regex-script-row")
+              .map(function () {
+                return String($(this).data("script-id") || "").trim();
+              })
+              .get()
+              .filter(Boolean);
+            const currentIds = scripts
+              .map((script) => String(script?.id || "").trim())
+              .filter(Boolean);
+            if (
+              orderedIds.length !== currentIds.length ||
+              orderedIds.every((id, index) => id === currentIds[index])
+            ) {
+              return;
             }
-          }
+            const scriptMap = new Map(
+              scripts
+                .map((script) => [String(script?.id || "").trim(), script])
+                .filter(([id]) => !!id),
+            );
+            const reorderedScripts = orderedIds
+              .map((id) => scriptMap.get(id))
+              .filter(Boolean);
+            try {
+              await savePresetRegexScripts(reorderedScripts);
+              rerenderCurrentView();
+              if (movedScriptId) {
+                flashDraggedElement(
+                  `.cfm-regex-script-row[data-script-id="${$.escapeSelector(movedScriptId)}"]`,
+                );
+              }
+            } catch (err) {
+              console.error("[CFM] 正则拖拽排序失败:", err);
+              toastr.error("排序失败: " + err.message);
+              rerenderCurrentView();
+            }
+          },
         });
-        subList.on("dragend", ".cfm-regex-script-row", function () {
-          $(this).removeClass("cfm-regex-dragging");
-          subList.find(".cfm-regex-dragover").removeClass("cfm-regex-dragover");
-          dragSrcRegex = null;
-        });
+        subList.disableSelection();
       }
     }
     presetRow.after(subList);
@@ -11582,6 +16891,7 @@ jQuery(async () => {
         }
       });
       overlay.find(".cfm-edit-popup-clear").on("click", () => {
+        if (!window.confirm("确认清除备注吗？")) return;
         overlay.remove();
         resolve("");
       });
@@ -11724,6 +17034,9 @@ jQuery(async () => {
       // 先选中角色
       if (ctx.selectCharacterById) {
         await ctx.selectCharacterById(charIdx);
+        setTimeout(() => {
+          refreshActiveViewerStateAfterSelectionChange({ character: true });
+        }, 0);
       }
       // 然后打开指定聊天
       if (openCharacterChatFunc) {
@@ -12318,6 +17631,266 @@ jQuery(async () => {
     rerenderCurrentView();
   }
 
+  function getEventClientX(e) {
+    const original = e?.originalEvent;
+    const touch =
+      original?.changedTouches?.[0] ||
+      original?.touches?.[0] ||
+      e?.changedTouches?.[0] ||
+      e?.touches?.[0];
+    if (touch && typeof touch.clientX === "number") return touch.clientX;
+    return typeof e?.clientX === "number" ? e.clientX : null;
+  }
+
+  function scrollElementIntoViewCentered(target) {
+    const resolveTarget = () => {
+      if (typeof target === "function") return target();
+      if (target?.jquery) return target.get(0);
+      return target || null;
+    };
+    const getManagedScrollContainer = (node) => {
+      if (!node?.closest) return null;
+      return node.closest(
+        "#cfm-right-list, #cfm-preset-right-list, #cfm-worldinfo-right-list, #cfm-persona-right-list, #cfm-qr-right-list",
+      );
+    };
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const node = resolveTarget();
+        if (!node) return;
+        const container = getManagedScrollContainer(node);
+        if (container) {
+          const containerRect = container.getBoundingClientRect();
+          const nodeRect = node.getBoundingClientRect();
+          const deltaTop =
+            nodeRect.top -
+            containerRect.top -
+            (container.clientHeight - nodeRect.height) / 2;
+          const maxScrollTop = Math.max(
+            0,
+            container.scrollHeight - container.clientHeight,
+          );
+          const nextScrollTop = Math.max(
+            0,
+            Math.min(maxScrollTop, container.scrollTop + deltaTop),
+          );
+          container.scrollTop = nextScrollTop;
+          return;
+        }
+        if (typeof node.scrollIntoView === "function") {
+          node.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      });
+    });
+  }
+
+  function getLatestWorldInfoCollapseTargetName() {
+    if (cfmWorldInfoEntryLastFocusedName)
+      return String(cfmWorldInfoEntryLastFocusedName);
+    const openDetailNames = Array.from(cfmWorldInfoEntryOpenDetails.keys());
+    if (openDetailNames.length > 0) {
+      return String(openDetailNames[openDetailNames.length - 1] || "");
+    }
+    const expandedNames = Array.from(cfmWorldInfoEntryExpandedNames);
+    return String(expandedNames[expandedNames.length - 1] || "");
+  }
+
+  function scrollWorldInfoRowIntoView(bookName) {
+    const normalizedName = String(bookName || "");
+    if (!normalizedName) return;
+    scrollElementIntoViewCentered(() =>
+      Array.from(
+        document.querySelectorAll(
+          "#cfm-worldinfo-right-list .cfm-row[data-res-id]",
+        ),
+      ).find((el) => el.getAttribute("data-res-id") === normalizedName),
+    );
+  }
+
+  function getLatestQrCollapseTargetName() {
+    if (cfmQrLastFocusedSetName) return String(cfmQrLastFocusedSetName);
+    const expandedNames = Array.from(qrItemExpandedSets);
+    return String(expandedNames[expandedNames.length - 1] || "");
+  }
+
+  function scrollQrRowIntoView(setName) {
+    const normalizedName = String(setName || "");
+    if (!normalizedName) return;
+    scrollElementIntoViewCentered(() =>
+      Array.from(
+        document.querySelectorAll("#cfm-qr-right-list .cfm-row[data-res-id]"),
+      ).find((el) => el.getAttribute("data-res-id") === normalizedName),
+    );
+  }
+
+  function revealCurrentCharFromTabClick() {
+    const avatar = getCurrentCharAvatar();
+    if (!avatar) return false;
+
+    const tagMap = getTagMap();
+    const charTags = tagMap[avatar] || [];
+    const folderIds = getFolderTagIds();
+    const charFolderTags = charTags.filter((t) => folderIds.includes(t));
+    if (charFolderTags.length > 0) {
+      let deepest = charFolderTags[0];
+      let maxDepth = getFolderPath(deepest).length;
+      for (let i = 1; i < charFolderTags.length; i++) {
+        const depth = getFolderPath(charFolderTags[i]).length;
+        if (depth > maxDepth) {
+          deepest = charFolderTags[i];
+          maxDepth = depth;
+        }
+      }
+      for (const pid of getFolderPath(deepest)) expandedNodes.add(pid);
+      selectedTreeNode = deepest;
+    } else {
+      selectedTreeNode = "__uncategorized__";
+    }
+
+    cfmCharDetailExpandedAvatars.add(avatar);
+    renderLeftTree();
+    renderRightPane();
+    scrollElementIntoViewCentered(() =>
+      Array.from(
+        document.querySelectorAll("#cfm-right-list .cfm-row[data-avatar]"),
+      ).find((el) => el.getAttribute("data-avatar") === avatar),
+    );
+    return true;
+  }
+
+  function revealCurrentPresetFromTabClick() {
+    const presetName = getCurrentPresetName();
+    if (!presetName) return false;
+
+    const groups = getResourceGroups("presets");
+    const tree = getResFolderTree("presets");
+    const folderId = groups[presetName];
+    if (folderId && tree[folderId]) {
+      const path = getResFolderPath("presets", folderId);
+      for (const pid of path) presetExpandedNodes.add(pid);
+      selectedPresetFolder = folderId;
+    } else {
+      selectedPresetFolder = "__ungrouped__";
+    }
+
+    cfmPresetDetailExpandedNames.add(presetName);
+    renderPresetsView();
+    scrollElementIntoViewCentered(() =>
+      Array.from(
+        document.querySelectorAll(
+          "#cfm-preset-right-list .cfm-row[data-res-id]",
+        ),
+      ).find((el) => el.getAttribute("data-res-id") === presetName),
+    );
+    return true;
+  }
+
+  function revealCurrentPersonaFromTabClick() {
+    const avatarId = getCurrentPersonaAvatar();
+    if (!avatarId) return false;
+
+    const groups = getResourceGroups("personas");
+    const tree = getResFolderTree("personas");
+    const folderId = groups[avatarId];
+    if (folderId && tree[folderId]) {
+      const path = getResFolderPath("personas", folderId);
+      for (const pid of path) personaExpandedNodes.add(pid);
+      selectedPersonaFolder = folderId;
+    } else {
+      selectedPersonaFolder = "__ungrouped__";
+    }
+
+    personaItemExpandedIds.add(avatarId);
+    renderPersonasView();
+    scrollElementIntoViewCentered(() =>
+      Array.from(
+        document.querySelectorAll(
+          "#cfm-persona-right-list .cfm-row[data-res-id]",
+        ),
+      ).find((el) => el.getAttribute("data-res-id") === avatarId),
+    );
+    return true;
+  }
+
+  function handleCurrentTabRelocate(tab) {
+    if (tab === "chars") return revealCurrentCharFromTabClick();
+    if (tab === "presets") return revealCurrentPresetFromTabClick();
+    if (tab === "personas") return revealCurrentPersonaFromTabClick();
+    return false;
+  }
+
+  function tryCollapseSublistFromOuterGap(e) {
+    const clientX = getEventClientX(e);
+    if (typeof clientX !== "number") return false;
+
+    // 每个条目：选择器 + 对应的 toggle 选择器
+    const entries = [
+      { sel: ".cfm-char-detail-sublist", toggle: ".cfm-char-detail-toggle" },
+      {
+        sel: ".cfm-preset-detail-sublist",
+        toggle: ".cfm-preset-detail-toggle",
+      },
+      { sel: ".cfm-persona-sublist", toggle: ".cfm-persona-toggle" },
+      { sel: ".cfm-qr-sub-items", toggle: ".cfm-qr-expand-arrow", isQr: true },
+      { sel: ".cfm-regex-sublist", toggle: ".cfm-regex-toggle" },
+      {
+        sel: ".cfm-chat-sublist:not(.cfm-char-detail-sublist):not(.cfm-preset-detail-sublist):not(.cfm-persona-sublist)",
+        toggle: ".cfm-chat-toggle",
+      },
+    ];
+
+    // 收集所有匹配的候选，选择垂直范围最小（最精确）的
+    let bestMatch = null;
+    let bestHeight = Infinity;
+
+    for (const entry of entries) {
+      const nodes = $(entry.sel).toArray();
+      for (const node of nodes) {
+        const rect = node.getBoundingClientRect();
+        const gapLeft = rect.left - 30;
+        const gapRight = rect.left;
+        const withinVertical =
+          e.clientY >= rect.top && e.clientY <= rect.bottom;
+        const withinGap = clientX >= gapLeft && clientX <= gapRight;
+        if (!withinVertical || !withinGap) continue;
+
+        const subList = $(node);
+        const row = subList.prevAll(".cfm-row").first();
+        const toggle = row.find(entry.toggle).first();
+        if (!toggle.length) continue;
+
+        const height = rect.height;
+        if (height < bestHeight) {
+          bestHeight = height;
+          bestMatch = { entry, node, subList, row, toggle };
+        }
+      }
+    }
+
+    if (!bestMatch) return false;
+
+    e.preventDefault();
+    e.stopPropagation();
+    const { entry, row, toggle } = bestMatch;
+    if (entry.isQr) {
+      const targetName =
+        row.attr("data-res-id") || getLatestQrCollapseTargetName();
+      if (targetName) cfmQrLastFocusedSetName = targetName;
+      toggle.trigger("click");
+      if (targetName) scrollQrRowIntoView(targetName);
+    } else {
+      toggle.trigger("click");
+      scrollElementIntoViewCentered(row);
+    }
+    return true;
+  }
+
+  $(document)
+    .off("click.cfmSublistOuterGapCollapse")
+    .on("click.cfmSublistOuterGapCollapse", (e) => {
+      tryCollapseSublistFromOuterGap(e);
+    });
+
   /**
    * 渲染角色的聊天记录子列表
    * @param {jQuery} charRow - 角色卡行的 jQuery 对象
@@ -12817,11 +18390,165 @@ jQuery(async () => {
     }
   }
 
+  function ensureDragLocateHighlightStyle() {
+    if (document.getElementById("cfm-drag-highlight-style")) return;
+    const style = document.createElement("style");
+    style.id = "cfm-drag-highlight-style";
+    style.textContent = `
+      .cfm-drag-highlighted {
+        animation: cfmDragHighlightPulse 1s ease;
+        box-shadow: 0 0 0 1px rgba(249, 226, 175, 0.55), 0 0 0 4px rgba(249, 226, 175, 0.16) !important;
+        background: rgba(249, 226, 175, 0.14) !important;
+      }
+      @keyframes cfmDragHighlightPulse {
+        0% {
+          box-shadow: 0 0 0 1px rgba(249, 226, 175, 0.72), 0 0 0 8px rgba(249, 226, 175, 0.22) !important;
+          background: rgba(249, 226, 175, 0.22) !important;
+        }
+        100% {
+          box-shadow: 0 0 0 1px rgba(249, 226, 175, 0.08), 0 0 0 0 rgba(249, 226, 175, 0) !important;
+          background: rgba(249, 226, 175, 0.02) !important;
+        }
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function buildDraggedHighlightSelector(dragData) {
+    if (!dragData || typeof dragData !== "object") return "";
+
+    const collectValues = (...values) =>
+      values
+        .flat()
+        .map((value) => String(value || "").trim())
+        .filter(Boolean);
+
+    const buildSelector = (values, fragments) =>
+      collectValues(values)
+        .flatMap((value) => {
+          const escapedValue = $.escapeSelector(value);
+          return fragments.map((fragment) => fragment(escapedValue));
+        })
+        .join(", ");
+
+    switch (String(dragData.type || "").trim()) {
+      case "folder":
+      case "res-folder":
+        return buildSelector(dragData.id, [
+          (value) => `.cfm-tnode[data-id="${value}"]`,
+          (value) => `.cfm-row[data-folder-id="${value}"]`,
+        ]);
+      case "char":
+        return buildSelector(
+          dragData.multiSelect && Array.isArray(dragData.selectedIds)
+            ? dragData.selectedIds
+            : dragData.avatar,
+          [
+            (value) => `.cfm-row[data-avatar="${value}"]`,
+            (value) => `.cfm-row[data-res-id="${value}"]`,
+          ],
+        );
+      case "preset":
+        return buildSelector(
+          dragData.multiSelect && Array.isArray(dragData.selectedIds)
+            ? dragData.selectedIds
+            : [dragData.value, dragData.name],
+          [
+            (value) => `.cfm-row[data-value="${value}"]`,
+            (value) => `.cfm-row[data-res-id="${value}"]`,
+          ],
+        );
+      case "theme":
+      case "background":
+      case "worldinfo":
+      case "quickreply":
+        return buildSelector(
+          dragData.multiSelect && Array.isArray(dragData.selectedIds)
+            ? dragData.selectedIds
+            : dragData.name,
+          [(value) => `.cfm-row[data-res-id="${value}"]`],
+        );
+      case "persona":
+        return buildSelector(
+          dragData.multiSelect && Array.isArray(dragData.selectedIds)
+            ? dragData.selectedIds
+            : dragData.avatarId,
+          [
+            (value) => `.cfm-row[data-avatar-id="${value}"]`,
+            (value) => `.cfm-row[data-res-id="${value}"]`,
+          ],
+        );
+      case "regex-script":
+        return buildSelector(dragData.id, [
+          (value) => `.cfm-regex-script-row[data-script-id="${value}"]`,
+          (value) => `.cfm-sort-row[data-script-id="${value}"]`,
+        ]);
+      default:
+        return "";
+    }
+  }
+
+  function flashDraggedElement(target, duration = 1000, options = {}) {
+    ensureDragLocateHighlightStyle();
+    const maxAttempts = Number.isInteger(options.maxAttempts)
+      ? options.maxAttempts
+      : 24;
+    const interval = Number.isInteger(options.interval) ? options.interval : 80;
+
+    const normalizeElements = (value) => {
+      if (!value) return [];
+      if (value instanceof Element) return [value];
+      if (value?.jquery) return value.get().filter(Boolean);
+      if (Array.isArray(value)) {
+        return value.flatMap((item) => normalizeElements(item));
+      }
+      if (typeof value === "string") {
+        return Array.from(document.querySelectorAll(value));
+      }
+      return [];
+    };
+
+    let attempt = 0;
+    const tryHighlight = () => {
+      const resolvedTarget = typeof target === "function" ? target() : target;
+      const elements = normalizeElements(resolvedTarget).filter(
+        (element) => element?.isConnected,
+      );
+      if (!elements.length) {
+        if (attempt < maxAttempts) {
+          attempt += 1;
+          setTimeout(tryHighlight, interval);
+        }
+        return;
+      }
+
+      for (const element of elements) {
+        if (element.__cfmDragHighlightTimer) {
+          clearTimeout(element.__cfmDragHighlightTimer);
+        }
+        element.classList.remove("cfm-drag-highlighted");
+        void element.offsetWidth;
+        element.classList.add("cfm-drag-highlighted");
+        element.__cfmDragHighlightTimer = setTimeout(() => {
+          element.classList.remove("cfm-drag-highlighted");
+          element.__cfmDragHighlightTimer = null;
+        }, duration);
+      }
+    };
+
+    tryHighlight();
+  }
+
   // PC端dragend辅助：清除全局拖拽数据和视觉反馈
   function pcDragEnd() {
+    const dragData = _pcDragData;
     _pcDragData = null;
     // 清除所有右栏拖放高亮
     $(".cfm-right-list-drop-target").removeClass("cfm-right-list-drop-target");
+    const highlightSelector = buildDraggedHighlightSelector(dragData);
+    if (highlightSelector) {
+      flashDraggedElement(highlightSelector);
+    }
   }
 
   function showMainPopup() {
@@ -13308,6 +19035,8 @@ jQuery(async () => {
                             <span class="cfm-rh-count" id="cfm-regex-rh-count"></span>
                             <button class="cfm-import-btn" id="cfm-import-regex-btn" title="导入正则"><i class="fa-solid fa-file-import"></i></button>
                             <input type="file" id="cfm-import-regex-file" accept=".json" multiple style="display:none;">
+                            <button class="cfm-regex-create-btn" id="cfm-regex-create-btn" title="新建全局正则"><i class="fa-solid fa-plus"></i></button>
+                            <button class="cfm-edit-char-btn" id="cfm-regex-transfer-btn" title="互通正则"><i class="fa-solid fa-right-left"></i></button>
                             <button class="cfm-export-btn" id="cfm-export-regex-btn" title="导出正则"><i class="fa-solid fa-file-export"></i></button>
                             <button class="cfm-res-delete-btn" id="cfm-res-delete-regex-btn" title="删除正则"><i class="fa-solid fa-trash-can"></i></button>
                             <button class="cfm-regex-sort-btn" id="cfm-regex-sort-btn" title="排序正则脚本"><i class="fa-solid fa-arrow-up-short-wide"></i></button>
@@ -13404,7 +19133,10 @@ jQuery(async () => {
     popup.find(".cfm-tab").on("click touchend", function (e) {
       e.preventDefault();
       const tab = $(this).data("tab");
-      if (tab === currentResourceType) return;
+      if (tab === currentResourceType) {
+        handleCurrentTabRelocate(tab);
+        return;
+      }
       currentResourceType = tab;
       popup.find(".cfm-tab").removeClass("cfm-tab-active");
       $(this).addClass("cfm-tab-active");
@@ -13413,6 +19145,7 @@ jQuery(async () => {
       clearMultiSelect();
       cfmMultiSelectRangeMode = false;
       $(".cfm-multisel-toggle").removeClass("cfm-multisel-active");
+      $("#cfm-popup").removeClass("cfm-multisel-on");
       // 切换标签时清空导出模式
       if (cfmExportMode) exitExportMode();
       if (cfmResDeleteMode) exitResDeleteMode();
@@ -15020,6 +20753,28 @@ jQuery(async () => {
               if (!saveResp.ok) {
                 throw new Error(`保存完整数据失败: ${saveResp.statusText}`);
               }
+
+              // 同步当前页面内存中的 QR Set，避免仍然保留 createSet 生成的空集
+              const liveSet =
+                (api.getSetByName && api.getSetByName(finalName)) ||
+                (QRS && QRS.list
+                  ? QRS.list.find((s) => s.name === finalName)
+                  : null);
+              if (liveSet) {
+                liveSet.name = finalName;
+                liveSet.qrList = Array.isArray(saveData.qrList)
+                  ? JSON.parse(JSON.stringify(saveData.qrList))
+                  : [];
+                if ("disableSend" in saveData) {
+                  liveSet.disableSend = !!saveData.disableSend;
+                }
+                if ("placeBeforeInput" in saveData) {
+                  liveSet.placeBeforeInput = !!saveData.placeBeforeInput;
+                }
+                if ("injectInput" in saveData) {
+                  liveSet.injectInput = !!saveData.injectInput;
+                }
+              }
             } catch (createErr) {
               console.warn(
                 `[CFM] api.createSet 失败，回退到直接保存`,
@@ -15138,6 +20893,22 @@ jQuery(async () => {
       await importRegexScripts(Array.from(files), targetFolder);
       $(this).val("");
     });
+
+    popup.find("#cfm-regex-create-btn").on("click touchend", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (currentResourceType !== "regex") return;
+      createGlobalRegexFromManager();
+    });
+
+    popup
+      .find("#cfm-regex-transfer-btn")
+      .on("click touchend", async function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (currentResourceType !== "regex") return;
+        await startGlobalRegexTransferFlow();
+      });
 
     // 正则排序按钮 —— 弹窗形式
     popup.find("#cfm-regex-sort-btn").on("click touchend", async function (e) {
@@ -15684,7 +21455,11 @@ jQuery(async () => {
         }
       }
 
-      // 调用SillyTavern原生的updateWorldInfoList来同步world_names变量和DOM
+      if (targetFolder && successCount > 0) {
+        await flushFolderAssignmentSettings();
+      }
+
+      // 调用SillyTavern原生的 updateWorldInfoList 来同步 world_names 变量和 DOM
       try {
         const ctx = getContext();
         if (typeof ctx.updateWorldInfoList === "function") {
@@ -15693,6 +21468,13 @@ jQuery(async () => {
       } catch (updateErr) {
         console.warn("[CFM] 调用updateWorldInfoList失败", updateErr);
       }
+
+      // updateWorldInfoList 之后原生 select 已重建，旧的 detach 缓存必须丢弃并按当前过滤重新应用，
+      // 否则旧 option 会被再次 append 回去，导致世界书在插件/原生过滤里出现重复项。
+      _worldInfoDetachedOptions = [];
+      _globalWIDetachedOptions = [];
+      applyWorldInfoFilter();
+      applyGlobalWorldInfoFilter();
 
       // 刷新插件内部的世界书名称缓存
       _worldInfoNamesCache = null;
@@ -15739,8 +21521,9 @@ jQuery(async () => {
     cfmResDeleteLastClicked = null;
 
     renderLeftTree();
-    // 如果初始tab不是chars，触发对应视图的渲染
-    if (initialTab === "presets") renderPresetsView();
+    // 触发初始tab对应视图的渲染
+    if (initialTab === "chars") renderRightPane();
+    else if (initialTab === "presets") renderPresetsView();
     else if (initialTab === "worldinfo") renderWorldInfoView();
     else if (initialTab === "themes") renderThemesView();
     else if (initialTab === "backgrounds") renderBackgroundsView();
@@ -16647,6 +22430,8 @@ jQuery(async () => {
           const singleRenameBtn = noModeActive
             ? `<div class="cfm-row-edit-btn cfm-row-rename-btn" title="重命名"><i class="fa-solid fa-i-cursor"></i></div>`
             : "";
+          const isEntryExpanded = isWorldInfoEntryBookExpanded(n);
+          const expandHtml = `<div class="cfm-char-detail-toggle cfm-preset-detail-toggle cfm-worldinfo-entry-expand" title="${isEntryExpanded ? "收起条目" : "展开条目"}"><i class="fa-solid fa-caret-${isEntryExpanded ? "down" : "right"}"></i></div>`;
           // 世界书激活开关
           const wiIsActive = wiActiveSet.has(n);
           const wiIsBound = wiCharBound.has(n);
@@ -16661,12 +22446,24 @@ jQuery(async () => {
               ${msCheckHtml}
               ${toggleHtml}
               <div class="cfm-row-icon"><i class="fa-solid fa-book" style="font-size:20px;color:#a6e3a1;"></i></div>
-              <div class="cfm-row-name"><span class="cfm-worldinfo-name-text">${escapeHtml(n)}</span>${noteHtml}${wFolderPath ? `<div class="cfm-row-folder-path">${escapeHtml(wFolderPath)}</div>` : ""}</div>
+              <div class="cfm-row-name"><span class="cfm-char-name-inline">${expandHtml}<span class="cfm-worldinfo-name-text">${escapeHtml(n)}</span></span>${noteHtml}${wFolderPath ? `<div class="cfm-row-folder-path">${escapeHtml(wFolderPath)}</div>` : ""}</div>
               ${singleRenameBtn}
               ${singleNoteBtn}
               <div class="cfm-row-star ${fav ? "cfm-star-active" : ""}" title="${fav ? "取消收藏" : "添加收藏"}"><i class="fa-${fav ? "solid" : "regular"} fa-star"></i></div>
             </div>
           `);
+          row.find(".cfm-worldinfo-entry-expand").on("click touchend", (e) => {
+            if (shouldIgnoreWorldInfoEntryTap(e)) {
+              e.preventDefault();
+              e.stopPropagation();
+              return;
+            }
+            e.preventDefault();
+            e.stopPropagation();
+            cfmWorldInfoEntryLastFocusedName = n;
+            toggleWorldInfoEntryBookExpanded(n);
+            refreshWorldInfoPanelView();
+          });
           // 世界书激活开关事件（搜索视图）
           row.find(".cfm-wi-toggle").on("click touchend", function (e) {
             e.preventDefault();
@@ -16679,6 +22476,7 @@ jQuery(async () => {
             toggleWorldInfoActivation(n, newState).then(() => {
               if (newState) wiActiveSet.add(n);
               else wiActiveSet.delete(n);
+              syncWiPresetTrackingForManualToggle(n, newState);
               const el = $(this);
               el.toggleClass("cfm-wi-toggle-on", newState);
               el.find("i").attr(
@@ -16715,7 +22513,7 @@ jQuery(async () => {
           row.on("click", (e) => {
             if (
               $(e.target).closest(
-                ".cfm-row-star, .cfm-row-note-btn, .cfm-row-rename-btn, .cfm-wi-toggle",
+                ".cfm-row-star, .cfm-row-note-btn, .cfm-row-rename-btn, .cfm-wi-toggle, .cfm-worldinfo-entry-expand",
               ).length
             )
               return;
@@ -16759,6 +22557,8 @@ jQuery(async () => {
             return getMultiDragData(singleData);
           });
           rightList.append(row);
+          if (isEntryExpanded)
+            renderWorldInfoEntrySubList(row, n, refreshWorldInfoPanelView);
         }
 
         // 删除工具栏（搜索世界书）
@@ -16779,6 +22579,8 @@ jQuery(async () => {
             <div class="cfm-multisel-toolbar">
               <button class="cfm-btn cfm-btn-sm cfm-multisel-selectall"><i class="fa-solid fa-${allSel ? "square-minus" : "square-check"}"></i> ${allSel ? "全不选" : "全选"}</button>
               <button class="cfm-btn cfm-btn-sm cfm-multisel-range ${cfmMultiSelectRangeMode ? "cfm-range-active" : ""}"><i class="fa-solid fa-arrow-down-short-wide"></i> 框选${cfmMultiSelectRangeMode ? "(开)" : ""}</button>
+              <button class="cfm-btn cfm-btn-sm cfm-multisel-activate" title="批量激活世界书"><i class="fa-solid fa-toggle-on"></i> 激活</button>
+              <button class="cfm-btn cfm-btn-sm cfm-multisel-deactivate" title="批量取消激活世界书"><i class="fa-solid fa-toggle-off"></i> 取消激活</button>
               <span class="cfm-multisel-count">${cfmMultiSelected.size > 0 ? `已选 ${cfmMultiSelected.size} 项` : ""}</span>
             </div>
           `);
@@ -16795,8 +22597,31 @@ jQuery(async () => {
             if (cfmMultiSelectRangeMode) cfmMultiSelectLastClicked = null;
             executeWorldInfoSearch();
           });
+          toolbar
+            .find(".cfm-multisel-activate")
+            .on("click touchend", async (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const changed = await applyWorldInfoMultiActivation(
+                Array.from(cfmMultiSelected),
+                true,
+              );
+              if (changed) executeWorldInfoSearch();
+            });
+          toolbar
+            .find(".cfm-multisel-deactivate")
+            .on("click touchend", async (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const changed = await applyWorldInfoMultiActivation(
+                Array.from(cfmMultiSelected),
+                false,
+              );
+              if (changed) executeWorldInfoSearch();
+            });
           rightList.prepend(toolbar);
         }
+        bindWorldInfoEntryCollapseTargets(refreshWorldInfoPanelView);
       });
     }
   }
@@ -17272,6 +23097,34 @@ jQuery(async () => {
   function closeMainPopup() {
     // 保存当前页面状态（用于"记住上次页面"功能）
     _saveLastOpenState();
+    const resetPanelExpandedStates = () => {
+      cfmCharDetailExpandedAvatars.clear();
+      personaItemExpandedIds.clear();
+      cfmPresetDetailExpandedNames.clear();
+      qrItemExpandedSets.clear();
+      cfmQrLastFocusedSetName = null;
+      closeWorldInfoEntryPanels();
+      cfmWorldInfoEntryLastFocusedName = null;
+
+      cfmChatMode = false;
+      cfmChatExpandedAvatars.clear();
+      cfmChatCache.clear();
+      cfmChatBatchMode = false;
+      cfmChatBatchSelected.clear();
+      cfmChatBatchRangeMode = false;
+      cfmChatBatchLastClicked = null;
+
+      cfmCharRegexMode = false;
+      cfmCharRegexExpandedAvatars.clear();
+      cfmCharRegexTargetAvatar = null;
+      cfmCharRegexHighlightPath = [];
+      cfmCharRegexPrevSelectedTreeNode = undefined;
+
+      cfmPresetRegexMode = false;
+      cfmPresetRegexExpandedNames.clear();
+      cfmPresetRegexTargetName = null;
+      cfmPresetRegexHighlightPath = [];
+    };
     if (sortDirty) {
       // 排序已更改，弹出确认框
       showSortConfirmDialog(
@@ -17279,6 +23132,7 @@ jQuery(async () => {
           // 用户选择"是，保留排序" → 清理状态并关闭
           sortSnapshot = null;
           sortDirty = false;
+          resetPanelExpandedStates();
           $("#cfm-overlay").remove();
           clearNewlyImportedHighlight();
           $("#cfm-topbar-button .drawer-icon")
@@ -17288,6 +23142,7 @@ jQuery(async () => {
         () => {
           // 用户选择"否，撤回排序" → 恢复快照并关闭
           revertSort();
+          resetPanelExpandedStates();
           $("#cfm-overlay").remove();
           clearNewlyImportedHighlight();
           $("#cfm-topbar-button .drawer-icon")
@@ -17297,6 +23152,13 @@ jQuery(async () => {
       );
       return;
     }
+    resetPanelExpandedStates();
+    autoApplyWiPresets(true).catch((e) =>
+      console.error("[CFM] 关闭插件时静默恢复世界书分组失败", e),
+    );
+    autoApplyQrPresets(true).catch((e) =>
+      console.error("[CFM] 关闭插件时静默恢复QR分组失败", e),
+    );
     $("#cfm-overlay").remove();
     clearNewlyImportedHighlight();
     $("#cfm-topbar-button .drawer-icon")
@@ -18127,13 +23989,14 @@ jQuery(async () => {
     const chatToggleHtml = showChatToggle
       ? `<div class="cfm-chat-toggle" title="展开/折叠聊天记录"><i class="fa-solid fa-caret-${isExpanded ? "down" : "right"}"></i></div>`
       : "";
-    // 正则模式下的小三角按钮（对所有有正则脚本的角色显示）
+    // 正则模式下的小三角按钮（有正则脚本的角色，或当前目标空角色，也显示）
     const isRegexTarget =
       cfmCharRegexMode && cfmCharRegexTargetAvatar === char.avatar;
     let showRegexToggle = false;
     if (cfmCharRegexMode) {
       const scripts = char?.data?.extensions?.regex_scripts;
-      showRegexToggle = Array.isArray(scripts) && scripts.length > 0;
+      showRegexToggle =
+        (Array.isArray(scripts) && scripts.length > 0) || isRegexTarget;
     }
     const isRegexExpanded =
       showRegexToggle && cfmCharRegexExpandedAvatars.has(char.avatar);
@@ -18141,13 +24004,15 @@ jQuery(async () => {
       ? `<div class="cfm-regex-toggle" title="展开/折叠正则脚本"><i class="fa-solid fa-caret-${isRegexExpanded ? "down" : "right"}"></i></div>`
       : "";
     const regexHighlightClass = isRegexTarget ? "cfm-regex-target-row" : "";
+    const isDetailExpanded = cfmCharDetailExpandedAvatars.has(char.avatar);
+    const detailToggleHtml = `<div class="cfm-char-detail-toggle" title="展开/折叠角色卡具体设定"><i class="fa-solid fa-caret-${isDetailExpanded ? "down" : "right"}"></i></div>`;
     const row = $(`
             <div class="cfm-row cfm-row-char ${regexHighlightClass} ${isDelSel ? "cfm-res-delete-row-selected" : ""} ${isExportSel ? "cfm-export-row-selected" : ""} ${isEditSel ? "cfm-edit-row-selected" : ""} ${isSelected ? "cfm-multisel-row-selected" : ""}" data-avatar="${escapeHtml(char.avatar)}" data-res-id="${escapeHtml(char.avatar)}" draggable="true">
                 ${checkboxHtml}
                 ${chatToggleHtml}
                 ${regexToggleHtml}
                 <div class="cfm-row-icon"><img src="${thumbUrl}" alt="" loading="lazy" onerror="this.src='/img/ai4.png'"></div>
-                <div class="cfm-row-name"><span class="cfm-char-name-text">${escapeHtml(char.name)}</span>${charMetaHtml}${folderPathHtml}</div>
+                <div class="cfm-row-name"><span class="cfm-char-name-inline">${detailToggleHtml}<span class="cfm-char-name-text">${escapeHtml(char.name)}</span></span>${charMetaHtml}${folderPathHtml}</div>
                 ${singleEditBtn}
                 <div class="cfm-row-star ${fav ? "cfm-star-active" : ""}" title="${fav ? "取消收藏" : "添加收藏"}"><i class="fa-${fav ? "solid" : "regular"} fa-star"></i></div>
             </div>
@@ -18171,6 +24036,10 @@ jQuery(async () => {
         renderRightPane();
       }
     });
+    let suppressRowClickUntil = 0;
+    const suppressNextRowClick = () => {
+      suppressRowClickUntil = Date.now() + 450;
+    };
     // 单个铅笔按钮点击事件
     row.find(".cfm-row-edit-btn").on("click touchend", (e) => {
       e.preventDefault();
@@ -18181,13 +24050,17 @@ jQuery(async () => {
     row.find(".cfm-chat-toggle").on("click touchend", async (e) => {
       e.preventDefault();
       e.stopPropagation();
+      suppressNextRowClick();
       const avatar = char.avatar;
       if (cfmChatExpandedAvatars.has(avatar)) {
         // 折叠
         cfmChatExpandedAvatars.delete(avatar);
-        row.next(".cfm-chat-sublist").slideUp(150, function () {
-          $(this).remove();
-        });
+        row
+          .nextAll(".cfm-chat-sublist")
+          .first()
+          .slideUp(150, function () {
+            $(this).remove();
+          });
         row
           .find(".cfm-chat-toggle i")
           .removeClass("fa-caret-down")
@@ -18201,20 +24074,24 @@ jQuery(async () => {
           .addClass("fa-caret-down");
         const chats = await getCharChats(avatar);
         renderChatSubList(row, avatar, chats || []);
-        row.next(".cfm-chat-sublist").hide().slideDown(150);
+        row.nextAll(".cfm-chat-sublist").first().hide().slideDown(150);
       }
     });
     // 正则模式下小三角点击：展开/折叠正则脚本
     row.find(".cfm-regex-toggle").on("click touchend", (e) => {
       e.preventDefault();
       e.stopPropagation();
+      suppressNextRowClick();
       const avatar = char.avatar;
       if (cfmCharRegexExpandedAvatars.has(avatar)) {
         // 折叠
         cfmCharRegexExpandedAvatars.delete(avatar);
-        row.next(".cfm-regex-sublist").slideUp(150, function () {
-          $(this).remove();
-        });
+        row
+          .nextAll(".cfm-regex-sublist")
+          .first()
+          .slideUp(150, function () {
+            $(this).remove();
+          });
         row
           .find(".cfm-regex-toggle i")
           .removeClass("fa-caret-down")
@@ -18228,14 +24105,44 @@ jQuery(async () => {
           .addClass("fa-caret-down");
         const scripts = char?.data?.extensions?.regex_scripts || [];
         renderCharRegexSubList(row, avatar, scripts, char.name, isRegexTarget);
-        row.next(".cfm-regex-sublist").hide().slideDown(150);
+        row.nextAll(".cfm-regex-sublist").first().hide().slideDown(150);
+      }
+    });
+    // 角色名旁小三角：展开/折叠角色卡具体设定
+    row.find(".cfm-char-detail-toggle").on("click touchend", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      suppressNextRowClick();
+      const avatar = char.avatar;
+      if (cfmCharDetailExpandedAvatars.has(avatar)) {
+        cfmCharDetailExpandedAvatars.delete(avatar);
+        row
+          .nextAll(".cfm-char-detail-sublist")
+          .first()
+          .slideUp(150, function () {
+            $(this).remove();
+          });
+        row
+          .find(".cfm-char-detail-toggle i")
+          .removeClass("fa-caret-down")
+          .addClass("fa-caret-right");
+      } else {
+        cfmCharDetailExpandedAvatars.add(avatar);
+        row
+          .find(".cfm-char-detail-toggle i")
+          .removeClass("fa-caret-right")
+          .addClass("fa-caret-down");
+        renderCharacterDetailSubList(row, char);
+        row.nextAll(".cfm-char-detail-sublist").first().hide().slideDown(150);
       }
     });
     // 点击行为：多选模式下切换选中，否则打开角色聊天
     row.on("click", (e) => {
       e.preventDefault();
+      if (Date.now() < suppressRowClickUntil) return;
       if ($(e.target).closest(".cfm-row-star").length) return;
       if ($(e.target).closest(".cfm-row-edit-btn").length) return;
+      if ($(e.target).closest(".cfm-char-detail-toggle").length) return;
       if ($(e.target).closest(".cfm-chat-toggle").length) return;
       if ($(e.target).closest(".cfm-regex-toggle").length) return;
       if (cfmResDeleteMode) {
@@ -18263,7 +24170,13 @@ jQuery(async () => {
       const idx = characters.findIndex((c) => c.avatar === char.avatar);
       if (idx >= 0) {
         const selectCharacterById = getContext().selectCharacterById;
-        if (selectCharacterById) selectCharacterById(idx);
+        if (selectCharacterById) {
+          Promise.resolve(selectCharacterById(idx)).finally(() => {
+            setTimeout(() => {
+              refreshActiveViewerStateAfterSelectionChange({ character: true });
+            }, 0);
+          });
+        }
       }
     });
     // 移动端触摸拖拽
@@ -18299,18 +24212,19 @@ jQuery(async () => {
         renderChatSubList(row, char.avatar, cachedChats);
       }
     }
-    // 正则模式下，如果该角色已展开且有正则脚本，立即渲染正则子列表
+    // 正则模式下，如果该角色已展开，则立即渲染正则子列表（目标角色允许为空）
     if (showRegexToggle && cfmCharRegexExpandedAvatars.has(char.avatar)) {
       const scripts = char?.data?.extensions?.regex_scripts || [];
-      if (scripts.length > 0) {
-        renderCharRegexSubList(
-          row,
-          char.avatar,
-          scripts,
-          char.name,
-          isRegexTarget,
-        );
-      }
+      renderCharRegexSubList(
+        row,
+        char.avatar,
+        scripts,
+        char.name,
+        isRegexTarget,
+      );
+    }
+    if (cfmCharDetailExpandedAvatars.has(char.avatar)) {
+      renderCharacterDetailSubList(row, char);
     }
   }
 
@@ -18393,7 +24307,10 @@ jQuery(async () => {
         tabsContainer.find(".cfm-tab").on("click touchend", function (e) {
           e.preventDefault();
           const tab = $(this).data("tab");
-          if (tab === currentResourceType) return;
+          if (tab === currentResourceType) {
+            handleCurrentTabRelocate(tab);
+            return;
+          }
           currentResourceType = tab;
           $("#cfm-overlay .cfm-tab").removeClass("cfm-tab-active");
           $(this).addClass("cfm-tab-active");
@@ -18401,6 +24318,7 @@ jQuery(async () => {
           clearMultiSelect();
           cfmMultiSelectRangeMode = false;
           $(".cfm-multisel-toggle").removeClass("cfm-multisel-active");
+          $("#cfm-popup").removeClass("cfm-multisel-on");
           if (cfmExportMode) exitExportMode();
           if (cfmResDeleteMode) exitResDeleteMode();
           if (cfmThemeNoteMode) exitThemeNoteMode();
@@ -18677,6 +24595,7 @@ jQuery(async () => {
     // 清除按钮
     iconSection.find("#cfm-icon-clear").on("click touchend", (e) => {
       e.preventDefault();
+      if (!window.confirm("确认清除自定义图标吗？")) return;
       $("#cfm-icon-url-input").val("");
       extension_settings[extensionName].customTopbarIcon = "";
       getContext().saveSettingsDebounced();
@@ -18756,7 +24675,7 @@ jQuery(async () => {
         const meta = CFM_TAB_META.find((m) => m.id === t.id);
         if (!meta) return "";
         const checked = t.visible !== false ? "checked" : "";
-        return `<div class="cfm-layout-item" data-id="${t.id}" draggable="true">
+        return `<div class="cfm-layout-item" data-id="${t.id}">
           <span class="cfm-layout-drag"><i class="fa-solid fa-grip-vertical"></i></span>
           <span class="cfm-layout-icon"><i class="fa-solid ${meta.icon}"></i></span>
           <span class="cfm-layout-label">${meta.label}</span>
@@ -18840,49 +24759,33 @@ jQuery(async () => {
           item.insertAfter(item.next());
         }
         saveTabOrder();
+        flashDraggedElement(item);
       });
 
     // 标签页拖拽排序
-    let dragSrcTab = null;
-    section
-      .find(".cfm-layout-tabs-list")
-      .on("dragstart", ".cfm-layout-item", function (e) {
-        dragSrcTab = this;
-        $(this).addClass("cfm-layout-dragging");
-        e.originalEvent.dataTransfer.effectAllowed = "move";
-      });
-    section
-      .find(".cfm-layout-tabs-list")
-      .on("dragover", ".cfm-layout-item", function (e) {
-        e.preventDefault();
-        e.originalEvent.dataTransfer.dropEffect = "move";
-        $(this).addClass("cfm-layout-dragover");
-      });
-    section
-      .find(".cfm-layout-tabs-list")
-      .on("dragleave", ".cfm-layout-item", function () {
-        $(this).removeClass("cfm-layout-dragover");
-      });
-    section
-      .find(".cfm-layout-tabs-list")
-      .on("drop", ".cfm-layout-item", function (e) {
-        e.preventDefault();
-        $(this).removeClass("cfm-layout-dragover");
-        if (dragSrcTab && dragSrcTab !== this) {
-          const srcIdx = $(dragSrcTab).index();
-          const tgtIdx = $(this).index();
-          if (srcIdx < tgtIdx) $(dragSrcTab).insertAfter(this);
-          else $(dragSrcTab).insertBefore(this);
+    const tabsList = section.find(".cfm-layout-tabs-list");
+    if (typeof tabsList.sortable === "function" && !cfmIsTouchDevice()) {
+      tabsList.sortable({
+        items: ".cfm-layout-item",
+        handle: ".cfm-layout-drag",
+        axis: "y",
+        tolerance: "pointer",
+        placeholder: "cfm-sort-placeholder",
+        forcePlaceholderSize: true,
+        distance: 4,
+        cancel:
+          ".cfm-layout-toggle, .cfm-layout-arrow, button, input, textarea, select, a, label",
+        start: (_event, ui) => {
+          ui.item.addClass("cfm-layout-dragging");
+        },
+        stop: (_event, ui) => {
+          ui.item.removeClass("cfm-layout-dragging");
           saveTabOrder();
-        }
+          flashDraggedElement(ui.item);
+        },
       });
-    section
-      .find(".cfm-layout-tabs-list")
-      .on("dragend", ".cfm-layout-item", function () {
-        $(this).removeClass("cfm-layout-dragging");
-        section.find(".cfm-layout-dragover").removeClass("cfm-layout-dragover");
-        dragSrcTab = null;
-      });
+      tabsList.disableSelection();
+    }
 
     // --- 子功能面板 ---
     let selectedLayoutTab =
@@ -18903,7 +24806,7 @@ jQuery(async () => {
         const meta = CFM_ACTION_META[a.id];
         if (!meta) return;
         const checked = a.visible !== false ? "checked" : "";
-        actionsList.append(`<div class="cfm-layout-item cfm-layout-action-item" data-id="${a.id}" draggable="true">
+        actionsList.append(`<div class="cfm-layout-item cfm-layout-action-item" data-id="${a.id}">
           <span class="cfm-layout-drag"><i class="fa-solid fa-grip-vertical"></i></span>
           <span class="cfm-layout-icon"><i class="fa-solid ${meta.icon}"></i></span>
           <span class="cfm-layout-label">${meta.label}</span>
@@ -18971,49 +24874,36 @@ jQuery(async () => {
           item.insertAfter(item.next());
         }
         saveActionOrder();
+        flashDraggedElement(item);
       });
 
     // 子功能拖拽排序
-    let dragSrcAction = null;
-    section
-      .find(".cfm-layout-actions-list")
-      .on("dragstart", ".cfm-layout-item", function (e) {
-        dragSrcAction = this;
-        $(this).addClass("cfm-layout-dragging");
-        e.originalEvent.dataTransfer.effectAllowed = "move";
-      });
-    section
-      .find(".cfm-layout-actions-list")
-      .on("dragover", ".cfm-layout-item", function (e) {
-        e.preventDefault();
-        e.originalEvent.dataTransfer.dropEffect = "move";
-        $(this).addClass("cfm-layout-dragover");
-      });
-    section
-      .find(".cfm-layout-actions-list")
-      .on("dragleave", ".cfm-layout-item", function () {
-        $(this).removeClass("cfm-layout-dragover");
-      });
-    section
-      .find(".cfm-layout-actions-list")
-      .on("drop", ".cfm-layout-item", function (e) {
-        e.preventDefault();
-        $(this).removeClass("cfm-layout-dragover");
-        if (dragSrcAction && dragSrcAction !== this) {
-          const srcIdx = $(dragSrcAction).index();
-          const tgtIdx = $(this).index();
-          if (srcIdx < tgtIdx) $(dragSrcAction).insertAfter(this);
-          else $(dragSrcAction).insertBefore(this);
+    const actionsSortableList = section.find(".cfm-layout-actions-list");
+    if (
+      typeof actionsSortableList.sortable === "function" &&
+      !cfmIsTouchDevice()
+    ) {
+      actionsSortableList.sortable({
+        items: ".cfm-layout-item",
+        handle: ".cfm-layout-drag",
+        axis: "y",
+        tolerance: "pointer",
+        placeholder: "cfm-sort-placeholder",
+        forcePlaceholderSize: true,
+        distance: 4,
+        cancel:
+          ".cfm-layout-toggle, .cfm-layout-arrow, button, input, textarea, select, a, label",
+        start: (_event, ui) => {
+          ui.item.addClass("cfm-layout-dragging");
+        },
+        stop: (_event, ui) => {
+          ui.item.removeClass("cfm-layout-dragging");
           saveActionOrder();
-        }
+          flashDraggedElement(ui.item);
+        },
       });
-    section
-      .find(".cfm-layout-actions-list")
-      .on("dragend", ".cfm-layout-item", function () {
-        $(this).removeClass("cfm-layout-dragging");
-        section.find(".cfm-layout-dragover").removeClass("cfm-layout-dragover");
-        dragSrcAction = null;
-      });
+      actionsSortableList.disableSelection();
+    }
 
     // 点击标签页名称切换子功能面板
     section
@@ -21783,7 +27673,7 @@ jQuery(async () => {
         const singleRenameBtn = noModeActive
           ? `<div class="cfm-row-edit-btn cfm-row-rename-btn" title="重命名"><i class="fa-solid fa-i-cursor"></i></div>`
           : "";
-        // 正则模式下的小三角按钮（对所有有正则脚本的预设显示）
+        // 正则模式下的小三角按钮（有正则脚本的预设，或当前目标空预设，也显示）
         const isPresetRegexTarget =
           cfmPresetRegexMode && cfmPresetRegexTargetName === p.name;
         let showPresetRegexToggle = false;
@@ -21801,7 +27691,9 @@ jQuery(async () => {
             /* skip */
           }
           showPresetRegexToggle =
-            Array.isArray(presetRegexScripts) && presetRegexScripts.length > 0;
+            (Array.isArray(presetRegexScripts) &&
+              presetRegexScripts.length > 0) ||
+            isPresetRegexTarget;
         }
         const isPresetRegexExpanded =
           showPresetRegexToggle && cfmPresetRegexExpandedNames.has(p.name);
@@ -21811,12 +27703,14 @@ jQuery(async () => {
         const presetRegexHighlightClass = isPresetRegexTarget
           ? "cfm-regex-target-row"
           : "";
+        const isPresetDetailExpanded = cfmPresetDetailExpandedNames.has(p.name);
+        const presetDetailToggleHtml = `<div class="cfm-char-detail-toggle cfm-preset-detail-toggle" title="展开/折叠预设详情"><i class="fa-solid fa-caret-${isPresetDetailExpanded ? "down" : "right"}"></i></div>`;
         const row = $(`
           <div class="cfm-row cfm-row-char ${presetRegexHighlightClass} ${isActive ? "cfm-rv-item-active" : ""} ${isDelSel ? "cfm-res-delete-row-selected" : ""} ${isExpSel ? "cfm-export-row-selected" : ""} ${isNoteSel ? "cfm-edit-row-selected" : ""} ${isRenameSel ? "cfm-edit-row-selected" : ""} ${isMSel ? "cfm-multisel-row-selected" : ""}" data-value="${escapeHtml(p.value)}" data-res-id="${escapeHtml(p.name)}" draggable="true">
             ${msCheckHtml}
             ${presetRegexToggleHtml}
             <div class="cfm-row-icon"><i class="fa-solid fa-file-lines" style="font-size:20px;color:#8b9dfc;"></i></div>
-            <div class="cfm-row-name"><span class="cfm-preset-name-text">${escapeHtml(p.name)}</span>${noteHtml}</div>
+            <div class="cfm-row-name"><span class="cfm-char-name-inline">${presetDetailToggleHtml}<span class="cfm-preset-name-text">${escapeHtml(p.name)}</span></span>${noteHtml}</div>
             ${singleRenameBtn}
             ${singleNoteBtn}
             <div class="cfm-row-star ${fav ? "cfm-star-active" : ""}" title="${fav ? "取消收藏" : "添加收藏"}"><i class="fa-${fav ? "solid" : "regular"} fa-star"></i></div>
@@ -21883,10 +27777,40 @@ jQuery(async () => {
             row.next(".cfm-regex-sublist").hide().slideDown(150);
           }
         });
+        row.find(".cfm-preset-detail-toggle").on("click touchend", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const name = p.name;
+          const detailSubList = row
+            .nextAll(".cfm-preset-detail-sublist")
+            .first();
+          if (cfmPresetDetailExpandedNames.has(name)) {
+            cfmPresetDetailExpandedNames.delete(name);
+            detailSubList.slideUp(150, function () {
+              $(this).remove();
+            });
+            row
+              .find(".cfm-preset-detail-toggle i")
+              .removeClass("fa-caret-down")
+              .addClass("fa-caret-right");
+          } else {
+            cfmPresetDetailExpandedNames.add(name);
+            row
+              .find(".cfm-preset-detail-toggle i")
+              .removeClass("fa-caret-right")
+              .addClass("fa-caret-down");
+            renderPresetDetailSubList(row, p);
+            row
+              .nextAll(".cfm-preset-detail-sublist")
+              .first()
+              .hide()
+              .slideDown(150);
+          }
+        });
         row.on("click", (e) => {
           if (
             $(e.target).closest(
-              ".cfm-row-star, .cfm-row-note-btn, .cfm-row-rename-btn, .cfm-regex-toggle",
+              ".cfm-row-star, .cfm-row-note-btn, .cfm-row-rename-btn, .cfm-regex-toggle, .cfm-preset-detail-toggle",
             ).length
           )
             return;
@@ -21933,12 +27857,13 @@ jQuery(async () => {
           return getMultiDragData(singleData);
         });
         rightList.append(row);
-        // 正则模式下，如果该预设已展开且有正则脚本，立即渲染正则子列表
+        // 正则模式下，如果该预设已展开，则立即渲染正则子列表（目标预设允许为空）
         if (showPresetRegexToggle && cfmPresetRegexExpandedNames.has(p.name)) {
           const scripts = presetRegexScripts || [];
-          if (scripts.length > 0) {
-            renderPresetRegexSubList(row, p.name, scripts, isPresetRegexTarget);
-          }
+          renderPresetRegexSubList(row, p.name, scripts, isPresetRegexTarget);
+        }
+        if (cfmPresetDetailExpandedNames.has(p.name)) {
+          renderPresetDetailSubList(row, p);
         }
       }
 
@@ -21991,16 +27916,26 @@ jQuery(async () => {
       rightList.on("dragover", (e) => {
         e.preventDefault();
         e.originalEvent.dataTransfer.dropEffect = "move";
+        if ($(e.target).closest(".cfm-preset-detail-sublist").length > 0) {
+          rightList.removeClass("cfm-right-list-drop-target");
+          return;
+        }
         if ($(e.target).closest(".cfm-row").length > 0) return;
         rightList.addClass("cfm-right-list-drop-target");
       });
       rightList.on("dragleave", (e) => {
+        if ($(e.target).closest(".cfm-preset-detail-sublist").length > 0) {
+          rightList.removeClass("cfm-right-list-drop-target");
+          return;
+        }
         if ($(e.relatedTarget).closest("#cfm-preset-right-list").length === 0) {
           rightList.removeClass("cfm-right-list-drop-target");
         }
       });
       rightList.on("drop", (e) => {
         rightList.removeClass("cfm-right-list-drop-target");
+        if ($(e.target).closest(".cfm-preset-detail-sublist").length > 0)
+          return;
         if ($(e.target).closest(".cfm-row").length > 0) return;
         e.preventDefault();
         e.stopPropagation();
@@ -23890,7 +29825,9 @@ jQuery(async () => {
   }
 
   // ==================== 世界书视图渲染（双栏 + 树形嵌套） ====================
+  let _worldInfoRenderVersion = 0;
   async function renderWorldInfoView() {
+    const renderVersion = ++_worldInfoRenderVersion;
     const leftTree = $("#cfm-worldinfo-left-tree");
     const rightList = $("#cfm-worldinfo-right-list");
     const pathEl = $("#cfm-worldinfo-rh-path");
@@ -23900,20 +29837,7 @@ jQuery(async () => {
     _worldInfoNamesCache = null;
     let names;
     // 优先从DOM同步读取（getWorldInfoNames内部会先尝试DOM）
-    const domNames = [];
-    $("#world_editor_select option").each(function () {
-      const v = $(this).val();
-      const t = $(this).text();
-      if (v !== "" && t !== "--- 选择以编辑 ---") domNames.push(t);
-    });
-    // 如果原生过滤激活，被 detach 的 option 也要加入（防止清理逻辑误删分组映射）
-    if (_worldInfoDetachedOptions && _worldInfoDetachedOptions.length > 0) {
-      for (const opt of _worldInfoDetachedOptions) {
-        const v = $(opt).val();
-        const t = $(opt).text();
-        if (v !== "" && t !== "--- 选择以编辑 ---") domNames.push(t);
-      }
-    }
+    const domNames = collectWorldInfoNamesFromDom();
     if (domNames.length > 0) {
       names = domNames;
       _worldInfoNamesCache = domNames;
@@ -23934,6 +29858,8 @@ jQuery(async () => {
     // 获取世界书激活状态和角色关联世界书（用于 toggle 开关）
     const wiActiveSet = await getActiveWorldInfoSet();
     const wiCharBound = await getCharBoundWorldBooks();
+
+    if (renderVersion !== _worldInfoRenderVersion) return;
 
     leftTree.empty();
     const tree = getResFolderTree("worldinfo");
@@ -24524,6 +30450,8 @@ jQuery(async () => {
         const singleRenameBtn = noModeActive
           ? `<div class="cfm-row-edit-btn cfm-row-rename-btn" title="重命名"><i class="fa-solid fa-i-cursor"></i></div>`
           : "";
+        const isEntryExpanded = isWorldInfoEntryBookExpanded(n);
+        const expandHtml = `<div class="cfm-char-detail-toggle cfm-preset-detail-toggle cfm-worldinfo-entry-expand" title="${isEntryExpanded ? "收起条目" : "展开条目"}"><i class="fa-solid fa-caret-${isEntryExpanded ? "down" : "right"}"></i></div>`;
         // 世界书激活开关
         const wiIsActive = wiActiveSet.has(n);
         const wiIsBound = wiCharBound.has(n);
@@ -24538,12 +30466,24 @@ jQuery(async () => {
             ${msCheckHtml}
             ${toggleHtml}
             <div class="cfm-row-icon"><i class="fa-solid fa-book" style="font-size:20px;color:#a6e3a1;"></i></div>
-            <div class="cfm-row-name"><span class="cfm-worldinfo-name-text">${escapeHtml(n)}</span>${noteHtml}</div>
+            <div class="cfm-row-name"><span class="cfm-char-name-inline">${expandHtml}<span class="cfm-worldinfo-name-text">${escapeHtml(n)}</span></span>${noteHtml}</div>
             ${singleRenameBtn}
             ${singleNoteBtn}
             <div class="cfm-row-star ${fav ? "cfm-star-active" : ""}" title="${fav ? "取消收藏" : "添加收藏"}"><i class="fa-${fav ? "solid" : "regular"} fa-star"></i></div>
           </div>
         `);
+        row.find(".cfm-worldinfo-entry-expand").on("click touchend", (e) => {
+          if (shouldIgnoreWorldInfoEntryTap(e)) {
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+          }
+          e.preventDefault();
+          e.stopPropagation();
+          cfmWorldInfoEntryLastFocusedName = n;
+          toggleWorldInfoEntryBookExpanded(n);
+          refreshWorldInfoPanelView();
+        });
         // 世界书激活开关事件
         row.find(".cfm-wi-toggle").on("click touchend", function (e) {
           e.preventDefault();
@@ -24554,10 +30494,9 @@ jQuery(async () => {
           }
           const newState = !wiActiveSet.has(n);
           toggleWorldInfoActivation(n, newState).then(() => {
-            // 更新本地缓存
             if (newState) wiActiveSet.add(n);
             else wiActiveSet.delete(n);
-            // 更新 toggle 按钮外观
+            syncWiPresetTrackingForManualToggle(n, newState);
             const el = $(this);
             el.toggleClass("cfm-wi-toggle-on", newState);
             el.find("i").attr(
@@ -24587,7 +30526,7 @@ jQuery(async () => {
             favCountEl.text(newCount);
           }
           if (selectedWorldInfoFolder === "__favorites__")
-            renderWorldInfoView();
+            refreshWorldInfoPanelView();
         });
         // 单个备注编辑按钮
         row.find(".cfm-row-note-btn").on("click touchend", (e) => {
@@ -24604,33 +30543,33 @@ jQuery(async () => {
         row.on("click", (e) => {
           if (
             $(e.target).closest(
-              ".cfm-row-star, .cfm-row-note-btn, .cfm-row-rename-btn, .cfm-wi-toggle",
+              ".cfm-row-star, .cfm-row-note-btn, .cfm-row-rename-btn, .cfm-wi-toggle, .cfm-worldinfo-entry-expand",
             ).length
           )
             return;
           if (cfmResDeleteMode) {
             toggleResDeleteItem(n, e.shiftKey);
-            renderWorldInfoView();
+            refreshWorldInfoPanelView();
             return;
           }
           if (cfmExportMode) {
             toggleExportItem(n, e.shiftKey);
-            renderWorldInfoView();
+            refreshWorldInfoPanelView();
             return;
           }
           if (cfmWorldInfoNoteMode) {
             toggleWorldInfoNoteItem(n, e.shiftKey);
-            renderWorldInfoView();
+            refreshWorldInfoPanelView();
             return;
           }
           if (cfmWorldInfoRenameMode) {
             toggleWorldInfoRenameItem(n, e.shiftKey);
-            renderWorldInfoView();
+            refreshWorldInfoPanelView();
             return;
           }
           if (cfmMultiSelectMode) {
             toggleMultiSelectItem(n, e.shiftKey);
-            renderWorldInfoView();
+            refreshWorldInfoPanelView();
             return;
           }
           openWorldInfoEditor(n);
@@ -24646,6 +30585,8 @@ jQuery(async () => {
           return getMultiDragData(singleData);
         });
         rightList.append(row);
+        if (isEntryExpanded)
+          renderWorldInfoEntrySubList(row, n, refreshWorldInfoPanelView);
       }
 
       // 删除工具栏（世界书文件夹视图）
@@ -24665,6 +30606,8 @@ jQuery(async () => {
           <div class="cfm-multisel-toolbar">
             <button class="cfm-btn cfm-btn-sm cfm-multisel-selectall"><i class="fa-solid fa-${allSel ? "square-minus" : "square-check"}"></i> ${allSel ? "全不选" : "全选"}</button>
             <button class="cfm-btn cfm-btn-sm cfm-multisel-range ${cfmMultiSelectRangeMode ? "cfm-range-active" : ""}"><i class="fa-solid fa-arrow-down-short-wide"></i> 框选${cfmMultiSelectRangeMode ? "(开)" : ""}</button>
+            <button class="cfm-btn cfm-btn-sm cfm-multisel-activate" title="批量激活世界书"><i class="fa-solid fa-toggle-on"></i> 激活</button>
+            <button class="cfm-btn cfm-btn-sm cfm-multisel-deactivate" title="批量取消激活世界书"><i class="fa-solid fa-toggle-off"></i> 取消激活</button>
             <span class="cfm-multisel-count">${cfmMultiSelected.size > 0 ? `已选 ${cfmMultiSelected.size} 项` : ""}</span>
           </div>
         `);
@@ -24681,8 +30624,31 @@ jQuery(async () => {
           if (cfmMultiSelectRangeMode) cfmMultiSelectLastClicked = null;
           renderWorldInfoView();
         });
+        toolbar
+          .find(".cfm-multisel-activate")
+          .on("click touchend", async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const changed = await applyWorldInfoMultiActivation(
+              Array.from(cfmMultiSelected),
+              true,
+            );
+            if (changed) renderWorldInfoView();
+          });
+        toolbar
+          .find(".cfm-multisel-deactivate")
+          .on("click touchend", async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const changed = await applyWorldInfoMultiActivation(
+              Array.from(cfmMultiSelected),
+              false,
+            );
+            if (changed) renderWorldInfoView();
+          });
         rightList.prepend(toolbar);
       }
+      bindWorldInfoEntryCollapseTargets(refreshWorldInfoPanelView);
     }
 
     // 右侧列表本身也是拖放目标（拖到空白区域 = 放入当前文件夹）
@@ -24786,6 +30752,72 @@ jQuery(async () => {
     }
   }
 
+  function getExistingQrSetNameSet() {
+    return new Set(
+      Array.from(
+        new Set(
+          getQrSetNames()
+            .map((name) => String(name || "").trim())
+            .filter(Boolean),
+        ),
+      ),
+    );
+  }
+
+  function filterExistingQrSetNames(setNames, existingNameSet) {
+    const validNameSet = existingNameSet || getExistingQrSetNameSet();
+    return Array.from(
+      new Set(
+        (Array.isArray(setNames) ? setNames : [])
+          .map((name) => String(name || "").trim())
+          .filter((name) => name && validNameSet.has(name)),
+      ),
+    );
+  }
+
+  function sanitizeQrActivePresetState(save = false) {
+    const presets = extension_settings[extensionName].qrActivePresets || [];
+    const existingNameSet = getExistingQrSetNameSet();
+    let presetChanged = false;
+    for (const preset of presets) {
+      if (!preset || typeof preset !== "object") continue;
+      const prevSets = Array.isArray(preset.sets) ? preset.sets : [];
+      const nextSets = filterExistingQrSetNames(prevSets, existingNameSet);
+      const sameSets =
+        prevSets.length === nextSets.length &&
+        prevSets.every((name, idx) => name === nextSets[idx]);
+      if (!sameSets || !Array.isArray(preset.sets)) {
+        preset.sets = nextSets;
+        presetChanged = true;
+      }
+    }
+    const applied = Array.isArray(
+      extension_settings[extensionName]._qrAppliedPresetIndices,
+    )
+      ? extension_settings[extensionName]._qrAppliedPresetIndices
+      : [];
+    const nextApplied = applied.filter(
+      (idx) =>
+        presets[idx] &&
+        Array.isArray(presets[idx].sets) &&
+        presets[idx].sets.length > 0,
+    );
+    const appliedChanged =
+      applied.length !== nextApplied.length ||
+      applied.some((idx, i) => idx !== nextApplied[i]);
+    if (appliedChanged) {
+      extension_settings[extensionName]._qrAppliedPresetIndices = nextApplied;
+    }
+    if (save && (presetChanged || appliedChanged)) {
+      getContext().saveSettingsDebounced();
+    }
+    return {
+      presets,
+      existingNameSet,
+      changed: presetChanged || appliedChanged,
+    };
+  }
+
   /**
    * 获取当前激活的快速回复集名称集合（全局 + 聊天级）
    */
@@ -24819,24 +30851,33 @@ jQuery(async () => {
    * 切换快速回复集的全局激活状态
    */
   async function toggleQrSetActivation(name, activate) {
+    const normalizedName = String(name || "").trim();
+    if (!normalizedName) return false;
+    const existingNameSet = getExistingQrSetNameSet();
+    if (!existingNameSet.has(normalizedName)) {
+      console.info(`[CFM] 已跳过不存在的快速回复集激活切换：${normalizedName}`);
+      return false;
+    }
     try {
       const api = typeof globalThis !== "undefined" && globalThis.quickReplyApi;
       if (!api) {
         toastr.error("快速回复 API 不可用");
-        return;
+        return false;
       }
       if (activate) {
-        if (api.addGlobalSet) await api.addGlobalSet(name);
+        if (api.addGlobalSet) await api.addGlobalSet(normalizedName);
         else if (api.globalSetList && api.globalSetList.addSet)
-          await api.globalSetList.addSet(name);
+          await api.globalSetList.addSet(normalizedName);
       } else {
-        if (api.removeGlobalSet) await api.removeGlobalSet(name);
+        if (api.removeGlobalSet) await api.removeGlobalSet(normalizedName);
         else if (api.globalSetList && api.globalSetList.removeSet)
-          await api.globalSetList.removeSet(name);
+          await api.globalSetList.removeSet(normalizedName);
       }
+      return true;
     } catch (e) {
       console.error("[CFM] 切换快速回复集激活状态失败", e);
       toastr.error("切换快速回复集激活失败");
+      return false;
     }
   }
 
@@ -24847,8 +30888,13 @@ jQuery(async () => {
     try {
       const api = typeof globalThis !== "undefined" && globalThis.quickReplyApi;
       if (!api) return;
+      const { existingNameSet } = sanitizeQrActivePresetState(true);
+      const filteredSetNames = filterExistingQrSetNames(
+        setNames,
+        existingNameSet,
+      );
       const currentActive = getActiveQrSets();
-      const targetSet = new Set(setNames);
+      const targetSet = new Set(filteredSetNames);
       // 取消不在目标列表中的
       for (const name of currentActive) {
         if (!targetSet.has(name)) {
@@ -24856,7 +30902,7 @@ jQuery(async () => {
         }
       }
       // 激活目标列表中未激活的
-      for (const name of setNames) {
+      for (const name of filteredSetNames) {
         if (!currentActive.has(name)) {
           await toggleQrSetActivation(name, true);
         }
@@ -25086,12 +31132,17 @@ jQuery(async () => {
     for (const n of matched) {
       const fav = isResFavorite("quickreply", n);
       const qrIsActive = qrActiveSet.has(n);
+      const isMSel = cfmMultiSelectMode && cfmMultiSelected.has(n);
+      const msCheckHtml = cfmMultiSelectMode
+        ? `<div class="cfm-multisel-checkbox ${isMSel ? "cfm-multisel-checked" : ""}"><i class="fa-${isMSel ? "solid" : "regular"} fa-square${isMSel ? "-check" : ""}"></i></div>`
+        : "";
       const toggleHtml = `<div class="cfm-wi-toggle ${qrIsActive ? "cfm-wi-toggle-on" : ""}" title="${qrIsActive ? "点击取消激活" : "点击激活"}" data-qr-name="${escapeHtml(n)}"><i class="fa-solid fa-toggle-${qrIsActive ? "on" : "off"}"></i></div>`;
       const grpLabel = groups[n]
         ? `<span class="cfm-theme-note">${escapeHtml(getResFolderDisplayName("quickreply", groups[n]))}</span>`
         : "";
       const row = $(`
-        <div class="cfm-row cfm-row-char cfm-search-result" data-res-id="${escapeHtml(n)}">
+        <div class="cfm-row cfm-row-char cfm-search-result ${isMSel ? "cfm-multisel-row-selected" : ""}" data-res-id="${escapeHtml(n)}">
+          ${msCheckHtml}
           ${toggleHtml}
           <div class="cfm-row-icon"><i class="fa-solid fa-reply-all" style="font-size:20px;color:#89b4fa;"></i></div>
           <div class="cfm-row-name"><span class="cfm-qr-name-text">${escapeHtml(n)}</span>${grpLabel}</div>
@@ -25105,6 +31156,7 @@ jQuery(async () => {
         toggleQrSetActivation(n, newState).then(() => {
           if (newState) qrActiveSet.add(n);
           else qrActiveSet.delete(n);
+          syncQrPresetTrackingForManualToggle(n, newState);
           const el = $(this);
           el.toggleClass("cfm-wi-toggle-on", newState);
           el.find("i").attr(
@@ -25121,7 +31173,17 @@ jQuery(async () => {
         executeQrSearch();
       });
       row.on("click", (e) => {
-        if ($(e.target).closest(".cfm-row-star, .cfm-wi-toggle").length) return;
+        if (
+          $(e.target).closest(
+            ".cfm-row-star, .cfm-wi-toggle, .cfm-multisel-checkbox",
+          ).length
+        )
+          return;
+        if (cfmMultiSelectMode) {
+          toggleMultiSelectItem(n, e.shiftKey);
+          executeQrSearch();
+          return;
+        }
         // 定位到该快速回复集所在文件夹
         const folder = groups[n];
         if (folder) {
@@ -25137,6 +31199,55 @@ jQuery(async () => {
       });
       rightList.append(row);
     }
+
+    if (cfmMultiSelectMode) {
+      const visible = getVisibleResourceIds();
+      const allSel =
+        visible.length > 0 && visible.every((id) => cfmMultiSelected.has(id));
+      const toolbar = $(`
+        <div class="cfm-multisel-toolbar">
+          <button class="cfm-btn cfm-btn-sm cfm-multisel-selectall"><i class="fa-solid fa-${allSel ? "square-minus" : "square-check"}"></i> ${allSel ? "全不选" : "全选"}</button>
+          <button class="cfm-btn cfm-btn-sm cfm-multisel-range ${cfmMultiSelectRangeMode ? "cfm-range-active" : ""}"><i class="fa-solid fa-arrow-down-short-wide"></i> 框选${cfmMultiSelectRangeMode ? "(开)" : ""}</button>
+          <button class="cfm-btn cfm-btn-sm cfm-multisel-activate" title="批量激活快速回复集"><i class="fa-solid fa-toggle-on"></i> 激活</button>
+          <button class="cfm-btn cfm-btn-sm cfm-multisel-deactivate" title="批量取消激活快速回复集"><i class="fa-solid fa-toggle-off"></i> 取消激活</button>
+          <span class="cfm-multisel-count">${cfmMultiSelected.size > 0 ? `已选 ${cfmMultiSelected.size} 项` : ""}</span>
+        </div>
+      `);
+      toolbar.find(".cfm-multisel-selectall").on("click touchend", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        selectAllVisible();
+        executeQrSearch();
+      });
+      toolbar.find(".cfm-multisel-range").on("click touchend", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        cfmMultiSelectRangeMode = !cfmMultiSelectRangeMode;
+        if (cfmMultiSelectRangeMode) cfmMultiSelectLastClicked = null;
+        executeQrSearch();
+      });
+      toolbar.find(".cfm-multisel-activate").on("click touchend", async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const changed = await applyQrMultiActivation(
+          Array.from(cfmMultiSelected),
+          true,
+        );
+        if (changed) executeQrSearch();
+      });
+      toolbar
+        .find(".cfm-multisel-deactivate")
+        .on("click touchend", async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const changed = await applyQrMultiActivation(
+            Array.from(cfmMultiSelected),
+            false,
+          );
+          if (changed) executeQrSearch();
+        });
+      rightList.prepend(toolbar);
+    }
   }
 
   // ==================== 快速回复视图渲染（双栏 + 树形嵌套） ====================
@@ -25147,13 +31258,7 @@ jQuery(async () => {
     const countEl = $("#cfm-qr-rh-count");
 
     const names = getQrSetNames();
-    if (names.length === 0) {
-      leftTree.empty();
-      rightList.html(
-        '<div class="cfm-right-empty"><i class="fa-solid fa-circle-info"></i> 没有找到快速回复集<br><span style="font-size:12px;opacity:0.5;">请确保已安装并启用快速回复扩展</span></div>',
-      );
-      return;
-    }
+    const hasAnyQrSets = names.length > 0;
 
     // 获取快速回复激活状态
     const qrActiveSet = getActiveQrSets();
@@ -25522,7 +31627,9 @@ jQuery(async () => {
 
     if (!selectedQrFolder) {
       rightList.html(
-        '<div class="cfm-right-empty">← 点击左侧文件夹查看快速回复集</div>',
+        hasAnyQrSets
+          ? '<div class="cfm-right-empty">← 点击左侧文件夹查看快速回复集</div>'
+          : '<div class="cfm-right-empty"><i class="fa-solid fa-circle-info"></i> 没有找到快速回复集<br><span style="font-size:12px;opacity:0.5;">请确保已安装并启用快速回复扩展</span></div>',
       );
     } else if (selectedQrFolder === "__favorites__" && totalItems === 0) {
       rightList.html(
@@ -25748,10 +31855,9 @@ jQuery(async () => {
         const row = $(`
           <div class="cfm-row cfm-row-char cfm-qr-set-row ${isDelSel ? "cfm-res-delete-row-selected" : ""} ${isExpSel ? "cfm-export-row-selected" : ""} ${isMSel ? "cfm-multisel-row-selected" : ""} ${isNoteSel ? "cfm-edit-row-selected" : ""} ${isRenameSel ? "cfm-edit-row-selected" : ""}" data-res-id="${escapeHtml(n)}" draggable="true">
             ${msCheckHtml}
-            ${expandArrowHtml}
             ${toggleHtml}
             <div class="cfm-row-icon"><i class="fa-solid fa-reply-all" style="font-size:20px;color:#89b4fa;"></i></div>
-            <div class="cfm-row-name"><span class="cfm-qr-name-text">${escapeHtml(n)}</span>${noteHtml}</div>
+            <div class="cfm-row-name"><span class="cfm-char-name-inline cfm-qr-name-inline">${expandArrowHtml}<span class="cfm-qr-name-text">${escapeHtml(n)}</span></span>${noteHtml}</div>
             ${singleNoteBtn}
             ${singleRenameBtn}
             <div class="cfm-row-star ${fav ? "cfm-star-active" : ""}" title="${fav ? "取消收藏" : "添加收藏"}"><i class="fa-${fav ? "solid" : "regular"} fa-star"></i></div>
@@ -25762,6 +31868,7 @@ jQuery(async () => {
         row.find(".cfm-qr-expand-arrow").on("click touchend", function (e) {
           e.preventDefault();
           e.stopPropagation();
+          cfmQrLastFocusedSetName = n;
           if (qrItemExpandedSets.has(n)) {
             qrItemExpandedSets.delete(n);
           } else {
@@ -25778,6 +31885,7 @@ jQuery(async () => {
           toggleQrSetActivation(n, newState).then(() => {
             if (newState) qrActiveSet.add(n);
             else qrActiveSet.delete(n);
+            syncQrPresetTrackingForManualToggle(n, newState);
             const el = $(this);
             el.toggleClass("cfm-wi-toggle-on", newState);
             el.find("i").attr(
@@ -25937,6 +32045,8 @@ jQuery(async () => {
           <div class="cfm-multisel-toolbar">
             <button class="cfm-btn cfm-btn-sm cfm-multisel-selectall"><i class="fa-solid fa-${allSel ? "square-minus" : "square-check"}"></i> ${allSel ? "全不选" : "全选"}</button>
             <button class="cfm-btn cfm-btn-sm cfm-multisel-range ${cfmMultiSelectRangeMode ? "cfm-range-active" : ""}"><i class="fa-solid fa-arrow-down-short-wide"></i> 框选${cfmMultiSelectRangeMode ? "(开)" : ""}</button>
+            <button class="cfm-btn cfm-btn-sm cfm-multisel-activate" title="批量激活快速回复集"><i class="fa-solid fa-toggle-on"></i> 激活</button>
+            <button class="cfm-btn cfm-btn-sm cfm-multisel-deactivate" title="批量取消激活快速回复集"><i class="fa-solid fa-toggle-off"></i> 取消激活</button>
             <span class="cfm-multisel-count">${cfmMultiSelected.size > 0 ? `已选 ${cfmMultiSelected.size} 项` : ""}</span>
           </div>
         `);
@@ -25953,6 +32063,28 @@ jQuery(async () => {
           if (cfmMultiSelectRangeMode) cfmMultiSelectLastClicked = null;
           renderQRView();
         });
+        toolbar
+          .find(".cfm-multisel-activate")
+          .on("click touchend", async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const changed = await applyQrMultiActivation(
+              Array.from(cfmMultiSelected),
+              true,
+            );
+            if (changed) renderQRView();
+          });
+        toolbar
+          .find(".cfm-multisel-deactivate")
+          .on("click touchend", async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const changed = await applyQrMultiActivation(
+              Array.from(cfmMultiSelected),
+              false,
+            );
+            if (changed) renderQRView();
+          });
         rightList.prepend(toolbar);
       }
     }
@@ -26051,6 +32183,7 @@ jQuery(async () => {
 
   // ==================== 快速回复分组预设管理 ====================
   function getQrActivePresets() {
+    sanitizeQrActivePresetState(true);
     return extension_settings[extensionName].qrActivePresets || [];
   }
   function saveQrActivePreset(name, sets, scope, bindChars, bindPresets) {
@@ -26097,8 +32230,174 @@ jQuery(async () => {
       if (scope === "global") {
         presets[presetIdx].bindChars = [];
         presets[presetIdx].bindPresets = [];
+        presets[presetIdx].bindChats = [];
       }
       getContext().saveSettingsDebounced();
+    }
+  }
+
+  async function unapplyWiPresetIndex(presetIdx) {
+    const allPresets = getWiActivePresets();
+    const preset = allPresets[presetIdx];
+    if (!preset) return 0;
+    const applied =
+      extension_settings[extensionName]._wiAppliedPresetIndices || [];
+    const otherApplied = applied.filter(
+      (i) => i !== presetIdx && allPresets[i],
+    );
+    const otherBooks = new Set();
+    for (const oi of otherApplied) {
+      for (const b of allPresets[oi].books) otherBooks.add(b);
+    }
+    const wiCharBoundLocal = await getCharBoundWorldBooks();
+    let removedCount = 0;
+    for (const b of preset.books) {
+      if (!wiCharBoundLocal.has(b) && !otherBooks.has(b)) {
+        await toggleWorldInfoActivation(b, false);
+        removedCount++;
+      }
+    }
+    extension_settings[extensionName]._wiAppliedPresetIndices = otherApplied;
+    getContext().saveSettingsDebounced();
+    return removedCount;
+  }
+
+  async function unapplyQrPresetIndex(presetIdx) {
+    const allPresets = getQrActivePresets();
+    const preset = allPresets[presetIdx];
+    if (!preset) return 0;
+    const applied =
+      extension_settings[extensionName]._qrAppliedPresetIndices || [];
+    const otherApplied = applied.filter(
+      (i) => i !== presetIdx && allPresets[i],
+    );
+    const otherSets = new Set();
+    for (const oi of otherApplied) {
+      for (const s of allPresets[oi].sets) otherSets.add(s);
+    }
+    let removedCount = 0;
+    for (const s of preset.sets) {
+      if (!otherSets.has(s)) {
+        await toggleQrSetActivation(s, false);
+        removedCount++;
+      }
+    }
+    extension_settings[extensionName]._qrAppliedPresetIndices = otherApplied;
+    getContext().saveSettingsDebounced();
+    return removedCount;
+  }
+
+  function syncWiPresetTrackingForManualToggle(bookName, isActive) {
+    const presets = getWiActivePresets();
+    const applied =
+      extension_settings[extensionName]._wiAppliedPresetIndices || [];
+    const activeWorldNames =
+      typeof world_names !== "undefined" && world_names
+        ? Object.entries(world_names)
+            .filter(([, v]) => v)
+            .map(([k]) => k)
+        : [];
+    const activeSet = new Set(activeWorldNames);
+
+    let nextApplied = isActive
+      ? [...applied]
+      : applied.filter(
+          (idx) => !(presets[idx] && presets[idx].books.includes(bookName)),
+        );
+
+    if (isActive) {
+      presets.forEach((preset, idx) => {
+        if (
+          preset &&
+          preset.books.includes(bookName) &&
+          preset.books.every((b) => activeSet.has(b)) &&
+          !nextApplied.includes(idx)
+        ) {
+          nextApplied.push(idx);
+        }
+      });
+    }
+
+    const changed =
+      nextApplied.length !== applied.length ||
+      nextApplied.some((idx, i) => idx !== applied[i]);
+
+    if (changed) {
+      extension_settings[extensionName]._wiAppliedPresetIndices = nextApplied;
+      getContext().saveSettingsDebounced();
+    }
+
+    const overlay = $("#cfm-wi-preset-panel-overlay");
+    if (overlay.length) {
+      overlay.find(".cfm-wi-preset-item").each(function () {
+        const idx = parseInt($(this).attr("data-preset-idx"), 10);
+        const preset = presets[idx];
+        if (!preset) return;
+        const fullyApplied = preset.books.every((b) => activeSet.has(b));
+        const btn = $(this).find(".cfm-wi-preset-apply");
+        btn.toggleClass("cfm-wi-preset-apply-active", fullyApplied);
+        btn.attr("title", fullyApplied ? "当前已激活" : "应用到全局");
+        btn.attr(
+          "style",
+          fullyApplied
+            ? "color:#a6e3a1;text-shadow:0 0 8px rgba(166,227,161,.55);"
+            : "",
+        );
+      });
+    }
+  }
+
+  function syncQrPresetTrackingForManualToggle(setName, isActive) {
+    const presets = getQrActivePresets();
+    const applied =
+      extension_settings[extensionName]._qrAppliedPresetIndices || [];
+    const activeSet = getActiveQrSets();
+
+    let nextApplied = isActive
+      ? [...applied]
+      : applied.filter(
+          (idx) => !(presets[idx] && presets[idx].sets.includes(setName)),
+        );
+
+    if (isActive) {
+      presets.forEach((preset, idx) => {
+        if (
+          preset &&
+          preset.sets.includes(setName) &&
+          preset.sets.every((s) => activeSet.has(s)) &&
+          !nextApplied.includes(idx)
+        ) {
+          nextApplied.push(idx);
+        }
+      });
+    }
+
+    const changed =
+      nextApplied.length !== applied.length ||
+      nextApplied.some((idx, i) => idx !== applied[i]);
+
+    if (changed) {
+      extension_settings[extensionName]._qrAppliedPresetIndices = nextApplied;
+      getContext().saveSettingsDebounced();
+    }
+
+    const overlay = $("#cfm-qr-preset-panel-overlay");
+    if (overlay.length) {
+      overlay.find(".cfm-wi-preset-item").each(function () {
+        const idx = parseInt($(this).attr("data-preset-idx"), 10);
+        const preset = presets[idx];
+        if (!preset) return;
+        const fullyApplied = preset.sets.every((s) => activeSet.has(s));
+        const btn = $(this).find(".cfm-qr-preset-apply");
+        btn.toggleClass("cfm-wi-preset-apply-active", fullyApplied);
+        btn.attr("title", fullyApplied ? "当前已激活" : "应用到全局");
+        btn.attr(
+          "style",
+          fullyApplied
+            ? "color:#a6e3a1;text-shadow:0 0 8px rgba(166,227,161,.55);"
+            : "",
+        );
+      });
     }
   }
   function bindQrPresetToChar(presetIdx, charAvatar) {
@@ -26146,16 +32445,25 @@ jQuery(async () => {
     const presets = getQrActivePresets();
     const currentChar = getCurrentCharAvatar();
     const currentPreset = getCurrentPresetName();
+    const currentChatKey = getCurrentChatBindKey();
     const indices = [];
     const details = {};
     for (let i = 0; i < presets.length; i++) {
       const p = presets[i];
+      if (!p || !Array.isArray(p.sets) || p.sets.length === 0) continue;
       if (p.scope === "global") continue;
       const hasBindings =
         (p.bindChars && p.bindChars.length > 0) ||
-        (p.bindPresets && p.bindPresets.length > 0);
+        (p.bindPresets && p.bindPresets.length > 0) ||
+        (p.bindChats && p.bindChats.length > 0);
       if (!hasBindings) continue;
+      const chatMatch = !!(
+        currentChatKey &&
+        p.bindChats &&
+        p.bindChats.includes(currentChatKey)
+      );
       const charMatch = !!(
+        !chatMatch &&
         currentChar &&
         p.bindChars &&
         p.bindChars.includes(currentChar)
@@ -26165,15 +32473,15 @@ jQuery(async () => {
         p.bindPresets &&
         p.bindPresets.includes(currentPreset)
       );
-      if (charMatch || presetMatch) {
+      if (chatMatch || charMatch || presetMatch) {
         indices.push(i);
-        details[i] = { charMatch, presetMatch };
+        details[i] = { chatMatch, charMatch, presetMatch };
       }
     }
     return { indices, details };
   }
 
-  async function autoApplyQrPresets() {
+  async function autoApplyQrPresets(silent = false) {
     try {
       const presets = getQrActivePresets();
       const { indices: shouldApply, details } = getQrAutoApplyPresetIndices();
@@ -26250,7 +32558,7 @@ jQuery(async () => {
             msgParts.push(`🔄 「${name}」保持开启${describeMatchReason(idx)}`);
         }
       }
-      if (msgParts.length > 0) {
+      if (!silent && msgParts.length > 0) {
         toastr.info(msgParts.join("<br>"), "快速回复分组", {
           timeOut: 4000,
           escapeHtml: false,
@@ -26304,6 +32612,9 @@ jQuery(async () => {
     const scopeLabels = { global: "全局", bound: "已绑定" };
     const scopeColors = { global: "#a6e3a1", bound: "#cba6f7" };
 
+    const appliedPresetIndices = new Set(
+      extension_settings[extensionName]._qrAppliedPresetIndices || [],
+    );
     const presetsHtml =
       presets.length === 0
         ? '<div class="cfm-wi-preset-empty">暂无已保存的分组</div>'
@@ -26312,7 +32623,9 @@ jQuery(async () => {
               const scope = p.scope || "global";
               const hasBindings =
                 (p.bindChars && p.bindChars.length > 0) ||
-                (p.bindPresets && p.bindPresets.length > 0);
+                (p.bindPresets && p.bindPresets.length > 0) ||
+                (p.bindChats && p.bindChats.length > 0);
+              const isApplied = appliedPresetIndices.has(idx);
               return `
         <div class="cfm-wi-preset-item" data-preset-idx="${idx}">
           <div class="cfm-wi-preset-item-left">
@@ -26322,7 +32635,7 @@ jQuery(async () => {
             ${hasBindings ? '<span class="cfm-wi-preset-bind-toggle" title="查看绑定"><i class="fa-solid fa-caret-down"></i></span>' : ""}
           </div>
           <span class="cfm-wi-preset-item-actions">
-            <i class="fa-solid fa-play cfm-qr-preset-apply" title="应用到全局"></i>
+            <i class="fa-solid fa-play cfm-qr-preset-apply ${isApplied ? "cfm-wi-preset-apply-active" : ""}" title="${isApplied ? "当前已激活" : "应用到全局"}" style="${isApplied ? "color:#a6e3a1;text-shadow:0 0 8px rgba(166,227,161,.55);" : ""}"></i>
             <i class="fa-solid fa-stop cfm-qr-preset-unapply" title="取消应用"></i>
             <i class="fa-solid fa-link cfm-qr-preset-bind" title="绑定管理"></i>
             <i class="fa-solid fa-pen cfm-qr-preset-edit" title="编辑"></i>
@@ -26446,6 +32759,28 @@ jQuery(async () => {
           if (choice === "cancel") return;
           mode = choice;
         }
+        const autoAppliedState = getQrAutoApplyPresetIndices();
+        const autoDetail = autoAppliedState.details[idx] || {};
+        const currentActiveSet = getActiveQrSets();
+        const isActuallyApplied = preset.sets.every((s) =>
+          currentActiveSet.has(s),
+        );
+        if (
+          autoAppliedState.indices.includes(idx) &&
+          isActuallyApplied &&
+          (autoDetail.charMatch ||
+            autoDetail.presetMatch ||
+            autoDetail.chatMatch)
+        ) {
+          const reasons = [];
+          if (autoDetail.chatMatch) reasons.push("当前聊天");
+          if (autoDetail.charMatch) reasons.push("当前角色");
+          if (autoDetail.presetMatch) reasons.push("当前预设");
+          toastr.info(
+            `分组「${preset.name}」已因${reasons.join("和")}绑定自动生效`,
+          );
+          return;
+        }
         if (mode === "replace") {
           const keepSets = new Set(preset.sets);
           for (const oi of otherApplied) {
@@ -26498,7 +32833,7 @@ jQuery(async () => {
         const { indices: autoIndices, details: autoDetails } =
           getQrAutoApplyPresetIndices();
         if (autoIndices.includes(idx)) {
-          const detail = autoDetails[idx];
+          const detail = autoDetails[idx] || {};
           const reasons = [];
           if (detail.charMatch)
             reasons.push(
@@ -26506,12 +32841,8 @@ jQuery(async () => {
             );
           if (detail.presetMatch)
             reasons.push(`预设「${escapeHtml(getCurrentPresetName())}」`);
-          toastr.warning(
-            `分组「${preset.name}」因绑定了${reasons.join(" 和 ")}而自动应用，无法手动取消。请先取消对应的绑定关系。`,
-            "无法取消应用",
-            { timeOut: 5000 },
-          );
-          return;
+          const confirmMsg = `分组「${preset.name}」当前因${reasons.join(" 和 ")}自动应用，确认取消应用吗？`;
+          if (!confirm(confirmMsg)) return;
         }
         const otherApplied = applied.filter(
           (i) => i !== idx && currentPresets[i],
@@ -26554,7 +32885,11 @@ jQuery(async () => {
           <div class="cfm-wi-preset-bind-menu-title">应用方式</div>
           <div class="cfm-wi-preset-bind-menu-item" data-action="global"><i class="fa-solid fa-globe" style="color:#a6e3a1;"></i> 应用到全局</div>
           <div class="cfm-wi-preset-bind-menu-item ${!currentPresetName ? "cfm-disabled" : ""}" data-action="preset"><i class="fa-solid fa-sliders" style="color:#89b4fa;"></i> 绑定到当前预设${currentPresetName ? "「" + escapeHtml(currentPresetName) + "」" : "（无预设）"}</div>
-          <div class="cfm-wi-preset-bind-menu-item ${!currentChar ? "cfm-disabled" : ""}" data-action="char"><i class="fa-solid fa-user" style="color:#f9e2af;"></i> 绑定到当前角色${currentCharName ? "「" + escapeHtml(currentCharName) + "」" : "（无角色）"}</div>
+          <div class="cfm-wi-preset-bind-menu-item ${!currentChar ? "cfm-disabled" : ""}" data-action="char">
+            <span style="display:flex;align-items:center;min-width:0;flex:1;"><i class="fa-solid fa-user" style="color:#f9e2af;"></i><span style="margin-left:6px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">绑定到当前角色${currentCharName ? "「" + escapeHtml(currentCharName) + "」" : "（无角色）"}</span></span>
+            <i class="fa-solid fa-caret-down cfm-wi-bind-chat-toggle" style="margin-left:auto;opacity:.7;"></i>
+          </div>
+          <div class="cfm-wi-preset-bind-menu-item cfm-wi-preset-bind-subitem ${!getCurrentChatBindKey() ? "cfm-disabled" : ""}" data-action="chat" style="display:none;"><i class="fa-solid fa-comments" style="color:#cba6f7;"></i> 绑定到当前聊天${getCurrentChatFileName() ? "「" + escapeHtml(getCurrentChatFileName()) + "」" : "（无聊天）"}</div>
         </div>
       `);
       overlay.append(menu);
@@ -26565,10 +32900,23 @@ jQuery(async () => {
       if (menuTop + 160 > window.innerHeight) menuTop = btnRect.top - 160;
       menu.css({ top: menuTop + "px", left: menuLeft + "px" });
 
+      menu.find(".cfm-wi-bind-chat-toggle").on("click", function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const chatItem = menu.find('[data-action="chat"]');
+        if (!chatItem.length) return;
+        const willShow = !chatItem.is(":visible");
+        chatItem.stop(true, true).slideToggle(150);
+        $(this)
+          .toggleClass("fa-caret-down", !willShow)
+          .toggleClass("fa-caret-up", willShow);
+      });
+
       menu
         .find(".cfm-wi-preset-bind-menu-item")
         .on("click", async function (ev) {
           ev.stopPropagation();
+          if ($(ev.target).closest(".cfm-wi-bind-chat-toggle").length) return;
           if ($(this).hasClass("cfm-disabled")) return;
           const action = $(this).data("action");
           const allPresets = getQrActivePresets();
@@ -26580,20 +32928,81 @@ jQuery(async () => {
             toastr.success(`已将分组「${preset.name}」设为全局应用`);
           } else if (action === "preset") {
             if (!currentPresetName) return;
-            if (preset.scope === "global") setQrPresetScope(idx, "bound");
-            bindQrPresetToPreset(idx, currentPresetName);
-            await applyQrPreset(preset.sets);
-            toastr.success(
-              `已将分组「${preset.name}」绑定到预设「${currentPresetName}」`,
-            );
+            const alreadyBound =
+              Array.isArray(preset.bindPresets) &&
+              preset.bindPresets.includes(currentPresetName);
+            const autoApplied = getQrAutoApplyPresetIndices();
+            if (alreadyBound) {
+              if (
+                autoApplied.indices.includes(idx) &&
+                autoApplied.details[idx]?.presetMatch
+              ) {
+                toastr.info(
+                  `分组「${preset.name}」已绑定当前预设，且已处于应用状态`,
+                );
+              } else {
+                toastr.info(`当前预设已绑定分组「${preset.name}」`);
+              }
+            } else {
+              if (preset.scope === "global") setQrPresetScope(idx, "bound");
+              bindQrPresetToPreset(idx, currentPresetName);
+              await applyQrPreset(preset.sets);
+              toastr.success(
+                `已将分组「${preset.name}」绑定到预设「${currentPresetName}」`,
+              );
+            }
           } else if (action === "char") {
             if (!currentChar) return;
-            if (preset.scope === "global") setQrPresetScope(idx, "bound");
-            bindQrPresetToChar(idx, currentChar);
-            await applyQrPreset(preset.sets);
-            toastr.success(
-              `已将分组「${preset.name}」绑定到角色「${currentCharName}」`,
-            );
+            const alreadyBound =
+              Array.isArray(preset.bindChars) &&
+              preset.bindChars.includes(currentChar);
+            const autoApplied = getQrAutoApplyPresetIndices();
+            if (alreadyBound) {
+              if (
+                autoApplied.indices.includes(idx) &&
+                autoApplied.details[idx]?.charMatch
+              ) {
+                toastr.info(
+                  `分组「${preset.name}」已绑定当前角色，且已处于应用状态`,
+                );
+              } else {
+                toastr.info(`当前角色已绑定分组「${preset.name}」`);
+              }
+            } else {
+              if (preset.scope === "global") setQrPresetScope(idx, "bound");
+              bindQrPresetToChar(idx, currentChar);
+              await applyQrPreset(preset.sets);
+              toastr.success(
+                `已将分组「${preset.name}」绑定到角色「${currentCharName}」`,
+              );
+            }
+          } else if (action === "chat") {
+            const currentChatKey = getCurrentChatBindKey();
+            const currentChatName = getCurrentChatFileName();
+            if (!currentChar || !currentChatKey || !currentChatName) return;
+            const alreadyBound =
+              Array.isArray(preset.bindChats) &&
+              preset.bindChats.includes(currentChatKey);
+            const autoApplied = getQrAutoApplyPresetIndices();
+            if (alreadyBound) {
+              if (
+                autoApplied.indices.includes(idx) &&
+                autoApplied.details[idx]?.chatMatch
+              ) {
+                toastr.info(
+                  `分组「${preset.name}」已绑定当前聊天，且已处于应用状态`,
+                );
+              } else {
+                toastr.info(`当前聊天已绑定分组「${preset.name}」`);
+              }
+            } else {
+              if (preset.scope === "global") setQrPresetScope(idx, "bound");
+              bindQrPresetToChat(idx, currentChar, currentChatName);
+              await applyQrPreset(preset.sets);
+              toastr.success(
+                `已将分组「${preset.name}」绑定到聊天「${currentChatName}」`,
+              );
+            }
           }
           menu.remove();
           overlay.remove();
@@ -26627,14 +33036,30 @@ jQuery(async () => {
         for (const av of preset.bindChars) {
           const ch = chars.find((c) => c.avatar === av);
           const name = ch ? ch.name : av;
-          html += `<div class="cfm-wi-bind-entry" data-bind-type="char" data-bind-id="${escapeHtml(av)}"><span class="cfm-wi-bind-entry-name">${escapeHtml(name)}</span><i class="fa-solid fa-xmark cfm-wi-bind-remove" title="取消绑定"></i></div>`;
+          const isCurrentChar = !!currentChar && currentChar === av;
+          html += `<div class="cfm-wi-bind-entry ${isCurrentChar ? "cfm-wi-bind-entry-current" : ""}" data-bind-type="char" data-bind-id="${escapeHtml(av)}"><span class="cfm-wi-bind-entry-name">${escapeHtml(name)}</span><i class="fa-solid fa-xmark cfm-wi-bind-remove" title="取消绑定"></i></div>`;
+        }
+      }
+      if (preset.bindChats && preset.bindChats.length > 0) {
+        const chars = getCharacters();
+        html +=
+          '<div class="cfm-wi-bind-section-title"><i class="fa-solid fa-comments" style="color:#cba6f7;"></i> 绑定的聊天</div>';
+        for (const bindKey of preset.bindChats) {
+          const parsed = parseChatBindKey(bindKey);
+          const ch = chars.find((c) => c.avatar === parsed.avatar);
+          const charName = ch ? ch.name : parsed.avatar;
+          const name = `${charName}（${parsed.chatFileName || bindKey}）`;
+          const isCurrentChat = getCurrentChatBindKey() === bindKey;
+          html += `<div class="cfm-wi-bind-entry ${isCurrentChat ? "cfm-wi-bind-entry-current" : ""}" data-bind-type="chat" data-bind-id="${escapeHtml(bindKey)}"><span class="cfm-wi-bind-entry-name">${escapeHtml(name)}</span><i class="fa-solid fa-xmark cfm-wi-bind-remove" title="取消绑定"></i></div>`;
         }
       }
       if (preset.bindPresets && preset.bindPresets.length > 0) {
         html +=
           '<div class="cfm-wi-bind-section-title"><i class="fa-solid fa-sliders" style="color:#89b4fa;"></i> 绑定的预设</div>';
         for (const pn of preset.bindPresets) {
-          html += `<div class="cfm-wi-bind-entry" data-bind-type="preset" data-bind-id="${escapeHtml(pn)}"><span class="cfm-wi-bind-entry-name">${escapeHtml(pn)}</span><i class="fa-solid fa-xmark cfm-wi-bind-remove" title="取消绑定"></i></div>`;
+          const isCurrentPreset =
+            !!currentPresetName && currentPresetName === pn;
+          html += `<div class="cfm-wi-bind-entry ${isCurrentPreset ? "cfm-wi-bind-entry-current" : ""}" data-bind-type="preset" data-bind-id="${escapeHtml(pn)}"><span class="cfm-wi-bind-entry-name">${escapeHtml(pn)}</span><i class="fa-solid fa-xmark cfm-wi-bind-remove" title="取消绑定"></i></div>`;
         }
       }
       if (!html) html = '<div class="cfm-wi-bind-empty">无绑定</div>';
@@ -26650,11 +33075,12 @@ jQuery(async () => {
         const displayName = entry.find(".cfm-wi-bind-entry-name").text();
         if (
           !confirm(
-            `确定取消分组「${preset.name}」与${bindType === "char" ? "角色" : "预设"}「${displayName}」的绑定？`,
+            `确定取消分组「${preset.name}」与${bindType === "char" ? "角色" : bindType === "chat" ? "聊天" : "预设"}「${displayName}」的绑定？`,
           )
         )
           return;
         if (bindType === "char") unbindQrPresetFromChar(idx, bindId);
+        else if (bindType === "chat") unbindQrPresetFromChat(idx, bindId);
         else unbindQrPresetFromPreset(idx, bindId);
 
         const applied =
@@ -26662,24 +33088,7 @@ jQuery(async () => {
         if (applied.includes(idx)) {
           const { indices: stillAutoIndices } = getQrAutoApplyPresetIndices();
           if (!stillAutoIndices.includes(idx)) {
-            const allPresets = getQrActivePresets();
-            const otherApplied = applied.filter(
-              (i) => i !== idx && allPresets[i],
-            );
-            const otherSets = new Set();
-            for (const oi of otherApplied) {
-              for (const s of allPresets[oi].sets) otherSets.add(s);
-            }
-            let removedCount = 0;
-            for (const s of preset.sets) {
-              if (!otherSets.has(s)) {
-                await toggleQrSetActivation(s, false);
-                removedCount++;
-              }
-            }
-            extension_settings[extensionName]._qrAppliedPresetIndices =
-              otherApplied;
-            getContext().saveSettingsDebounced();
+            const removedCount = await unapplyQrPresetIndex(idx);
             toastr.info(
               `已取消绑定，分组「${preset.name}」不再匹配当前条件，已自动取消应用（移除 ${removedCount} 个快速回复集）`,
             );
@@ -26693,7 +33102,8 @@ jQuery(async () => {
         const stillHasBindings =
           updated &&
           ((updated.bindChars && updated.bindChars.length > 0) ||
-            (updated.bindPresets && updated.bindPresets.length > 0));
+            (updated.bindPresets && updated.bindPresets.length > 0) ||
+            (updated.bindChats && updated.bindChats.length > 0));
         if (!stillHasBindings) {
           if (updated) setQrPresetScope(idx, "global");
           overlay.remove();
@@ -26798,7 +33208,9 @@ jQuery(async () => {
           <div class="cfm-edit-field">
             <label>包含的快速回复集</label>
             <div class="cfm-wi-preset-edit-search">
-              <select class="cfm-edit-input" id="cfm-qr-preset-edit-folder-filter">${buildQrFilterOptions()}</select>
+              <div class="cfm-nf-btn menu_button fa-solid fa-folder-tree" id="cfm-qr-preset-edit-folder-btn" title="文件夹过滤"></div>
+              <span class="cfm-wi-preset-edit-folder-label" id="cfm-qr-preset-edit-folder-label">显示全部</span>
+              <input type="hidden" id="cfm-qr-preset-edit-folder-filter" value="__all__">
               <input type="text" class="cfm-edit-input" id="cfm-qr-preset-edit-filter" placeholder="搜索...">
             </div>
             <div class="cfm-wi-preset-edit-list">${setsHtml}</div>
@@ -26812,8 +33224,18 @@ jQuery(async () => {
     `);
     $("body").append(overlay);
 
+    function getQrFolderFilterLabel(folderVal) {
+      if (!folderVal || folderVal === "__all__") return "显示全部";
+      if (folderVal === "__ungrouped__") return "未归类快速回复集";
+      return getResFolderDisplayName("quickreply", folderVal) || folderVal;
+    }
+
     function applyEditFilters() {
-      const folderVal = overlay.find("#cfm-qr-preset-edit-folder-filter").val();
+      const folderVal =
+        overlay.find("#cfm-qr-preset-edit-folder-filter").val() || "__all__";
+      overlay
+        .find("#cfm-qr-preset-edit-folder-label")
+        .text(getQrFolderFilterLabel(folderVal));
       const q = overlay
         .find("#cfm-qr-preset-edit-filter")
         .val()
@@ -26848,10 +33270,43 @@ jQuery(async () => {
         $(this).toggle(folderMatch && textMatch);
       });
     }
-    overlay
-      .find("#cfm-qr-preset-edit-folder-filter")
-      .on("change", applyEditFilters);
+    overlay.find("#cfm-qr-preset-edit-folder-btn").on("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      showPresetEditFolderFilterPanel($(this), {
+        panelKey: "qr_preset_edit",
+        folderTree: qrTree,
+        getDisplayName: (id) => getResFolderDisplayName("quickreply", id),
+        getItemCount: (folderId) => {
+          if (folderId === "__ungrouped__") {
+            return allNames.filter((name) => {
+              const grp = qrGroups[name];
+              return !grp || !qrTree[grp];
+            }).length;
+          }
+          const allowedFolders = new Set();
+          function collectChildren(pid) {
+            allowedFolders.add(pid);
+            const children = Object.keys(qrTree).filter(
+              (id) => qrTree[id].parentId === pid,
+            );
+            for (const c of children) collectChildren(c);
+          }
+          collectChildren(folderId);
+          return allNames.filter((name) => allowedFolders.has(qrGroups[name]))
+            .length;
+        },
+        ungroupedLabel: "未归类快速回复集",
+        currentFilter:
+          overlay.find("#cfm-qr-preset-edit-folder-filter").val() || "__all__",
+        onSelect: (folderId) => {
+          overlay.find("#cfm-qr-preset-edit-folder-filter").val(folderId);
+          applyEditFilters();
+        },
+      });
+    });
     overlay.find("#cfm-qr-preset-edit-filter").on("input", applyEditFilters);
+    applyEditFilters();
     overlay.find(".cfm-edit-popup-cancel").on("click", () => overlay.remove());
     overlay.on("click", (e) => {
       if ($(e.target).is(overlay)) overlay.remove();
@@ -26887,6 +33342,184 @@ jQuery(async () => {
   }
 
   // ==================== User视图渲染（双栏 + 树形嵌套） ====================
+  function getPersonaCustomOrderStore() {
+    ensureSettings();
+    const settings = extension_settings[extensionName];
+    if (!Array.isArray(settings.personaCustomOrder)) {
+      settings.personaCustomOrder = [];
+    }
+    return settings.personaCustomOrder;
+  }
+
+  function syncPersonaCustomOrder(avatarIds = []) {
+    const normalizedIds = [
+      ...new Set(
+        (Array.isArray(avatarIds) ? avatarIds : [])
+          .map((id) => String(id || "").trim())
+          .filter(Boolean),
+      ),
+    ];
+    const currentOrder = getPersonaCustomOrderStore();
+    const normalizedOrder = [
+      ...new Set(
+        currentOrder.map((id) => String(id || "").trim()).filter(Boolean),
+      ),
+    ];
+    const nextOrder = normalizedOrder.filter((id) =>
+      normalizedIds.includes(id),
+    );
+    for (const id of normalizedIds) {
+      if (!nextOrder.includes(id)) nextOrder.push(id);
+    }
+    const changed =
+      nextOrder.length !== currentOrder.length ||
+      nextOrder.some(
+        (id, idx) => id !== String(currentOrder[idx] || "").trim(),
+      );
+    if (changed) {
+      extension_settings[extensionName].personaCustomOrder = nextOrder;
+      getContext().saveSettingsDebounced();
+    }
+    return nextOrder;
+  }
+
+  function insertPersonaAfterInCustomOrder(sourceAvatarId, newAvatarId) {
+    const sourceId = String(sourceAvatarId || "").trim();
+    const targetId = String(newAvatarId || "").trim();
+    if (!targetId) return;
+    const order = [...getPersonaCustomOrderStore()]
+      .map((id) => String(id || "").trim())
+      .filter(Boolean);
+    const filtered = order.filter((id) => id !== targetId);
+    const sourceIndex = filtered.indexOf(sourceId);
+    if (sourceIndex === -1) filtered.push(targetId);
+    else filtered.splice(sourceIndex + 1, 0, targetId);
+    extension_settings[extensionName].personaCustomOrder = filtered;
+    getContext().saveSettingsDebounced();
+  }
+
+  function removePersonaFromCustomOrder(avatarId) {
+    const targetId = String(avatarId || "").trim();
+    if (!targetId) return;
+    const order = getPersonaCustomOrderStore();
+    const nextOrder = order.filter(
+      (id) => String(id || "").trim() !== targetId,
+    );
+    if (nextOrder.length === order.length) return;
+    extension_settings[extensionName].personaCustomOrder = nextOrder;
+    getContext().saveSettingsDebounced();
+  }
+
+  function buildDuplicatedPersonaName(baseName) {
+    const pu = getContext().powerUserSettings || {};
+    const existingNames = new Set(
+      Object.values(pu.personas || {})
+        .map((name) => String(name || "").trim())
+        .filter(Boolean),
+    );
+    const seed = String(baseName || "User").trim() || "User";
+    let candidate = `${seed} 副本`;
+    let idx = 2;
+    while (existingNames.has(candidate)) {
+      candidate = `${seed} 副本 ${idx}`;
+      idx += 1;
+    }
+    return candidate;
+  }
+
+  async function getPersonaDuplicateAvatarPayload(avatarId) {
+    const thumbUrl = getThumbnailUrl("persona", avatarId);
+    const candidateUrls = [thumbUrl, "img/user-default.png"].filter(Boolean);
+    for (const url of candidateUrls) {
+      try {
+        const resp = await fetch(url);
+        if (!resp.ok) continue;
+        const blob = await resp.blob();
+        const type = blob.type || "image/png";
+        let ext = "png";
+        if (type.includes("jpeg") || type.includes("jpg")) ext = "jpg";
+        else if (type.includes("webp")) ext = "webp";
+        return { blob, type, ext };
+      } catch (e) {
+        console.warn(`[CFM] 获取User头像资源失败: ${url}`, e);
+      }
+    }
+    return null;
+  }
+
+  async function duplicatePersona(sourcePersona) {
+    if (!sourcePersona || !sourcePersona.avatarId) return;
+    const ctx = getContext();
+    const pu = ctx.powerUserSettings;
+    if (!pu) {
+      toastr.error("无法获取User设定数据");
+      return;
+    }
+    if (!pu.personas) pu.personas = {};
+    if (!pu.persona_descriptions) pu.persona_descriptions = {};
+
+    const avatarPayload = await getPersonaDuplicateAvatarPayload(
+      sourcePersona.avatarId,
+    );
+    if (!avatarPayload) {
+      toastr.error("复制User失败：无法获取头像资源");
+      return;
+    }
+
+    const makeIdBase = () =>
+      typeof ctx.uuidv4 === "function"
+        ? ctx.uuidv4()
+        : `persona-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    let newAvatarId = `${makeIdBase()}.${avatarPayload.ext}`;
+    while (pu.personas[newAvatarId]) {
+      newAvatarId = `${makeIdBase()}.${avatarPayload.ext}`;
+    }
+
+    const uploadFile = new File(
+      [avatarPayload.blob],
+      `avatar.${avatarPayload.ext}`,
+      {
+        type: avatarPayload.type,
+      },
+    );
+    const formData = new FormData();
+    formData.append("avatar", uploadFile);
+    formData.append("overwrite_name", newAvatarId);
+
+    const uploadResp = await fetch("/api/avatars/upload", {
+      method: "POST",
+      headers: ctx.getRequestHeaders({ omitContentType: true }),
+      body: formData,
+    });
+    if (!uploadResp.ok) {
+      toastr.error("复制User失败：头像创建失败");
+      return;
+    }
+
+    pu.personas[newAvatarId] = buildDuplicatedPersonaName(sourcePersona.name);
+    pu.persona_descriptions[newAvatarId] = {
+      description: String(sourcePersona.description || ""),
+      title: "",
+      connections: [],
+    };
+
+    const groups = getResourceGroups("personas");
+    if (groups && groups[sourcePersona.avatarId]) {
+      groups[newAvatarId] = groups[sourcePersona.avatarId];
+    }
+
+    insertPersonaAfterInCustomOrder(sourcePersona.avatarId, newAvatarId);
+    getContext().saveSettingsDebounced();
+    refreshPersonaPanelView();
+    // 高亮闪烁新复制的 User
+    flashDraggedElement(
+      `.cfm-row[data-avatar-id="${$.escapeSelector(newAvatarId)}"]`,
+      300,
+    );
+    toastr.success(`已复制User「${sourcePersona.name || "[未命名User]"}」`);
+  }
+
   // 获取当前 persona 列表
   async function getCurrentPersonas() {
     try {
@@ -26899,7 +33532,8 @@ jQuery(async () => {
       if (!Array.isArray(avatarIds)) return [];
       const pu = getContext().powerUserSettings;
       if (!pu) return [];
-      return avatarIds.map((id) => ({
+      const orderedAvatarIds = syncPersonaCustomOrder(avatarIds);
+      return orderedAvatarIds.map((id) => ({
         avatarId: id,
         name: (pu.personas && pu.personas[id]) || "[未命名User]",
         description:
@@ -27006,21 +33640,14 @@ jQuery(async () => {
     const desc = ensurePersonaDescriptionEntry(persona.avatarId) || {};
     const connections = Array.isArray(desc.connections) ? desc.connections : [];
     const chatMeta =
-      ctx.chatMetadata ||
-      window.chat_metadata ||
-      window.chatMetadata ||
-      {};
-    const chars = ctx.characters || [];
-    const currentChar =
-      typeof ctx.characterId === "number" && ctx.characterId >= 0
-        ? chars[ctx.characterId]?.avatar || null
-        : null;
+      ctx.chatMetadata || window.chat_metadata || window.chatMetadata || {};
+    const currentChar = getCurrentCharAvatar();
     const currentGroupId =
-      ctx.groupId || ctx.selectedGroup || window.selected_group || null;
+      ctx.groupId ?? ctx.selectedGroup ?? window.selected_group ?? null;
 
     return {
       default: pu.default_persona === persona.avatarId,
-      chat: chatMeta?.persona === persona.avatarId,
+      chat: String(chatMeta?.persona || "") === String(persona.avatarId || ""),
       character: connections.some(
         (c) =>
           c &&
@@ -27038,8 +33665,176 @@ jQuery(async () => {
     else renderPersonasView();
   }
 
-  async function showPersonaDetailFieldPopup(persona, field) {
+  function getPointerClientPoint(evt) {
+    const originalEvent = evt?.originalEvent || evt;
+    const touch =
+      originalEvent?.changedTouches?.[0] || originalEvent?.touches?.[0] || null;
+    if (touch) {
+      return { x: touch.clientX, y: touch.clientY };
+    }
+    if (
+      typeof originalEvent?.clientX === "number" &&
+      typeof originalEvent?.clientY === "number"
+    ) {
+      return { x: originalEvent.clientX, y: originalEvent.clientY };
+    }
+    return null;
+  }
+
+  function getTextOffsetFromPoint(container, evt) {
+    if (!container || !container.ownerDocument) return null;
+    const point = getPointerClientPoint(evt);
+    if (!point) return null;
+
+    const doc = container.ownerDocument;
+    let caretRange = null;
+
+    if (typeof doc.caretPositionFromPoint === "function") {
+      const pos = doc.caretPositionFromPoint(point.x, point.y);
+      if (pos?.offsetNode) {
+        caretRange = doc.createRange();
+        caretRange.setStart(pos.offsetNode, pos.offset);
+        caretRange.setEnd(pos.offsetNode, pos.offset);
+      }
+    } else if (typeof doc.caretRangeFromPoint === "function") {
+      caretRange = doc.caretRangeFromPoint(point.x, point.y);
+    }
+
+    if (!caretRange) return null;
+
+    const prefixRange = doc.createRange();
+    prefixRange.selectNodeContents(container);
+    try {
+      prefixRange.setEnd(caretRange.startContainer, caretRange.startOffset);
+    } catch (_) {
+      return null;
+    }
+    return prefixRange.toString().length;
+  }
+
+  function getTextareaCaretMetrics(textarea, caretIndex) {
+    if (!textarea || typeof caretIndex !== "number") return null;
+    const doc = textarea.ownerDocument;
+    if (!doc?.body) return null;
+
+    const value = String(textarea.value || "");
+    const safeCaret = Math.max(
+      0,
+      Math.min(Math.trunc(caretIndex), value.length),
+    );
+    const style = (doc.defaultView || window).getComputedStyle(textarea);
+    const mirror = doc.createElement("div");
+    const marker = doc.createElement("span");
+    const props = [
+      "box-sizing",
+      "width",
+      "font-family",
+      "font-size",
+      "font-weight",
+      "font-style",
+      "letter-spacing",
+      "text-transform",
+      "word-spacing",
+      "text-indent",
+      "padding-top",
+      "padding-right",
+      "padding-bottom",
+      "padding-left",
+      "border-top-width",
+      "border-right-width",
+      "border-bottom-width",
+      "border-left-width",
+      "line-height",
+      "text-align",
+      "tab-size",
+    ];
+
+    mirror.style.position = "absolute";
+    mirror.style.visibility = "hidden";
+    mirror.style.pointerEvents = "none";
+    mirror.style.left = "-9999px";
+    mirror.style.top = "0";
+    mirror.style.whiteSpace = "pre-wrap";
+    mirror.style.wordWrap = "break-word";
+    mirror.style.overflowWrap = "break-word";
+    mirror.style.overflow = "hidden";
+    props.forEach((prop) => {
+      mirror.style.setProperty(prop, style.getPropertyValue(prop));
+    });
+
+    mirror.textContent = value.slice(0, safeCaret);
+    marker.textContent = value.slice(safeCaret, safeCaret + 1) || "\u200b";
+    mirror.appendChild(marker);
+    doc.body.appendChild(mirror);
+
+    const metrics = {
+      top: marker.offsetTop,
+      left: marker.offsetLeft,
+      lineHeight:
+        parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.4 || 20,
+    };
+    mirror.remove();
+    return metrics;
+  }
+
+  function revealTextareaCaret(textarea, caretIndex) {
+    const metrics = getTextareaCaretMetrics(textarea, caretIndex);
+    if (!metrics) return null;
+
+    textarea.scrollTop = Math.max(
+      0,
+      metrics.top - textarea.clientHeight / 2 + metrics.lineHeight / 2,
+    );
+    textarea.scrollLeft = Math.max(0, metrics.left - textarea.clientWidth / 3);
+    return metrics;
+  }
+
+  function flashTextareaCaretSelection(textarea, caretIndex) {
+    if (!textarea || typeof textarea.setSelectionRange !== "function") return;
+    const value = String(textarea.value || "");
+    const safeCaret = Math.max(
+      0,
+      Math.min(Math.trunc(caretIndex), value.length),
+    );
+
+    if (!value.length) {
+      textarea.setSelectionRange(0, 0);
+      return;
+    }
+
+    const lineStart = Math.max(
+      value.lastIndexOf("\n", Math.max(0, safeCaret - 1)) + 1,
+      0,
+    );
+    const nextLineBreak = value.indexOf("\n", safeCaret);
+    const lineEnd = nextLineBreak === -1 ? value.length : nextLineBreak;
+    const highlightStart = Math.min(lineStart, value.length);
+    const highlightEnd = Math.max(
+      highlightStart,
+      Math.min(
+        value.length,
+        lineEnd > highlightStart ? lineEnd : highlightStart + 1,
+      ),
+    );
+
+    textarea.focus();
+    textarea.setSelectionRange(highlightStart, highlightEnd);
+
+    setTimeout(() => {
+      if (!textarea.isConnected) return;
+      textarea.focus();
+      textarea.setSelectionRange(safeCaret, safeCaret);
+    }, 1000);
+  }
+
+  async function showPersonaDetailFieldPopup(persona, field, options = {}) {
     const map = {
+      name: {
+        title: "编辑User名称",
+        label: "名称",
+        placeholder: "输入User名称",
+        rows: 1,
+      },
       title: {
         title: "编辑User标题",
         label: "标题",
@@ -27057,7 +33852,9 @@ jQuery(async () => {
     if (!meta || !persona) return null;
 
     const entry = ensurePersonaDescriptionEntry(persona.avatarId);
-    const currentValue = String(entry?.[field] || "");
+    const currentValue = String(
+      field === "name" ? persona?.name || "" : entry?.[field] || "",
+    );
     const inputHtml =
       meta.rows > 1
         ? `<textarea class="cfm-edit-input" id="cfm-persona-detail-input" rows="${meta.rows}" placeholder="${escapeHtml(meta.placeholder)}">${escapeHtml(currentValue)}</textarea>`
@@ -27082,6 +33879,217 @@ jQuery(async () => {
     `);
     $("body").append(overlay);
     const input = overlay.find("#cfm-persona-detail-input");
+    const caretIndex = Number.isFinite(options?.caretIndex)
+      ? Math.max(0, Math.trunc(options.caretIndex))
+      : null;
+    const node = input[0];
+    input.trigger("focus");
+    if (node && typeof node.selectionStart === "number") {
+      const nextCaret = Math.min(
+        caretIndex === null ? node.value.length : caretIndex,
+        node.value.length,
+      );
+      node.selectionStart = node.selectionEnd = nextCaret;
+      if (input.is("textarea") && caretIndex !== null) {
+        setTimeout(() => {
+          if (!node.isConnected) return;
+          revealTextareaCaret(node, nextCaret);
+          flashTextareaCaretSelection(node, nextCaret);
+        }, 0);
+      }
+    }
+
+    return new Promise((resolve) => {
+      let overlayPressStarted = false;
+      const close = (result) => {
+        overlay.remove();
+        resolve(result);
+      };
+      overlay.find(".cfm-edit-popup-cancel").on("click", () => close(null));
+      overlay.on("mousedown touchstart", (e) => {
+        overlayPressStarted = $(e.target).hasClass("cfm-edit-popup-overlay");
+      });
+      overlay.on("click", (e) => {
+        const clickedOverlay = $(e.target).hasClass("cfm-edit-popup-overlay");
+        if (clickedOverlay && overlayPressStarted) close(null);
+        overlayPressStarted = false;
+      });
+      overlay.find(".cfm-edit-popup-clear").on("click", () => {
+        if (!window.confirm(`确认清空${meta.label}吗？`)) return;
+        close("");
+      });
+      overlay.find(".cfm-edit-popup-confirm").on("click", () => {
+        close(String(input.val() || "").trim());
+      });
+      input.on("keydown", (e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          close(null);
+        }
+        if (e.key === "Enter" && !input.is("textarea")) {
+          e.preventDefault();
+          overlay.find(".cfm-edit-popup-confirm").trigger("click");
+        }
+      });
+    });
+  }
+
+  async function editPersonaDetailField(persona, field, options = {}) {
+    const value = await showPersonaDetailFieldPopup(persona, field, options);
+    if (value === null) return;
+
+    const ctx = getContext();
+    const pu = ctx.powerUserSettings;
+    if (!pu) {
+      toastr.error("无法获取User设定数据");
+      return;
+    }
+
+    if (field === "name") {
+      if (!pu.personas) pu.personas = {};
+      pu.personas[persona.avatarId] = value || "[未命名User]";
+      getContext().saveSettingsDebounced();
+      toastr.success("已更新User名称");
+      refreshPersonaPanelView();
+      return;
+    }
+
+    const entry = ensurePersonaDescriptionEntry(persona.avatarId);
+    if (!entry) {
+      toastr.error("无法获取User设定数据");
+      return;
+    }
+    entry[field] = value;
+    getContext().saveSettingsDebounced();
+    toastr.success(field === "title" ? "已更新User标题" : "已更新User具体设定");
+    refreshPersonaPanelView();
+  }
+
+  async function showCharacterDetailFieldPopup(char, field) {
+    const map = {
+      description: {
+        title: "编辑角色描述",
+        label: "描述",
+        placeholder: "输入角色描述，留空则清空",
+        rows: 8,
+      },
+      personality: {
+        title: "编辑角色性格",
+        label: "性格",
+        placeholder: "输入角色性格，留空则清空",
+        rows: 8,
+      },
+      scenario: {
+        title: "编辑角色场景",
+        label: "场景",
+        placeholder: "输入角色场景，留空则清空",
+        rows: 8,
+      },
+      first_mes: {
+        title: "编辑第一条消息",
+        label: "第一条消息",
+        placeholder: "输入第一条消息，留空则清空",
+        rows: 8,
+      },
+      alt_greetings: {
+        title: "编辑其它开场",
+        label: "其它开场",
+        placeholder: "输入开场白内容，留空则清空",
+        rows: 8,
+      },
+      mes_example: {
+        title: "编辑示例对话",
+        label: "示例对话",
+        placeholder: "输入示例对话，留空则清空",
+        rows: 10,
+      },
+      creator_notes: {
+        title: "编辑作者备注",
+        label: "作者备注",
+        placeholder: "输入作者备注，留空则清空",
+        rows: 8,
+      },
+      system_prompt: {
+        title: "编辑系统提示词",
+        label: "系统提示词",
+        placeholder: "输入系统提示词，留空则清空",
+        rows: 8,
+      },
+      post_history_instructions: {
+        title: "编辑历史后指令",
+        label: "历史后指令",
+        placeholder: "输入历史后指令，留空则清空",
+        rows: 8,
+      },
+    };
+    const meta = map[field];
+    if (!meta || !char) return null;
+
+    const normalizeGreetingItems = (input) => {
+      const results = [];
+      const pushValue = (value) => {
+        if (typeof value === "string") {
+          const text = value.trim();
+          if (text) results.push(text);
+          return;
+        }
+        if (Array.isArray(value)) {
+          value.forEach(pushValue);
+          return;
+        }
+        if (value && typeof value === "object") {
+          [
+            value.mes,
+            value.message,
+            value.text,
+            value.content,
+            value.value,
+          ].forEach(pushValue);
+        }
+      };
+      pushValue(input);
+      return results;
+    };
+
+    const currentAlternateGreetings = normalizeGreetingItems(
+      char?.data?.alternate_greetings,
+    );
+    let currentValue;
+    if (field === "first_mes") {
+      currentValue = String(char?.data?.first_mes || "");
+    } else if (field === "alt_greetings") {
+      const altIndex = Math.max(char?.__cfmEditingGreetingIndex || 0, 0);
+      currentValue = String(currentAlternateGreetings[altIndex] || "");
+    } else {
+      currentValue = String(char?.data?.[field] || "");
+    }
+    const canAppendGreeting = field === "alt_greetings";
+    const deleteButtonText = field === "alt_greetings" ? "删除" : "清空";
+    const inputHtml =
+      meta.rows > 1
+        ? `<textarea class="cfm-edit-input" id="cfm-char-detail-input" rows="${meta.rows}" placeholder="${escapeHtml(meta.placeholder)}">${escapeHtml(currentValue)}</textarea>`
+        : `<input type="text" class="cfm-edit-input" id="cfm-char-detail-input" value="${escapeHtml(currentValue)}" placeholder="${escapeHtml(meta.placeholder)}">`;
+
+    const overlay = $(`
+      <div class="cfm-edit-popup-overlay">
+        <div class="cfm-edit-popup">
+          <div class="cfm-edit-popup-title">${meta.title}</div>
+          <div class="cfm-edit-popup-names"><div class="cfm-edit-name-item">${escapeHtml(char.name || char.avatar || "未知角色")}</div></div>
+          <div class="cfm-edit-popup-field">
+            <label>${meta.label}</label>
+            ${inputHtml}
+          </div>
+          <div class="cfm-edit-popup-actions">
+            <button class="cfm-btn cfm-edit-popup-cancel">取消</button>
+            ${currentValue ? `<button class="cfm-btn cfm-edit-popup-clear">${deleteButtonText}</button>` : ""}
+            ${canAppendGreeting ? '<button class="cfm-btn cfm-char-detail-append">新增</button>' : ""}
+            <button class="cfm-btn cfm-edit-popup-confirm">确认</button>
+          </div>
+        </div>
+      </div>
+    `);
+    $("body").append(overlay);
+    const input = overlay.find("#cfm-char-detail-input");
     input.trigger("focus");
     if (input.is("textarea")) {
       const node = input[0];
@@ -27099,9 +34107,22 @@ jQuery(async () => {
       overlay.on("click", (e) => {
         if ($(e.target).hasClass("cfm-edit-popup-overlay")) close(null);
       });
-      overlay.find(".cfm-edit-popup-clear").on("click", () => close(""));
+      overlay.find(".cfm-edit-popup-clear").on("click", () => {
+        const confirmMessage =
+          field === "alt_greetings"
+            ? "确认删除这条开场白吗？"
+            : `确认清空${meta.label}吗？`;
+        if (!window.confirm(confirmMessage)) return;
+        close({
+          action: field === "alt_greetings" ? "delete" : "clear",
+          value: "",
+        });
+      });
       overlay.find(".cfm-edit-popup-confirm").on("click", () => {
-        close(String(input.val() || "").trim());
+        close({ action: "replace", value: String(input.val() || "").trim() });
+      });
+      overlay.find(".cfm-char-detail-append").on("click", () => {
+        close({ action: "append", value: String(input.val() || "").trim() });
       });
       input.on("keydown", (e) => {
         if (e.key === "Escape") {
@@ -27116,20 +34137,227 @@ jQuery(async () => {
     });
   }
 
-  async function editPersonaDetailField(persona, field) {
-    const value = await showPersonaDetailFieldPopup(persona, field);
-    if (value === null) return;
-    const entry = ensurePersonaDescriptionEntry(persona.avatarId);
-    if (!entry) {
-      toastr.error("无法获取User设定数据");
-      return;
+  async function editCharacterDetailField(charRow, char, field) {
+    const result = await showCharacterDetailFieldPopup(char, field);
+    if (result === null || !char?.avatar) return;
+    if (!char.data) char.data = {};
+
+    const normalizeGreetingItems = (input) => {
+      const results = [];
+      const pushValue = (value) => {
+        if (typeof value === "string") {
+          const text = value.trim();
+          if (text) results.push(text);
+          return;
+        }
+        if (Array.isArray(value)) {
+          value.forEach(pushValue);
+          return;
+        }
+        if (value && typeof value === "object") {
+          [
+            value.mes,
+            value.message,
+            value.text,
+            value.content,
+            value.value,
+          ].forEach(pushValue);
+        }
+      };
+      pushValue(input);
+      return results;
+    };
+
+    const action =
+      typeof result === "object" && result !== null ? result.action : "replace";
+    const value =
+      typeof result === "object" && result !== null ? result.value : result;
+    const updateData = {};
+
+    if (field === "first_mes") {
+      // 第一条消息：只能清空或替换
+      if (action === "clear") {
+        char.data.first_mes = "";
+        updateData.first_mes = "";
+      } else {
+        char.data.first_mes = value;
+        updateData.first_mes = value;
+      }
+    } else if (field === "alt_greetings") {
+      // 其它开场：新增、删除、替换
+      const existingGreetings = normalizeGreetingItems(
+        char.data.alternate_greetings,
+      );
+      const currentAltIndex = Math.max(
+        charRow.data("cfmAltGreetingIndex") || 0,
+        0,
+      );
+
+      if (action === "append") {
+        const appendValue = String(value || "").trim();
+        if (!appendValue) {
+          toastr.warning("新增开场白不能为空");
+          return;
+        }
+        const nextGreetings = [...existingGreetings, appendValue];
+        char.data.alternate_greetings = nextGreetings;
+        updateData.alternate_greetings = nextGreetings;
+      } else if (action === "delete") {
+        const nextGreetings = existingGreetings.filter(
+          (_, index) => index !== currentAltIndex,
+        );
+        char.data.alternate_greetings = nextGreetings;
+        updateData.alternate_greetings = nextGreetings;
+        charRow.data(
+          "cfmAltGreetingIndex",
+          Math.min(currentAltIndex, Math.max(nextGreetings.length - 1, 0)),
+        );
+      } else {
+        // replace
+        const nextGreetings = [...existingGreetings];
+        nextGreetings[currentAltIndex] = value;
+        char.data.alternate_greetings = nextGreetings;
+        updateData.alternate_greetings = nextGreetings;
+      }
+    } else {
+      char.data[field] = value;
+      updateData[field] = value;
     }
-    entry[field] = value;
-    getContext().saveSettingsDebounced();
-    toastr.success(
-      field === "title" ? "已更新User标题" : "已更新User具体设定",
-    );
-    refreshPersonaPanelView();
+
+    try {
+      const headers = getContext().getRequestHeaders();
+      // V2角色卡的字段同时存在于顶层和data层，需要两层都更新
+      const topLevelSync = {};
+      if ("first_mes" in updateData)
+        topLevelSync.first_mes = updateData.first_mes;
+      if ("alternate_greetings" in updateData)
+        topLevelSync.alternate_greetings = updateData.alternate_greetings;
+      if ("description" in updateData)
+        topLevelSync.description = updateData.description;
+      if ("personality" in updateData)
+        topLevelSync.personality = updateData.personality;
+      if ("scenario" in updateData) topLevelSync.scenario = updateData.scenario;
+      if ("mes_example" in updateData)
+        topLevelSync.mes_example = updateData.mes_example;
+      if ("creator_notes" in updateData)
+        topLevelSync.creator_notes = updateData.creator_notes;
+      if ("system_prompt" in updateData)
+        topLevelSync.system_prompt = updateData.system_prompt;
+      if ("post_history_instructions" in updateData)
+        topLevelSync.post_history_instructions =
+          updateData.post_history_instructions;
+      await fetch("/api/characters/merge-attributes", {
+        method: "POST",
+        headers: headers,
+        body: JSON.stringify({
+          avatar: char.avatar,
+          ...topLevelSync,
+          data: updateData,
+        }),
+      });
+      // 同步更新酒馆内存中角色对象的顶层字段
+      for (const [k, v] of Object.entries(topLevelSync)) {
+        char[k] = v;
+      }
+      // 刷新酒馆原生前端的角色数据缓存
+      try {
+        await getContext().getCharacters();
+      } catch (_) {
+        /* 非关键 */
+      }
+
+      // ── 同步聊天记录中的第一条消息（模拟酒馆原生行为） ──
+      if (field === "first_mes" || field === "alt_greetings") {
+        try {
+          const ctx = getContext();
+          const chatArr = ctx.chat;
+          // 条件与酒馆原生 createOrEditCharacter 一致：
+          // 非群组、聊天未被 tainted、聊天仅有0或1条角色消息
+          const shouldSync =
+            !ctx.groupId &&
+            ctx.characterId !== undefined &&
+            ctx.characterId !== null &&
+            !ctx.chatMetadata?.tainted &&
+            chatArr &&
+            (chatArr.length === 0 ||
+              (chatArr.length === 1 &&
+                !chatArr[0].is_user &&
+                !chatArr[0].is_system));
+          if (shouldSync) {
+            // 重建第一条消息
+            const newFirstMes = char.data?.first_mes || char.first_mes || "";
+            const altGreetings = char.data?.alternate_greetings || [];
+            const charName = char.name || "";
+            const newMessage = {
+              name: charName,
+              is_user: false,
+              is_system: false,
+              send_date:
+                chatArr.length > 0 && chatArr[0].send_date
+                  ? chatArr[0].send_date
+                  : new Date().toISOString(),
+              mes: newFirstMes,
+              extra:
+                chatArr.length > 0 && chatArr[0].extra ? chatArr[0].extra : {},
+            };
+            // 如果有多开场白，构建 swipes
+            if (Array.isArray(altGreetings) && altGreetings.length > 0) {
+              const swipes = [newFirstMes, ...altGreetings].filter(
+                (s) => typeof s === "string",
+              );
+              if (!newFirstMes && swipes.length > 0) {
+                swipes.shift();
+                newMessage.mes = swipes[0] || "";
+              }
+              newMessage.swipe_id = 0;
+              newMessage.swipes = swipes;
+              newMessage.swipe_info = swipes.map(() => ({
+                send_date: newMessage.send_date,
+                gen_started: undefined,
+                gen_finished: undefined,
+                extra: {},
+              }));
+            }
+            // 替换聊天数组
+            chatArr.splice(0, chatArr.length, newMessage);
+            // 刷新聊天 DOM
+            try {
+              await ctx.clearChat();
+              await ctx.printMessages();
+            } catch (_) {
+              /* 非关键 */
+            }
+            // 保存聊天文件
+            try {
+              await ctx.saveChat();
+            } catch (_) {
+              /* 非关键 */
+            }
+          }
+        } catch (syncErr) {
+          console.warn("[CFM] 同步聊天记录首条消息时出错:", syncErr);
+        }
+      }
+
+      if (field === "alt_greetings" && action === "append") {
+        charRow.data(
+          "cfmAltGreetingIndex",
+          Math.max((char.data.alternate_greetings || []).length - 1, 0),
+        );
+        toastr.success("已新增开场白");
+      } else if (field === "alt_greetings" && action === "delete") {
+        toastr.success("已删除开场白");
+      } else if (field === "first_mes" && action === "clear") {
+        toastr.success("已清空第一条消息");
+      } else {
+        toastr.success("已更新角色设定");
+      }
+      renderCharacterDetailSubList(charRow, char);
+      charRow.next(".cfm-char-detail-sublist").show();
+    } catch (error) {
+      console.error("[CFM] 保存角色设定失败:", error);
+      toastr.error("保存角色设定失败");
+    }
   }
 
   function triggerNativePersonaBind(persona, bindType) {
@@ -27141,6 +34369,12 @@ jQuery(async () => {
     };
     const selector = buttonMap[bindType];
     if (!selector) return;
+
+    const currentChatBindKey =
+      bindType === "chat" ? getCurrentChatBindKey() : null;
+    const wasChatBound =
+      bindType === "chat" ? getPersonaBindStates(persona).chat : false;
+
     selectPersona(persona.avatarId);
     setTimeout(() => {
       const btn = $(selector);
@@ -27149,30 +34383,262 @@ jQuery(async () => {
         return;
       }
       btn.trigger("click");
-      setTimeout(() => refreshPersonaPanelView(), 80);
+      setTimeout(() => {
+        if (bindType === "chat" && currentChatBindKey) {
+          syncPersonaChatBindingState(
+            persona.avatarId,
+            currentChatBindKey,
+            !wasChatBound,
+          );
+        }
+        refreshPersonaPanelView();
+      }, 80);
     }, 30);
+  }
+
+  // 来自 @habc12138 老师的超级好用user人设生成器~做了小小联动
+  function hasNativePersonaToolEntry() {
+    return !!$("#pw_persona_tool_btn, .menu_button[title='打开设定生成器']")
+      .length;
+  }
+
+  function triggerNativePersonaTool(persona) {
+    if (!persona?.avatarId) return;
+
+    const bringNativePersonaToolPopupToFront = () => {
+      const shadow = $("#shadow_popup");
+      const popup = $("#dialogue_popup");
+      const holder = $("#dialogue_popup_holder");
+      const cfmOverlayZ = Number.parseInt($("#cfm-overlay").css("z-index"), 10);
+      const baseZ = Number.isFinite(cfmOverlayZ) ? cfmOverlayZ + 2 : 10002;
+      if (shadow.length) {
+        shadow.css("z-index", baseZ);
+      }
+      if (popup.length) {
+        popup.css("z-index", baseZ + 1);
+      }
+      if (holder.length) {
+        holder.css("position", "relative");
+        holder.css("z-index", baseZ + 2);
+      }
+      return shadow.length || popup.length || holder.length;
+    };
+
+    const scheduleBringToFront = () => {
+      let attempts = 0;
+      const maxAttempts = 12;
+      const timer = window.setInterval(() => {
+        attempts += 1;
+        const found = bringNativePersonaToolPopupToFront();
+        if (found || attempts >= maxAttempts) {
+          window.clearInterval(timer);
+        }
+      }, 80);
+    };
+
+    const triggerToolBtn = () => {
+      const btn = $(
+        "#pw_persona_tool_btn, .menu_button[title='打开设定生成器']",
+      ).first();
+      if (!btn.length) return false;
+      btn.trigger("click");
+      scheduleBringToFront();
+      return true;
+    };
+
+    const openPersonaManager = () => {
+      const btn = $(
+        "[title='用户设定管理'], [aria-label='用户设定管理'], [description='用户设定管理']",
+      ).first();
+      if (!btn.length) return false;
+      btn.trigger("click");
+      return true;
+    };
+
+    selectPersona(persona.avatarId);
+    setTimeout(() => {
+      if (triggerToolBtn()) return;
+      if (!openPersonaManager()) {
+        toastr.warning("未找到酒馆原生设定生成器按钮");
+        return;
+      }
+      setTimeout(() => {
+        selectPersona(persona.avatarId);
+        setTimeout(() => {
+          if (!triggerToolBtn()) {
+            toastr.warning("未找到酒馆原生设定生成器按钮");
+          }
+        }, 60);
+      }, 120);
+    }, 30);
+  }
+  // 来自 @habc12138 老师的超级好用user人设生成器~做了小小联动
+
+  function renderCharacterDetailSubList(charRow, char) {
+    charRow.next(".cfm-char-detail-sublist").remove();
+
+    const normalizeGreetingItems = (input) => {
+      const results = [];
+      const pushValue = (value) => {
+        if (typeof value === "string") {
+          const text = value.trim();
+          if (text) results.push(text);
+          return;
+        }
+        if (Array.isArray(value)) {
+          value.forEach(pushValue);
+          return;
+        }
+        if (value && typeof value === "object") {
+          [
+            value.mes,
+            value.message,
+            value.text,
+            value.content,
+            value.value,
+          ].forEach(pushValue);
+        }
+      };
+      pushValue(input);
+      return results;
+    };
+
+    const data = char?.data || {};
+    const description =
+      typeof data.description === "string" ? data.description.trim() : "";
+    const firstMes =
+      typeof data.first_mes === "string" ? data.first_mes.trim() : "";
+    const alternateGreetings = normalizeGreetingItems(data.alternate_greetings);
+
+    const sectionHtml = (label, value, extraClass = "", field = "") => `
+      <div class="cfm-persona-detail-section cfm-char-detail-section ${extraClass}">
+        <div class="cfm-persona-detail-label">${label}${
+          field
+            ? `
+          <div class="cfm-chat-actions">
+            <div class="cfm-chat-action-btn cfm-char-detail-edit" data-field="${field}" title="编辑${label}"><i class="fa-solid fa-pen-to-square"></i></div>
+          </div>`
+            : ""
+        }</div>
+        <div class="cfm-persona-detail-value cfm-char-detail-value ${extraClass}">${value ? escapeHtml(value).replace(/\n/g, "<br>") : '<span class="cfm-persona-detail-empty">无</span>'}</div>
+      </div>
+    `;
+
+    const subList = $(
+      '<div class="cfm-chat-sublist cfm-char-detail-sublist"></div>',
+    );
+    const detailCard = $(
+      '<div class="cfm-chat-toolbar cfm-persona-detail-card cfm-char-detail-card"></div>',
+    );
+
+    detailCard.append(sectionHtml("描述", description, "", "description"));
+
+    // 第一条消息（主开场白）：只有编辑按钮，不能切换
+    detailCard.append(
+      sectionHtml("第一条消息", firstMes, "cfm-char-detail-block", "first_mes"),
+    );
+
+    // 其它开场（额外问候语）：可切换、编辑、新增、删除
+    if (alternateGreetings.length > 0) {
+      const safeAltIndex = Math.min(
+        Math.max(charRow.data("cfmAltGreetingIndex") || 0, 0),
+        alternateGreetings.length - 1,
+      );
+      const currentAltGreeting = alternateGreetings[safeAltIndex] || "";
+      detailCard.append(`
+        <div class="cfm-persona-detail-section cfm-char-detail-section cfm-char-detail-block">
+          <div class="cfm-persona-detail-label">其它开场
+            <div class="cfm-chat-actions">
+              <div class="cfm-chat-action-btn cfm-char-detail-edit" data-field="alt_greetings" title="编辑其它开场"><i class="fa-solid fa-pen-to-square"></i></div>
+              <div class="cfm-chat-action-btn cfm-char-greeting-nav" data-dir="prev" title="上一条开场白"><i class="fa-solid fa-caret-left"></i></div>
+              <span class="cfm-char-detail-meta-item">${safeAltIndex + 1} / ${alternateGreetings.length}</span>
+              <div class="cfm-chat-action-btn cfm-char-greeting-nav" data-dir="next" title="下一条开场白"><i class="fa-solid fa-caret-right"></i></div>
+            </div>
+          </div>
+          <div class="cfm-persona-detail-value cfm-char-detail-value cfm-char-detail-block">${currentAltGreeting ? escapeHtml(currentAltGreeting).replace(/\n/g, "<br>") : '<span class="cfm-persona-detail-empty">无</span>'}</div>
+        </div>
+      `);
+    } else {
+      // 没有其它开场时，显示空状态，仍可通过编辑按钮新增
+      detailCard.append(
+        sectionHtml("其它开场", "", "cfm-char-detail-block", "alt_greetings"),
+      );
+    }
+
+    subList.append(detailCard);
+    charRow.after(subList);
+
+    // 其它开场的切换事件
+    subList.find(".cfm-char-greeting-nav").on("click touchend", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const dir = $(e.currentTarget).data("dir");
+      if (alternateGreetings.length === 0) return;
+      const currentIndex = Math.min(
+        Math.max(charRow.data("cfmAltGreetingIndex") || 0, 0),
+        alternateGreetings.length - 1,
+      );
+      const nextIndex =
+        dir === "prev"
+          ? (currentIndex - 1 + alternateGreetings.length) %
+            alternateGreetings.length
+          : (currentIndex + 1) % alternateGreetings.length;
+      charRow.data("cfmAltGreetingIndex", nextIndex);
+      renderCharacterDetailSubList(charRow, char);
+      charRow.next(".cfm-char-detail-sublist").show();
+    });
+
+    // 编辑按钮事件
+    subList.find(".cfm-char-detail-edit").on("click touchend", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const field = $(e.currentTarget).data("field");
+      if (field === "alt_greetings") {
+        char.__cfmEditingGreetingIndex = Math.max(
+          charRow.data("cfmAltGreetingIndex") || 0,
+          0,
+        );
+      } else {
+        delete char.__cfmEditingGreetingIndex;
+      }
+      await editCharacterDetailField(charRow, char, field);
+      delete char.__cfmEditingGreetingIndex;
+    });
   }
 
   function renderPersonaDetailSubList(personaRow, persona) {
     personaRow.next(".cfm-chat-sublist").remove();
 
     const desc = persona?.description || "";
-    const title = persona?.title || "";
+    const personaName = persona?.name || "User";
     const note = getPersonaNote(persona.avatarId) || "";
-    const connections = resolvePersonaConnections(persona?.connections || []);
     const bindStates = getPersonaBindStates(persona);
+    const characterBindHtml = buildPersonaConnHtml(persona?.connections || []);
+    const chatBindHtml = buildPersonaChatBindHtml(persona.avatarId);
+    const bindDetailHtml = [
+      characterBindHtml ? `<div>${characterBindHtml}</div>` : "",
+      chatBindHtml
+        ? `<div style="margin-top:6px;display:flex;flex-direction:column;align-items:flex-start;gap:6px;">${chatBindHtml}</div>`
+        : "",
+    ]
+      .filter(Boolean)
+      .join("");
 
-    const subList = $('<div class="cfm-chat-sublist cfm-persona-sublist"></div>');
-    const detailCard = $('<div class="cfm-chat-toolbar cfm-persona-detail-card"></div>');
+    const subList = $(
+      '<div class="cfm-chat-sublist cfm-persona-sublist"></div>',
+    );
+    const detailCard = $(
+      '<div class="cfm-chat-toolbar cfm-persona-detail-card"></div>',
+    );
 
     detailCard.append(`
       <div class="cfm-persona-detail-section">
-        <div class="cfm-persona-detail-label">标题
+        <div class="cfm-persona-detail-label">名称
           <div class="cfm-chat-actions">
-            <div class="cfm-chat-action-btn cfm-persona-detail-edit" data-field="title" title="编辑标题"><i class="fa-solid fa-pen-to-square"></i></div>
+            <div class="cfm-chat-action-btn cfm-persona-detail-edit" data-field="name" title="编辑名称"><i class="fa-solid fa-pen-to-square"></i></div>
           </div>
         </div>
-        <div class="cfm-persona-detail-value">${title ? escapeHtml(title) : '<span class="cfm-persona-detail-empty">无</span>'}</div>
+        <div class="cfm-persona-detail-value">${escapeHtml(personaName)}</div>
       </div>
     `);
 
@@ -27202,20 +34668,26 @@ jQuery(async () => {
             <span class="cfm-persona-bind-text">聊天</span>
           </div>
         </div>
-        <div class="cfm-persona-detail-value">${connections.length ? buildPersonaConnHtml(persona.connections) : '<span class="cfm-persona-detail-empty">无</span>'}</div>
+        <div class="cfm-persona-detail-value">${bindDetailHtml || '<span class="cfm-persona-detail-empty">无</span>'}</div>
       </div>
     `);
 
+    // 来自 @habc12138 老师的超级好用user人设生成器~做了小小联动
+    const personaToolActionHtml = hasNativePersonaToolEntry()
+      ? '<div class="cfm-chat-action-btn cfm-persona-detail-tool" title="打开设定生成器"><i class="fa-solid fa-wand-magic-sparkles"></i></div>'
+      : "";
     detailCard.append(`
       <div class="cfm-persona-detail-section">
         <div class="cfm-persona-detail-label">具体设定
           <div class="cfm-chat-actions">
             <div class="cfm-chat-action-btn cfm-persona-detail-edit" data-field="description" title="编辑具体设定"><i class="fa-solid fa-pen-to-square"></i></div>
+            ${personaToolActionHtml}
           </div>
         </div>
         <div class="cfm-persona-detail-value cfm-persona-detail-description">${desc ? escapeHtml(desc).replace(/\n/g, "<br>") : '<span class="cfm-persona-detail-empty">无</span>'}</div>
       </div>
     `);
+    // 来自 @habc12138 老师的超级好用user人设生成器~做了小小联动
 
     subList.append(detailCard);
     personaRow.after(subList);
@@ -27226,6 +34698,41 @@ jQuery(async () => {
       const field = $(e.currentTarget).data("field");
       await editPersonaDetailField(persona, field);
     });
+
+    // 来自 @habc12138 老师的超级好用user人设生成器~做了小小联动
+    subList.find(".cfm-persona-detail-tool").on("click touchend", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      triggerNativePersonaTool(persona);
+    });
+    // 来自 @habc12138 老师的超级好用user人设生成器~做了小小联动
+
+    subList
+      .find(".cfm-persona-detail-description")
+      .on("click touchend", async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const target = $(e.currentTarget);
+        const now = Date.now();
+        const lastTouchAt = Number(target.data("cfmPersonaDescTouchAt") || 0);
+        if (e.type === "touchend") {
+          target.data("cfmPersonaDescTouchAt", now);
+        } else if (lastTouchAt && now - lastTouchAt < 500) {
+          return;
+        }
+
+        if (!window.confirm("确认编辑Uesr设定吗？")) {
+          return;
+        }
+
+        const descText = String(persona?.description || "");
+        const clickedOffset = getTextOffsetFromPoint(e.currentTarget, e);
+        await editPersonaDetailField(persona, "description", {
+          caretIndex: Number.isFinite(clickedOffset)
+            ? clickedOffset
+            : descText.length,
+        });
+      });
 
     subList.find(".cfm-persona-bind-btn").on("click touchend", (e) => {
       e.preventDefault();
@@ -27591,6 +35098,34 @@ jQuery(async () => {
         "data-avatar-id",
       ) || null;
 
+    if (!selectedPersonaFolder) {
+      const currentFolderId = currentUserAvatar
+        ? groups[currentUserAvatar] || null
+        : null;
+      if (currentFolderId && tree[currentFolderId]) {
+        let resolvedFolderId = currentFolderId;
+        const visitedFolderIds = new Set();
+        while (resolvedFolderId && tree[resolvedFolderId]) {
+          if (visitedFolderIds.has(resolvedFolderId)) break;
+          visitedFolderIds.add(resolvedFolderId);
+          const directItems = folderItems[resolvedFolderId] || [];
+          const childIds = sortResFolders(
+            "personas",
+            getResChildFolders("personas", resolvedFolderId),
+          );
+          if (directItems.length > 0 || childIds.length !== 1) break;
+          resolvedFolderId = childIds[0];
+        }
+        const fullPath = getResFolderPath("personas", resolvedFolderId);
+        for (let i = 0; i < fullPath.length - 1; i++) {
+          personaExpandedNodes.add(fullPath[i]);
+        }
+        selectedPersonaFolder = resolvedFolderId;
+      } else {
+        selectedPersonaFolder = "__ungrouped__";
+      }
+    }
+
     let displayItems = [];
     let displayTitle = "选择左侧文件夹查看内容";
     let childFolders = [];
@@ -27808,6 +35343,8 @@ jQuery(async () => {
       // User行（带头像 + 星标 + 多选支持 + 备注）
       for (const p of displayItems) {
         const isActive = p.avatarId === currentUserAvatar;
+        const bindStates = getPersonaBindStates(p);
+        const isDefaultPersona = !!bindStates.default;
         const fav = isResFavorite("personas", p.avatarId);
         const isMSel = cfmMultiSelectMode && cfmMultiSelected.has(p.avatarId);
         const isExpSel = cfmExportMode && cfmExportSelected.has(p.avatarId);
@@ -27837,19 +35374,22 @@ jQuery(async () => {
           !cfmResDeleteMode &&
           !cfmMultiSelectMode &&
           !cfmPersonaNoteMode;
+        const singleCopyBtn = noModeActive
+          ? `<div class="cfm-row-edit-btn cfm-row-copy-btn" title="复制人设"><i class="fa-solid fa-copy"></i></div>`
+          : "";
         const singleNoteBtn = noModeActive
           ? `<div class="cfm-row-edit-btn cfm-row-note-btn" title="编辑备注"><i class="fa-solid fa-pen-to-square"></i></div>`
           : "";
         // 头像缩略图
         const thumbUrl = getThumbnailUrl("persona", p.avatarId);
         const isExpanded = personaItemExpandedIds.has(p.avatarId);
-        const detailToggleHtml = `<div class="cfm-chat-toggle cfm-persona-toggle" title="展开/折叠User设定"><i class="fa-solid fa-caret-${isExpanded ? "down" : "right"}"></i></div>`;
+        const detailToggleHtml = `<div class="cfm-char-detail-toggle cfm-persona-toggle" title="展开/折叠User设定"><i class="fa-solid fa-caret-${isExpanded ? "down" : "right"}"></i></div>`;
         const row = $(`
           <div class="cfm-row cfm-row-char ${isActive ? "cfm-rv-item-active" : ""} ${isDelSel ? "cfm-res-delete-row-selected" : ""} ${isExpSel ? "cfm-export-row-selected" : ""} ${isMSel ? "cfm-multisel-row-selected" : ""} ${isNoteSel ? "cfm-edit-row-selected" : ""}" data-avatar-id="${escapeHtml(p.avatarId)}" data-res-id="${escapeHtml(p.avatarId)}" draggable="true">
             ${msCheckHtml}
-            ${detailToggleHtml}
-            <div class="cfm-row-icon cfm-persona-avatar"><img src="${thumbUrl}" alt="avatar" onerror="this.src='/img/ai4.png'"></div>
-            <div class="cfm-row-name"><span class="cfm-persona-name-text">${escapeHtml(p.name)}</span>${p.title ? `<span class="cfm-persona-title">${escapeHtml(p.title)}</span>` : ""}${noteHtml}${connHtml}</div>
+            <div class="cfm-row-icon cfm-persona-avatar ${isDefaultPersona ? "cfm-persona-avatar-default" : ""}" title="${isDefaultPersona ? "默认 User" : ""}"><img src="${thumbUrl}" alt="avatar" onerror="this.src='/img/ai4.png'"></div>
+            <div class="cfm-row-name"><span class="cfm-char-name-inline cfm-persona-name-inline">${detailToggleHtml}<span class="cfm-persona-name-text">${escapeHtml(p.name)}</span></span>${p.title ? `<span class="cfm-persona-title">${escapeHtml(p.title)}</span>` : ""}${noteHtml}${connHtml}</div>
+            ${singleCopyBtn}
             ${singleNoteBtn}
             <div class="cfm-row-star ${fav ? "cfm-star-active" : ""}" title="${fav ? "取消收藏" : "添加收藏"}"><i class="fa-${fav ? "solid" : "regular"} fa-star"></i></div>
           </div>
@@ -27875,6 +35415,12 @@ jQuery(async () => {
             favCountEl.text(newCount);
           }
           if (selectedPersonaFolder === "__favorites__") renderPersonasView();
+        });
+        // 单个复制按钮
+        row.find(".cfm-row-copy-btn").on("click touchend", async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          await duplicatePersona(p);
         });
         // 单个备注编辑按钮
         row.find(".cfm-row-note-btn").on("click touchend", (e) => {
@@ -27907,7 +35453,7 @@ jQuery(async () => {
         row.on("click", (e) => {
           if (
             $(e.target).closest(
-              ".cfm-row-star, .cfm-row-note-btn, .cfm-persona-toggle",
+              ".cfm-row-star, .cfm-row-copy-btn, .cfm-row-note-btn, .cfm-persona-toggle",
             ).length
           )
             return;
@@ -28201,6 +35747,8 @@ jQuery(async () => {
 
       for (const p of matched) {
         const isActive = p.avatarId === currentUserAvatar;
+        const bindStates = getPersonaBindStates(p);
+        const isDefaultPersona = !!bindStates.default;
         const fav = isResFavorite("personas", p.avatarId);
         const thumbUrl = getThumbnailUrl("persona", p.avatarId);
         const personaNote = getPersonaNote(p.avatarId);
@@ -28216,15 +35764,20 @@ jQuery(async () => {
             ? `<span class="cfm-row-folder-path">${escapeHtml(folderPathNames.join(" › "))}</span>`
             : "";
         const isExpanded = personaItemExpandedIds.has(p.avatarId);
-        const detailToggleHtml = `<div class="cfm-chat-toggle cfm-persona-toggle" title="展开/折叠User设定"><i class="fa-solid fa-caret-${isExpanded ? "down" : "right"}"></i></div>`;
+        const detailToggleHtml = `<div class="cfm-char-detail-toggle cfm-persona-toggle" title="展开/折叠User设定"><i class="fa-solid fa-caret-${isExpanded ? "down" : "right"}"></i></div>`;
         const row = $(`
           <div class="cfm-row cfm-row-char ${isActive ? "cfm-rv-item-active" : ""}" data-avatar-id="${escapeHtml(p.avatarId)}" data-res-id="${escapeHtml(p.avatarId)}" draggable="true">
-            ${detailToggleHtml}
-            <div class="cfm-row-icon cfm-persona-avatar"><img src="${thumbUrl}" alt="avatar" onerror="this.src='/img/ai4.png'"></div>
-            <div class="cfm-row-name"><span class="cfm-persona-name-text">${escapeHtml(p.name)}</span>${p.title ? `<span class="cfm-persona-title">${escapeHtml(p.title)}</span>` : ""}${noteHtml}${connHtml}${pathHtml}</div>
+            <div class="cfm-row-icon cfm-persona-avatar ${isDefaultPersona ? "cfm-persona-avatar-default" : ""}" title="${isDefaultPersona ? "默认 User" : ""}"><img src="${thumbUrl}" alt="avatar" onerror="this.src='/img/ai4.png'"></div>
+            <div class="cfm-row-name"><span class="cfm-char-name-inline cfm-persona-name-inline">${detailToggleHtml}<span class="cfm-persona-name-text">${escapeHtml(p.name)}</span></span>${p.title ? `<span class="cfm-persona-title">${escapeHtml(p.title)}</span>` : ""}${noteHtml}${connHtml}${pathHtml}</div>
+            <div class="cfm-row-edit-btn cfm-row-copy-btn" title="复制人设"><i class="fa-solid fa-copy"></i></div>
             <div class="cfm-row-star ${fav ? "cfm-star-active" : ""}" title="${fav ? "取消收藏" : "添加收藏"}"><i class="fa-${fav ? "solid" : "regular"} fa-star"></i></div>
           </div>
         `);
+        row.find(".cfm-row-copy-btn").on("click touchend", async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          await duplicatePersona(p);
+        });
         row.find(".cfm-row-star").on("click touchend", (e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -28254,7 +35807,11 @@ jQuery(async () => {
           }
         });
         row.on("click", (e) => {
-          if ($(e.target).closest(".cfm-row-star, .cfm-persona-toggle").length)
+          if (
+            $(e.target).closest(
+              ".cfm-row-star, .cfm-row-copy-btn, .cfm-persona-toggle",
+            ).length
+          )
             return;
           selectPersona(p.avatarId);
           rightList
@@ -28377,6 +35934,1151 @@ jQuery(async () => {
     return extension_settings.regex ?? [];
   }
 
+  function getRegexTransferGlobalFolderOptions() {
+    ensureResourceSettings();
+    const folderTree = extension_settings[extensionName].regexFolderTree || {};
+    const options = Object.keys(folderTree)
+      .map((id) => {
+        const pathNames = [];
+        let currentId = id;
+        while (currentId && folderTree[currentId]) {
+          pathNames.unshift(folderTree[currentId].displayName || currentId);
+          currentId = folderTree[currentId].parentId;
+        }
+        return {
+          value: id,
+          label: pathNames.join(" › ") || id,
+          sortOrder: folderTree[id]?.sortOrder ?? 0,
+        };
+      })
+      .sort((a, b) => {
+        if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
+        return a.label.localeCompare(b.label, "zh-CN");
+      });
+    return [{ value: "__ungrouped__", label: "未归类" }, ...options];
+  }
+
+  function getRegexTransferGlobalFolderLabel(folderId) {
+    if (!folderId || folderId === "__ungrouped__") return "未归类";
+    ensureResourceSettings();
+    const folderTree = extension_settings[extensionName].regexFolderTree || {};
+    if (!folderTree[folderId]) return "未归类";
+    const pathNames = [];
+    let currentId = folderId;
+    while (currentId && folderTree[currentId]) {
+      pathNames.unshift(folderTree[currentId].displayName || currentId);
+      currentId = folderTree[currentId].parentId;
+    }
+    return pathNames.join(" › ") || "未归类";
+  }
+
+  function getRegexTransferScopeLabel(scope) {
+    if (!scope) return "目标位置";
+    if (scope.type === "global") {
+      return `全局正则（${getRegexTransferGlobalFolderLabel(scope.folderId)}）`;
+    }
+    if (scope.type === "char") {
+      return `角色正则（${scope.name || "当前角色"}）`;
+    }
+    if (scope.type === "preset") {
+      return `预设正则（${scope.name || "当前预设"}）`;
+    }
+    return "目标位置";
+  }
+
+  function getRegexScriptsForScope(scope) {
+    if (!scope) return [];
+    if (Array.isArray(scope.scripts)) return scope.scripts;
+    if (scope.type === "global") return getRegexGlobalScripts();
+    if (scope.type === "char") {
+      const chars = getCharacters();
+      const ch = chars.find((item) => item.avatar === scope.avatar);
+      return Array.isArray(ch?.data?.extensions?.regex_scripts)
+        ? ch.data.extensions.regex_scripts
+        : [];
+    }
+    if (scope.type === "preset") {
+      return getPresetRegexScriptsByName(scope.name);
+    }
+    return [];
+  }
+
+  function isSameRegexScopeList(sourceScope, targetScope) {
+    if (!sourceScope || !targetScope) return false;
+    if (sourceScope.type !== targetScope.type) return false;
+    if (sourceScope.type === "global") return true;
+    if (sourceScope.type === "char") {
+      return sourceScope.avatar && sourceScope.avatar === targetScope.avatar;
+    }
+    if (sourceScope.type === "preset") {
+      return sourceScope.name && sourceScope.name === targetScope.name;
+    }
+    return false;
+  }
+
+  function cloneRegexScriptsForTransfer(scripts, isCopyMode) {
+    const sourceScripts = Array.isArray(scripts) ? scripts : [];
+    return sourceScripts.map((script) => ({
+      ...script,
+      id: String(isCopyMode || !script?.id ? getContext().uuidv4() : script.id),
+    }));
+  }
+
+  function removeRegexScriptsByIds(scripts, idSet) {
+    const sourceScripts = Array.isArray(scripts) ? scripts : [];
+    return sourceScripts.filter((script) => !idSet.has(script?.id));
+  }
+
+  function insertRegexScriptsAtIndex(
+    baseScripts,
+    insertedScripts,
+    targetIndex,
+  ) {
+    const currentScripts = Array.isArray(baseScripts) ? [...baseScripts] : [];
+    const scriptsToInsert = Array.isArray(insertedScripts)
+      ? insertedScripts
+      : [];
+    const normalizedIndex = Math.max(
+      0,
+      Math.min(Number(targetIndex) || 0, currentScripts.length),
+    );
+    return [
+      ...currentScripts.slice(0, normalizedIndex),
+      ...scriptsToInsert,
+      ...currentScripts.slice(normalizedIndex),
+    ];
+  }
+
+  async function saveRegexScopeScripts(scope, scripts, extra = {}) {
+    if (!scope) return;
+    if (scope.type === "global") {
+      ensureResourceSettings();
+      extension_settings.regex = Array.isArray(scripts) ? scripts : [];
+      if (extra.globalGroups) {
+        extension_settings[extensionName].regexGlobalGroups =
+          extra.globalGroups;
+      }
+      if (extra.globalFavorites) {
+        extension_settings[extensionName].regexFavorites =
+          extra.globalFavorites;
+      }
+      getContext().saveSettingsDebounced();
+      await syncNativeRegexState();
+      return;
+    }
+    if (scope.type === "char") {
+      await saveCharRegexScripts(scope.avatar, scripts);
+      return;
+    }
+    if (scope.type === "preset") {
+      await savePresetRegexScripts(scripts);
+    }
+  }
+
+  function showRegexTransferSetupDialog(options = {}) {
+    const {
+      sourceScope,
+      selectedCount = 0,
+      currentCharName = "",
+      currentCharAvatar = "",
+      currentPresetName = "",
+      defaultGlobalFolderId = "__ungrouped__",
+    } = options || {};
+
+    return new Promise((resolve) => {
+      const sourceType = sourceScope?.type || "";
+      const hasCurrentChar = !!currentCharAvatar;
+      const hasCurrentPreset = !!currentPresetName;
+      const canUseGlobal = sourceType !== "global";
+      const canUseChar = hasCurrentChar && sourceType !== "char";
+      const canUsePreset = hasCurrentPreset && sourceType !== "preset";
+      const enabledTargetTypes = [
+        canUseGlobal ? "global" : "",
+        canUseChar ? "char" : "",
+        canUsePreset ? "preset" : "",
+      ].filter(Boolean);
+
+      let defaultTargetType = "";
+      if (sourceType === "global") {
+        if (canUseChar) defaultTargetType = "char";
+        else if (canUsePreset) defaultTargetType = "preset";
+      } else if (sourceType === "char") {
+        if (canUseGlobal) defaultTargetType = "global";
+        else if (canUsePreset) defaultTargetType = "preset";
+      } else if (sourceType === "preset") {
+        if (canUseGlobal) defaultTargetType = "global";
+        else if (canUseChar) defaultTargetType = "char";
+      }
+      if (!enabledTargetTypes.includes(defaultTargetType)) {
+        defaultTargetType = enabledTargetTypes[0] || "";
+      }
+
+      const folderOptions = getRegexTransferGlobalFolderOptions();
+      const globalDisabledReason = canUseGlobal ? "" : "（来源位置，不可选）";
+      const charDisabledReason = !hasCurrentChar
+        ? "（当前未选择角色）"
+        : sourceType === "char"
+          ? "（来源位置，不可选）"
+          : "";
+      const presetDisabledReason = !hasCurrentPreset
+        ? "（当前未选择预设）"
+        : sourceType === "preset"
+          ? "（来源位置，不可选）"
+          : "";
+      const overlay = $(
+        '<div class="cfm-edit-popup-overlay" style="position:absolute;inset:0;background:rgba(0,0,0,0.12);z-index:100000;display:flex;align-items:center;justify-content:center;"></div>',
+      );
+      const dialog = $(`
+        <div class="cfm-edit-popup" style="width:min(560px,calc(100vw - 32px));max-width:560px;max-height:calc(100vh - 32px);position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);margin:0;z-index:100001;">
+          <div class="cfm-edit-popup-header">
+            <span><i class="fa-solid fa-right-left"></i> 正则互通</span>
+          </div>
+          <div class="cfm-edit-popup-body" style="display:flex;flex-direction:column;gap:14px;">
+            <div style="font-size:13px;line-height:1.6;opacity:0.92;">已选择 <b>${selectedCount}</b> 个正则脚本，来源：<b>${escapeHtml(getRegexTransferScopeLabel(sourceScope))}</b></div>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <div style="font-size:12px;opacity:0.85;">选择模式</div>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="radio" name="cfm-regex-transfer-mode" value="move" checked> <span>移动</span></label>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="radio" name="cfm-regex-transfer-mode" value="copy"> <span>复制</span></label>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <div style="font-size:12px;opacity:0.85;">选择目标</div>
+              <label style="display:flex;align-items:center;gap:8px;cursor:${canUseGlobal ? "pointer" : "not-allowed"};opacity:${canUseGlobal ? "1" : "0.55"};"><input type="radio" name="cfm-regex-transfer-target" value="global" ${defaultTargetType === "global" ? "checked" : ""} ${canUseGlobal ? "" : "disabled"}> <span>全局正则${globalDisabledReason}</span></label>
+              <label style="display:flex;align-items:center;gap:8px;cursor:${canUseChar ? "pointer" : "not-allowed"};opacity:${canUseChar ? "1" : "0.55"};"><input type="radio" name="cfm-regex-transfer-target" value="char" ${defaultTargetType === "char" ? "checked" : ""} ${canUseChar ? "" : "disabled"}> <span>角色正则（当前角色：${escapeHtml(currentCharName || "未选择")}）${escapeHtml(charDisabledReason)}</span></label>
+              <label style="display:flex;align-items:center;gap:8px;cursor:${canUsePreset ? "pointer" : "not-allowed"};opacity:${canUsePreset ? "1" : "0.55"};"><input type="radio" name="cfm-regex-transfer-target" value="preset" ${defaultTargetType === "preset" ? "checked" : ""} ${canUsePreset ? "" : "disabled"}> <span>预设正则（当前预设：${escapeHtml(currentPresetName || "未选择")}）${escapeHtml(presetDisabledReason)}</span></label>
+            </div>
+            ${enabledTargetTypes.length === 0 ? '<div style="font-size:12px;line-height:1.6;color:#f38ba8;opacity:0.92;">当前没有可用的互通目标，请先切换到角色或预设后再试。</div>' : ""}
+            <div class="cfm-regex-transfer-global-folder" style="display:flex;flex-direction:column;gap:8px;">
+              <div style="font-size:12px;opacity:0.85;">全局分组</div>
+              <select class="text_pole cfm-regex-transfer-folder-select"></select>
+            </div>
+          </div>
+          <div class="cfm-edit-popup-footer">
+            <button class="menu_button cfm-regex-transfer-confirm"><i class="fa-solid fa-check"></i> 确认</button>
+            <button class="menu_button cfm-regex-transfer-cancel"><i class="fa-solid fa-xmark"></i> 取消</button>
+          </div>
+        </div>
+      `);
+
+      const folderSelect = dialog.find(".cfm-regex-transfer-folder-select");
+      folderOptions.forEach((item) => {
+        folderSelect.append(
+          $(
+            `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`,
+          ),
+        );
+      });
+      folderSelect.val(defaultGlobalFolderId || "__ungrouped__");
+
+      const updateFolderVisibility = () => {
+        const targetType =
+          dialog
+            .find('input[name="cfm-regex-transfer-target"]:checked')
+            .val() || "";
+        dialog
+          .find(".cfm-regex-transfer-global-folder")
+          .toggle(targetType === "global");
+      };
+
+      function closeDialog(result = null) {
+        overlay.remove();
+        dialog.remove();
+        resolve(result);
+      }
+
+      dialog
+        .find('input[name="cfm-regex-transfer-target"]')
+        .on("change", updateFolderVisibility);
+      updateFolderVisibility();
+
+      dialog.find(".cfm-regex-transfer-confirm").on("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const targetType =
+          dialog
+            .find('input[name="cfm-regex-transfer-target"]:checked')
+            .val() || "";
+        if (!targetType) {
+          toastr.warning("当前没有可用的目标位置");
+          return;
+        }
+        closeDialog({
+          mode:
+            dialog
+              .find('input[name="cfm-regex-transfer-mode"]:checked')
+              .val() || "move",
+          targetType,
+          globalFolderId:
+            folderSelect.val() || defaultGlobalFolderId || "__ungrouped__",
+        });
+      });
+
+      dialog.find(".cfm-regex-transfer-cancel").on("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        closeDialog(null);
+      });
+
+      overlay.on("click", (e) => {
+        if ($(e.target).is(overlay)) closeDialog(null);
+      });
+
+      $("#cfm-popup").append(overlay).append(dialog);
+    });
+  }
+
+  function openRegexTransferInsertDialog(options = {}) {
+    const {
+      targetScope,
+      baseScripts = [],
+      insertedScripts = [],
+      onApply,
+      onSkip,
+    } = options || {};
+
+    return new Promise((resolve) => {
+      const currentScripts = Array.isArray(baseScripts) ? baseScripts : [];
+      const scriptsToInsert = Array.isArray(insertedScripts)
+        ? insertedScripts
+        : [];
+      const previewNames = scriptsToInsert
+        .map((script) => script?.scriptName || "(未命名)")
+        .slice(0, 5)
+        .join("、");
+      const previewSuffix =
+        scriptsToInsert.length > 5 ? ` 等 ${scriptsToInsert.length} 项` : "";
+      const overlay = $('<div class="cfm-sort-dialog-overlay"></div>');
+      const dialog = $(`
+        <div class="cfm-sort-dialog cfm-sort-dialog-insert">
+          <div class="cfm-sort-dialog-header">
+            <span class="cfm-sort-dialog-title"><i class="fa-solid fa-sort"></i> 正则脚本排序</span>
+            <span class="cfm-sort-dialog-desc">准备将 <b>${scriptsToInsert.length}</b> 个正则脚本插入到 <b>${escapeHtml(getRegexTransferScopeLabel(targetScope))}</b>。点击分隔线中间的 <i class="fa-solid fa-plus"></i> 选择插入位置；点击跳过则默认追加到最后。${previewNames ? `<br>待插入：${escapeHtml(previewNames)}${escapeHtml(previewSuffix)}` : ""}</span>
+          </div>
+          <div class="cfm-sort-dialog-body">
+            <div class="cfm-sort-dialog-list cfm-sort-dialog-list-insert"></div>
+          </div>
+          <div class="cfm-sort-dialog-footer">
+            <button class="cfm-btn cfm-sort-dialog-confirm cfm-sort-dialog-insert-confirm" disabled><i class="fa-solid fa-check"></i> 确认插入</button>
+            <button class="cfm-btn cfm-sort-dialog-skip"><i class="fa-solid fa-forward"></i> 跳过</button>
+            <button class="cfm-btn cfm-sort-dialog-cancel"><i class="fa-solid fa-xmark"></i> 取消</button>
+          </div>
+        </div>
+      `);
+
+      const sortList = dialog.find(".cfm-sort-dialog-list");
+      const confirmBtn = dialog.find(".cfm-sort-dialog-insert-confirm");
+      let selectedTargetIndex = null;
+
+      function getPlacementText(script) {
+        if (targetScope?.type === "global") {
+          ensureResourceSettings();
+          const groups =
+            extension_settings[extensionName].regexGlobalGroups || {};
+          return getRegexTransferGlobalFolderLabel(
+            groups[script?.id] || "__ungrouped__",
+          );
+        }
+        return getRegexTransferScopeLabel(targetScope);
+      }
+
+      function closeDialog() {
+        overlay.remove();
+        dialog.remove();
+        resolve();
+      }
+
+      function updateSelectedInsertSlot() {
+        sortList.find(".cfm-sort-insert-slot").each(function () {
+          const slot = $(this);
+          const isSelected =
+            Number(slot.attr("data-target-index")) === selectedTargetIndex;
+          const lineEl = slot.find(".cfm-sort-insert-line");
+          const btnEl = slot.find(".cfm-sort-insert-btn");
+          btnEl.attr(
+            "title",
+            isSelected ? "已选中，点击确认插入" : "选择插入到此处",
+          );
+          btnEl.attr("aria-pressed", isSelected ? "true" : "false");
+          btnEl.css({
+            color: isSelected ? "#a6e3a1" : "#89b4fa",
+            borderColor: isSelected
+              ? "rgba(166, 227, 161, 0.5)"
+              : "rgba(137, 180, 250, 0.35)",
+            backgroundColor: isSelected
+              ? "rgba(166, 227, 161, 0.14)"
+              : "var(--SmartThemeBlurTintColor, #1e1e2e)",
+            boxShadow: isSelected
+              ? "0 0 0 3px rgba(166, 227, 161, 0.08)"
+              : "none",
+          });
+          lineEl.css({
+            background: isSelected
+              ? "linear-gradient(90deg, rgba(166, 227, 161, 0.12) 0%, rgba(166, 227, 161, 0.55) 50%, rgba(166, 227, 161, 0.12) 100%)"
+              : "linear-gradient(90deg, rgba(137, 180, 250, 0.08) 0%, rgba(137, 180, 250, 0.35) 50%, rgba(137, 180, 250, 0.08) 100%)",
+          });
+        });
+        confirmBtn.prop("disabled", selectedTargetIndex === null);
+      }
+
+      const renderInsertSlot = (targetIndex) => {
+        const slot = $(`
+          <div class="cfm-sort-insert-slot" data-target-index="${targetIndex}">
+            <div class="cfm-sort-insert-line"></div>
+            <button class="cfm-sort-insert-btn" title="选择插入到此处"><i class="fa-solid fa-plus"></i></button>
+          </div>
+        `);
+        slot.find(".cfm-sort-insert-btn").on("click touchend", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          selectedTargetIndex = targetIndex;
+          updateSelectedInsertSlot();
+        });
+        return slot;
+      };
+
+      sortList.append(renderInsertSlot(0));
+      currentScripts.forEach((script, index) => {
+        const row = $(`
+          <div class="cfm-sort-row cfm-sort-row-static ${script?.disabled ? "cfm-sort-row-disabled" : ""}" data-script-id="${escapeHtml(script?.id || "")}">
+            <span class="cfm-sort-row-static-index">${index + 1}</span>
+            <span class="cfm-sort-row-name">${escapeHtml(script?.scriptName || "(未命名)")}</span>
+            <span class="cfm-sort-row-folder">${escapeHtml(getPlacementText(script))}</span>
+          </div>
+        `);
+        sortList.append(row);
+        sortList.append(renderInsertSlot(index + 1));
+      });
+
+      updateSelectedInsertSlot();
+
+      confirmBtn.on("click touchend", async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (selectedTargetIndex === null) {
+          toastr.warning("请先选择一个插入位置");
+          return;
+        }
+        try {
+          if (typeof onApply === "function") {
+            await onApply(selectedTargetIndex);
+          }
+          closeDialog();
+        } catch (err) {
+          console.error("[CFM] 互通正则插入失败:", err);
+          toastr.error("保存插入位置失败: " + (err?.message || err));
+        }
+      });
+
+      dialog.find(".cfm-sort-dialog-skip").on("click touchend", async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        try {
+          if (typeof onSkip === "function") {
+            await onSkip();
+          }
+          closeDialog();
+        } catch (err) {
+          console.error("[CFM] 跳过互通正则插入失败:", err);
+          toastr.error("跳过失败: " + (err?.message || err));
+        }
+      });
+
+      dialog.find(".cfm-sort-dialog-cancel").on("click touchend", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        closeDialog();
+      });
+
+      overlay.on("click", (e) => {
+        if ($(e.target).is(overlay)) closeDialog();
+      });
+
+      $("#cfm-popup").append(overlay).append(dialog);
+    });
+  }
+
+  async function executeRegexTransferFlow(options = {}) {
+    const { sourceScope, selectedIds = [] } = options || {};
+    const uniqueIds = [...new Set((selectedIds || []).filter(Boolean))];
+    if (!sourceScope || uniqueIds.length === 0) {
+      toastr.warning("请先选择要移动/复制的正则脚本");
+      return;
+    }
+
+    const sourceScripts = getRegexScriptsForScope(sourceScope);
+    const selectedIdSet = new Set(uniqueIds);
+    const selectedScripts = sourceScripts.filter((script) =>
+      selectedIdSet.has(script?.id),
+    );
+    if (selectedScripts.length === 0) {
+      toastr.warning("未找到选中的正则脚本");
+      return;
+    }
+
+    const currentCharAvatar = getCurrentCharAvatar();
+    const currentCharName = getCurrentCharName();
+    const currentPresetName = getCurrentPresetName();
+    const defaultGlobalFolderId =
+      selectedRegexNode &&
+      selectedRegexNode !== "__ungrouped__" &&
+      selectedRegexNode !== "__favorites__"
+        ? selectedRegexNode
+        : "__ungrouped__";
+
+    const transferConfig = await showRegexTransferSetupDialog({
+      sourceScope,
+      selectedCount: selectedScripts.length,
+      currentCharName,
+      currentCharAvatar,
+      currentPresetName,
+      defaultGlobalFolderId,
+    });
+    if (!transferConfig) return;
+
+    let targetScope = null;
+    if (transferConfig.targetType === "global") {
+      targetScope = {
+        type: "global",
+        folderId: transferConfig.globalFolderId || "__ungrouped__",
+      };
+    } else if (transferConfig.targetType === "char") {
+      if (!currentCharAvatar) {
+        toastr.warning("当前没有可用的目标角色");
+        return;
+      }
+      targetScope = {
+        type: "char",
+        avatar: currentCharAvatar,
+        name: currentCharName,
+      };
+    } else if (transferConfig.targetType === "preset") {
+      if (!currentPresetName) {
+        toastr.warning("当前没有可用的目标预设");
+        return;
+      }
+      targetScope = {
+        type: "preset",
+        name: currentPresetName,
+      };
+    }
+
+    if (!targetScope) {
+      toastr.warning("未能确定目标位置");
+      return;
+    }
+
+    if (isSameRegexScopeList(sourceScope, targetScope)) {
+      toastr.warning("来源与目标相同，请选择其他位置");
+      return;
+    }
+
+    const sameList = isSameRegexScopeList(sourceScope, targetScope);
+    const isCopyMode = transferConfig.mode === "copy";
+    const insertedScripts = cloneRegexScriptsForTransfer(
+      selectedScripts,
+      isCopyMode,
+    );
+    const baseTargetScripts =
+      sameList && !isCopyMode
+        ? removeRegexScriptsByIds(sourceScripts, selectedIdSet)
+        : getRegexScriptsForScope(targetScope);
+
+    const applyTransfer = async (targetIndex) => {
+      const finalTargetScripts = insertRegexScriptsAtIndex(
+        baseTargetScripts,
+        insertedScripts,
+        targetIndex,
+      );
+
+      if (targetScope.type === "global") {
+        ensureResourceSettings();
+        const currentGroups = {
+          ...(extension_settings[extensionName].regexGlobalGroups || {}),
+        };
+        insertedScripts.forEach((script) => {
+          if (
+            transferConfig.globalFolderId &&
+            transferConfig.globalFolderId !== "__ungrouped__"
+          ) {
+            currentGroups[script.id] = transferConfig.globalFolderId;
+          } else {
+            delete currentGroups[script.id];
+          }
+        });
+        await saveRegexScopeScripts(targetScope, finalTargetScripts, {
+          globalGroups: currentGroups,
+        });
+      } else {
+        await saveRegexScopeScripts(targetScope, finalTargetScripts);
+      }
+
+      if (!isCopyMode && !sameList) {
+        const sourceAfterScripts = removeRegexScriptsByIds(
+          sourceScripts,
+          selectedIdSet,
+        );
+        if (sourceScope.type === "global") {
+          ensureResourceSettings();
+          const nextGroups = {
+            ...(extension_settings[extensionName].regexGlobalGroups || {}),
+          };
+          uniqueIds.forEach((id) => delete nextGroups[id]);
+          const nextFavorites = getResFavorites("regex").filter(
+            (id) => !selectedIdSet.has(id),
+          );
+          await saveRegexScopeScripts(sourceScope, sourceAfterScripts, {
+            globalGroups: nextGroups,
+            globalFavorites: nextFavorites,
+          });
+        } else {
+          await saveRegexScopeScripts(sourceScope, sourceAfterScripts);
+        }
+      }
+
+      if (sourceScope.type === "global") {
+        cfmMultiSelected.clear();
+        cfmMultiSelectRangeMode = false;
+        cfmMultiSelectLastClicked = null;
+      } else {
+        cfmRegexBatchSelected.clear();
+        cfmRegexBatchRangeMode = false;
+        cfmRegexBatchLastClicked = null;
+      }
+
+      // 互通完成后统一刷新原生正则UI，确保所有面板（全局/角色/预设）都反映最新状态
+      await syncNativeRegexState();
+      rerenderCurrentView();
+      if (currentResourceType === "regex") renderRegexView();
+      toastr.success(
+        `已${isCopyMode ? "复制" : "移动"} ${insertedScripts.length} 个正则脚本到${getRegexTransferScopeLabel(targetScope)}`,
+      );
+    };
+
+    await openRegexTransferInsertDialog({
+      targetScope,
+      baseScripts: baseTargetScripts,
+      insertedScripts,
+      onApply: async (targetIndex) => {
+        await applyTransfer(targetIndex);
+      },
+      onSkip: async () => {
+        await applyTransfer(baseTargetScripts.length);
+      },
+    });
+  }
+
+  async function startGlobalRegexTransferFlow() {
+    const selectedIds = Array.from(cfmMultiSelected || []).filter(Boolean);
+    if (!cfmMultiSelectMode) {
+      toastr.warning("请先开启多选模式，再选择要互通的正则脚本");
+      return;
+    }
+    if (selectedIds.length === 0) {
+      toastr.warning("请先选择要移动/复制的正则脚本");
+      return;
+    }
+    await executeRegexTransferFlow({
+      sourceScope: {
+        type: "global",
+        folderId:
+          selectedRegexNode &&
+          selectedRegexNode !== "__ungrouped__" &&
+          selectedRegexNode !== "__favorites__"
+            ? selectedRegexNode
+            : "__ungrouped__",
+      },
+      selectedIds,
+    });
+  }
+
+  async function startOwnedRegexTransferFlow(options = {}) {
+    const {
+      sourceType = "char",
+      sourceName = "",
+      avatar = "",
+      selectedIds = [],
+    } = options || {};
+    if (!cfmRegexBatchMode) {
+      toastr.warning("请先开启批量操作，再选择要互通的正则脚本");
+      return;
+    }
+    if (!selectedIds.length) {
+      toastr.warning("请先选择要移动/复制的正则脚本");
+      return;
+    }
+    await executeRegexTransferFlow({
+      sourceScope:
+        sourceType === "preset"
+          ? { type: "preset", name: sourceName }
+          : { type: "char", avatar, name: sourceName },
+      selectedIds,
+    });
+  }
+
+  let cfmRegexCreateMonitorTimer = null;
+
+  function stopRegexCreateMonitor() {
+    if (cfmRegexCreateMonitorTimer) {
+      window.clearInterval(cfmRegexCreateMonitorTimer);
+      cfmRegexCreateMonitorTimer = null;
+    }
+  }
+
+  async function applyRegexGlobalOrder(newOrder, successMessage) {
+    extension_settings.regex = newOrder;
+    getContext().saveSettingsDebounced();
+    await syncNativeRegexState();
+    renderRegexView();
+    if (successMessage) {
+      toastr.success(successMessage);
+    }
+  }
+
+  function moveRegexScriptInArray(scripts, scriptId, targetIndex) {
+    const currentScripts = Array.isArray(scripts) ? [...scripts] : [];
+    const currentIndex = currentScripts.findIndex(
+      (script) => script?.id === scriptId,
+    );
+    if (currentIndex === -1) return null;
+    const [script] = currentScripts.splice(currentIndex, 1);
+    const normalizedIndex = Math.max(
+      0,
+      Math.min(targetIndex, currentScripts.length),
+    );
+    currentScripts.splice(normalizedIndex, 0, script);
+    return currentScripts;
+  }
+
+  function moveRegexScriptToIndex(scriptId, targetIndex) {
+    return moveRegexScriptInArray(
+      getRegexGlobalScripts(),
+      scriptId,
+      targetIndex,
+    );
+  }
+
+  function monitorNewOwnedRegexScript({
+    beforeIds,
+    getScripts,
+    onCreated,
+    onAbort,
+  }) {
+    stopRegexCreateMonitor();
+    const monitorState = {
+      startedAt: Date.now(),
+      editorOpened: false,
+    };
+
+    cfmRegexCreateMonitorTimer = window.setInterval(async () => {
+      try {
+        const editorVisible = $(".regex_script_name:visible").length > 0;
+        if (editorVisible) {
+          monitorState.editorOpened = true;
+        }
+
+        const latestScripts = getScripts?.();
+        const currentScripts = Array.isArray(latestScripts)
+          ? latestScripts
+          : [];
+        const newScript = currentScripts.find(
+          (script) => script?.id && !beforeIds.has(script.id),
+        );
+        if (newScript?.id) {
+          stopRegexCreateMonitor();
+          if (typeof onCreated === "function") {
+            await onCreated(newScript, currentScripts);
+          }
+          return;
+        }
+
+        const elapsed = Date.now() - monitorState.startedAt;
+        const neverOpened = !monitorState.editorOpened && elapsed > 4000;
+        const timedOut = elapsed > 5 * 60 * 1000;
+        const closedWithoutSave = monitorState.editorOpened && !editorVisible;
+        if (neverOpened || timedOut || closedWithoutSave) {
+          stopRegexCreateMonitor();
+          if (typeof onAbort === "function") {
+            onAbort();
+          }
+        }
+      } catch (err) {
+        console.error("[CFM] 监听新增正则失败:", err);
+        stopRegexCreateMonitor();
+        if (typeof onAbort === "function") {
+          onAbort(err);
+        }
+      }
+    }, 250);
+  }
+
+  function monitorNewGlobalRegexScript(beforeIds) {
+    monitorNewOwnedRegexScript({
+      beforeIds,
+      getScripts: () => getRegexGlobalScripts(),
+      onCreated: async (newScript) => {
+        renderRegexView();
+        await openRegexSortDialog({
+          insertMode: true,
+          newScriptId: String(newScript.id),
+          onCancelInsert: async () => {
+            ensureResourceSettings();
+            const nextScripts = getRegexGlobalScripts().filter(
+              (script) => String(script?.id || "") !== String(newScript.id),
+            );
+            const nextGroups = {
+              ...(extension_settings[extensionName].regexGlobalGroups || {}),
+            };
+            delete nextGroups[newScript.id];
+            const nextFavorites = getResFavorites("regex").filter(
+              (id) => String(id) !== String(newScript.id),
+            );
+            await saveRegexScopeScripts({ type: "global" }, nextScripts, {
+              globalGroups: nextGroups,
+              globalFavorites: nextFavorites,
+            });
+            renderRegexView();
+            toastr.info("已取消新建正则");
+          },
+        });
+      },
+      onAbort: () => {
+        renderRegexView();
+      },
+    });
+  }
+
+  function getPresetRegexScriptsByName(presetName) {
+    try {
+      if (!presetName) return [];
+      const pm = getContext().getPresetManager();
+      if (!pm) return [];
+      const scripts = pm.readPresetExtensionField({
+        name: presetName,
+        path: "regex_scripts",
+      });
+      return Array.isArray(scripts) ? scripts : [];
+    } catch (err) {
+      console.debug("[CFM] getPresetRegexScriptsByName:", err);
+      return [];
+    }
+  }
+
+  async function openOwnedRegexInsertDialog(options = {}) {
+    const {
+      scripts = [],
+      newScriptId = "",
+      onApply,
+      onSkip,
+      onCancel,
+    } = options || {};
+    const ownedScripts = Array.isArray(scripts) ? scripts : [];
+    const overlay = $('<div class="cfm-sort-dialog-overlay"></div>');
+    const dialog = $(`
+      <div class="cfm-sort-dialog cfm-sort-dialog-insert">
+        <div class="cfm-sort-dialog-header">
+          <span class="cfm-sort-dialog-title"><i class="fa-solid fa-sort"></i> 正则脚本排序</span>
+          <span class="cfm-sort-dialog-desc">新正则已创建，请先点击分隔线中间的 <i class="fa-solid fa-plus"></i> 选择插入位置，再点击确认按钮提交；点击跳过则保持在最后。</span>
+        </div>
+        <div class="cfm-sort-dialog-body">
+          <div class="cfm-sort-dialog-list cfm-sort-dialog-list-insert"></div>
+        </div>
+        <div class="cfm-sort-dialog-footer">
+          <button class="cfm-btn cfm-sort-dialog-confirm cfm-sort-dialog-insert-confirm" disabled><i class="fa-solid fa-check"></i> 确认插入</button>
+          <button class="cfm-btn cfm-sort-dialog-skip"><i class="fa-solid fa-forward"></i> 跳过</button>
+          <button class="cfm-btn cfm-sort-dialog-cancel"><i class="fa-solid fa-xmark"></i> 取消</button>
+        </div>
+      </div>
+    `);
+
+    const sortList = dialog.find(".cfm-sort-dialog-list");
+    const confirmBtn = dialog.find(".cfm-sort-dialog-insert-confirm");
+    let selectedTargetIndex = null;
+
+    function closeDialog() {
+      overlay.remove();
+      dialog.remove();
+    }
+
+    async function handleCancel() {
+      try {
+        if (typeof onCancel === "function") {
+          await onCancel();
+        }
+        closeDialog();
+      } catch (err) {
+        console.error("[CFM] 取消新建局部正则失败:", err);
+        toastr.error("取消新建失败: " + (err?.message || err));
+      }
+    }
+
+    function updateSelectedInsertSlot() {
+      sortList.find(".cfm-sort-insert-slot").each(function () {
+        const slot = $(this);
+        const isSelected =
+          Number(slot.attr("data-target-index")) === selectedTargetIndex;
+        const lineEl = slot.find(".cfm-sort-insert-line");
+        const btnEl = slot.find(".cfm-sort-insert-btn");
+        btnEl.attr(
+          "title",
+          isSelected ? "已选中，点击确认插入" : "选择插入到此处",
+        );
+        btnEl.attr("aria-pressed", isSelected ? "true" : "false");
+        btnEl.css({
+          color: isSelected ? "#a6e3a1" : "#89b4fa",
+          borderColor: isSelected
+            ? "rgba(166, 227, 161, 0.5)"
+            : "rgba(137, 180, 250, 0.35)",
+          backgroundColor: isSelected
+            ? "rgba(166, 227, 161, 0.14)"
+            : "var(--SmartThemeBlurTintColor, #1e1e2e)",
+          boxShadow: isSelected
+            ? "0 0 0 3px rgba(166, 227, 161, 0.08)"
+            : "none",
+        });
+        lineEl.css({
+          background: isSelected
+            ? "linear-gradient(90deg, rgba(166, 227, 161, 0.12) 0%, rgba(166, 227, 161, 0.55) 50%, rgba(166, 227, 161, 0.12) 100%)"
+            : "linear-gradient(90deg, rgba(137, 180, 250, 0.08) 0%, rgba(137, 180, 250, 0.35) 50%, rgba(137, 180, 250, 0.08) 100%)",
+        });
+      });
+      confirmBtn.prop("disabled", selectedTargetIndex === null);
+    }
+
+    const renderInsertSlot = (targetIndex) => {
+      const slot = $(`
+        <div class="cfm-sort-insert-slot" data-target-index="${targetIndex}">
+          <div class="cfm-sort-insert-line"></div>
+          <button class="cfm-sort-insert-btn" title="选择插入到此处"><i class="fa-solid fa-plus"></i></button>
+        </div>
+      `);
+      slot.find(".cfm-sort-insert-btn").on("click touchend", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        selectedTargetIndex = targetIndex;
+        updateSelectedInsertSlot();
+      });
+      return slot;
+    };
+
+    sortList.append(renderInsertSlot(0));
+    ownedScripts.forEach((script, index) => {
+      const placementLabel = getRegexPlacementLabel(script?.placement);
+      const row = $(`
+        <div class="cfm-sort-row cfm-sort-row-static ${script?.disabled ? "cfm-sort-row-disabled" : ""} ${script?.id === newScriptId ? "cfm-sort-row-new" : ""}" data-script-id="${escapeHtml(script?.id || "")}">
+          <span class="cfm-sort-row-static-index">${index + 1}</span>
+          <span class="cfm-sort-row-name">${escapeHtml(script?.scriptName || "(未命名)")}</span>
+          <span class="cfm-sort-row-folder">${escapeHtml(placementLabel || "当前作用域")}</span>
+          ${script?.id === newScriptId ? '<span class="cfm-sort-row-badge cfm-sort-badge-new">新建</span>' : ""}
+        </div>
+      `);
+      sortList.append(row);
+      sortList.append(renderInsertSlot(index + 1));
+    });
+
+    updateSelectedInsertSlot();
+
+    confirmBtn.on("click touchend", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (selectedTargetIndex === null) {
+        toastr.warning("请先选择一个插入位置");
+        return;
+      }
+      const newOrder = moveRegexScriptInArray(
+        ownedScripts,
+        newScriptId,
+        selectedTargetIndex,
+      );
+      if (!newOrder) {
+        toastr.warning("未找到新建的正则脚本，无法调整位置");
+        closeDialog();
+        return;
+      }
+      try {
+        if (typeof onApply === "function") {
+          await onApply(newOrder);
+        }
+        closeDialog();
+      } catch (err) {
+        console.error("[CFM] 保存局部正则插入位置失败:", err);
+        toastr.error("保存插入位置失败: " + (err?.message || err));
+      }
+    });
+
+    dialog.find(".cfm-sort-dialog-skip").on("click touchend", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      try {
+        if (typeof onSkip === "function") {
+          await onSkip();
+        }
+        closeDialog();
+      } catch (err) {
+        console.error("[CFM] 跳过局部正则插入排序失败:", err);
+        toastr.error("跳过失败: " + (err?.message || err));
+      }
+    });
+
+    dialog.find(".cfm-sort-dialog-cancel").on("click touchend", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      await handleCancel();
+    });
+
+    overlay.on("click", async (e) => {
+      if ($(e.target).is(overlay)) await handleCancel();
+    });
+
+    $("#cfm-popup").append(overlay).append(dialog);
+  }
+
+  function createGlobalRegexFromManager() {
+    ensureResourceSettings();
+    if (cfmRegexCreateMonitorTimer) {
+      toastr.info("正在等待当前新建正则完成");
+      return;
+    }
+
+    const nativeCreateBtn = $("#open_regex_editor");
+    if (!nativeCreateBtn.length) {
+      toastr.warning(
+        "未找到原生全局正则编辑器入口，请先确保原生正则功能已完成加载",
+      );
+      return;
+    }
+
+    const beforeIds = new Set(
+      getRegexGlobalScripts()
+        .map((script) => script?.id)
+        .filter(Boolean),
+    );
+    monitorNewGlobalRegexScript(beforeIds);
+    nativeCreateBtn.trigger("click");
+  }
+
+  function createCharScopedRegexFromManager(avatar, charName) {
+    ensureResourceSettings();
+    if (cfmRegexCreateMonitorTimer) {
+      toastr.info("正在等待当前新建正则完成");
+      return;
+    }
+
+    const nativeCreateBtn = $("#open_scoped_editor");
+    if (!nativeCreateBtn.length) {
+      toastr.warning(
+        "未找到原生角色正则编辑器入口，请先确保原生正则功能已完成加载",
+      );
+      return;
+    }
+
+    const getScripts = () => {
+      const chars = getCharacters();
+      const ch = chars.find((item) => item.avatar === avatar);
+      const scripts = ch?.data?.extensions?.regex_scripts;
+      return Array.isArray(scripts) ? scripts : [];
+    };
+
+    const beforeIds = new Set(
+      getScripts()
+        .map((script) => script?.id)
+        .filter(Boolean),
+    );
+
+    monitorNewOwnedRegexScript({
+      beforeIds,
+      getScripts,
+      onCreated: async (newScript, currentScripts) => {
+        rerenderCurrentView();
+        await openOwnedRegexInsertDialog({
+          scripts: currentScripts,
+          newScriptId: String(newScript.id),
+          onApply: async (newOrder) => {
+            await saveCharRegexScripts(avatar, newOrder);
+            rerenderCurrentView();
+            toastr.success(
+              `角色「${charName || "当前角色"}」的新正则插入位置已保存`,
+            );
+          },
+          onSkip: () => {
+            rerenderCurrentView();
+            toastr.success("新正则已创建，顺序保持在最后");
+          },
+          onCancel: async () => {
+            const latestScripts = getScripts();
+            const nextScripts = latestScripts.filter(
+              (script) => String(script?.id || "") !== String(newScript.id),
+            );
+            await saveCharRegexScripts(avatar, nextScripts);
+            rerenderCurrentView();
+            toastr.info(`已取消角色「${charName || "当前角色"}」的新正则`);
+          },
+        });
+      },
+      onAbort: () => {
+        rerenderCurrentView();
+      },
+    });
+    nativeCreateBtn.trigger("click");
+  }
+
+  function createPresetRegexFromManager(presetName) {
+    ensureResourceSettings();
+    if (cfmRegexCreateMonitorTimer) {
+      toastr.info("正在等待当前新建正则完成");
+      return;
+    }
+
+    const nativeCreateBtn = $("#open_preset_editor");
+    if (!nativeCreateBtn.length) {
+      toastr.warning(
+        "未找到原生预设正则编辑器入口，请先确保原生正则功能已完成加载",
+      );
+      return;
+    }
+
+    const getScripts = () => getPresetRegexScriptsByName(presetName);
+    const beforeIds = new Set(
+      getScripts()
+        .map((script) => script?.id)
+        .filter(Boolean),
+    );
+
+    monitorNewOwnedRegexScript({
+      beforeIds,
+      getScripts,
+      onCreated: async (newScript, currentScripts) => {
+        rerenderCurrentView();
+        await openOwnedRegexInsertDialog({
+          scripts: currentScripts,
+          newScriptId: String(newScript.id),
+          onApply: async (newOrder) => {
+            await savePresetRegexScripts(newOrder);
+            rerenderCurrentView();
+            toastr.success(
+              `预设「${presetName || "当前预设"}」的新正则插入位置已保存`,
+            );
+          },
+          onSkip: () => {
+            rerenderCurrentView();
+            toastr.success("新正则已创建，顺序保持在最后");
+          },
+          onCancel: async () => {
+            const latestScripts = getScripts();
+            const nextScripts = latestScripts.filter(
+              (script) => String(script?.id || "") !== String(newScript.id),
+            );
+            await savePresetRegexScripts(nextScripts);
+            rerenderCurrentView();
+            toastr.info(`已取消预设「${presetName || "当前预设"}」的新正则`);
+          },
+        });
+      },
+      onAbort: () => {
+        rerenderCurrentView();
+      },
+    });
+    nativeCreateBtn.trigger("click");
+  }
+
   // --- 正则辅助函数 ---
   function getRegexPlacementLabel(placement) {
     const labels = {
@@ -28402,6 +37104,31 @@ jQuery(async () => {
       : "";
     // 使用与世界书相同的 cfm-wi-toggle 样式
     const toggleHtml = `<div class="cfm-wi-toggle ${isDisabled ? "" : "cfm-wi-toggle-on"}" title="${isDisabled ? "已禁用 - 点击启用" : "已启用 - 点击禁用"}"><i class="fa-solid fa-toggle-${isDisabled ? "off" : "on"}"></i></div>`;
+    const isDelSel =
+      scriptType === 0 &&
+      cfmResDeleteMode &&
+      script.id &&
+      cfmResDeleteSelected.has(script.id);
+    const isExportSel =
+      scriptType === 0 &&
+      cfmExportMode &&
+      script.id &&
+      cfmExportSelected.has(script.id);
+    const isMSel =
+      scriptType === 0 &&
+      cfmMultiSelectMode &&
+      script.id &&
+      cfmMultiSelected.has(script.id);
+    const checkHtml =
+      scriptType === 0
+        ? cfmResDeleteMode
+          ? `<div class="cfm-res-delete-checkbox ${isDelSel ? "cfm-res-delete-checked" : ""}"><i class="fa-${isDelSel ? "solid" : "regular"} fa-square${isDelSel ? "-check" : ""}"></i></div>`
+          : cfmExportMode
+            ? `<div class="cfm-export-checkbox ${isExportSel ? "cfm-export-checked" : ""}"><i class="fa-${isExportSel ? "solid" : "regular"} fa-square${isExportSel ? "-check" : ""}"></i></div>`
+            : cfmMultiSelectMode
+              ? `<div class="cfm-multisel-checkbox ${isMSel ? "cfm-multisel-checked" : ""}"><i class="fa-${isMSel ? "solid" : "regular"} fa-square${isMSel ? "-check" : ""}"></i></div>`
+              : ""
+        : "";
     // 收藏星标（仅全局正则显示）
     const fav =
       scriptType === 0 && script.id ? isResFavorite("regex", script.id) : false;
@@ -28415,6 +37142,7 @@ jQuery(async () => {
            data-script-type="${scriptType}"
            data-owner="${escapeHtml(ownerLabel || "")}"
            ${scriptType === 0 ? 'draggable="true"' : ""}>
+        ${checkHtml}
         ${toggleHtml}
         <div class="cfm-row-name">
           <span>${escapeHtml(script.scriptName || "(未命名)")}</span>
@@ -28490,7 +37218,74 @@ jQuery(async () => {
   }
 
   // ==================== 正则激活分组管理 ====================
+  function getExistingRegexScriptIdSet() {
+    return new Set(
+      (extension_settings.regex ?? [])
+        .map((script) => String(script?.id || "").trim())
+        .filter(Boolean),
+    );
+  }
+
+  function filterExistingRegexScriptIds(scriptIds, existingIdSet) {
+    const validIdSet = existingIdSet || getExistingRegexScriptIdSet();
+    return Array.from(
+      new Set(
+        (Array.isArray(scriptIds) ? scriptIds : [])
+          .map((scriptId) => String(scriptId || "").trim())
+          .filter((scriptId) => scriptId && validIdSet.has(scriptId)),
+      ),
+    );
+  }
+
+  function sanitizeRegexActivePresetState(save = false) {
+    const presets = extension_settings[extensionName].regexActivePresets || [];
+    const existingIdSet = getExistingRegexScriptIdSet();
+    let presetChanged = false;
+    for (const preset of presets) {
+      if (!preset || typeof preset !== "object") continue;
+      const prevScripts = Array.isArray(preset.scripts) ? preset.scripts : [];
+      const nextScripts = filterExistingRegexScriptIds(
+        prevScripts,
+        existingIdSet,
+      );
+      const sameScripts =
+        prevScripts.length === nextScripts.length &&
+        prevScripts.every((scriptId, idx) => scriptId === nextScripts[idx]);
+      if (!sameScripts || !Array.isArray(preset.scripts)) {
+        preset.scripts = nextScripts;
+        presetChanged = true;
+      }
+    }
+    const applied = Array.isArray(
+      extension_settings[extensionName]._regexAppliedPresetIndices,
+    )
+      ? extension_settings[extensionName]._regexAppliedPresetIndices
+      : [];
+    const nextApplied = applied.filter(
+      (idx) =>
+        presets[idx] &&
+        Array.isArray(presets[idx].scripts) &&
+        presets[idx].scripts.length > 0,
+    );
+    const appliedChanged =
+      applied.length !== nextApplied.length ||
+      applied.some((idx, i) => idx !== nextApplied[i]);
+    if (appliedChanged) {
+      extension_settings[extensionName]._regexAppliedPresetIndices =
+        nextApplied;
+    }
+    if (save && (presetChanged || appliedChanged)) {
+      getContext().saveSettingsDebounced();
+    }
+    return {
+      presets,
+      existingIdSet,
+      changed: presetChanged || appliedChanged,
+    };
+  }
+
   function getRegexActivePresets() {
+    sanitizeRegexActivePresetState(true);
     return extension_settings[extensionName].regexActivePresets || [];
   }
   function saveRegexActivePreset(name, scriptIds) {
@@ -28534,11 +37329,22 @@ jQuery(async () => {
    * @param {boolean} enable - true=启用, false=禁用
    */
   function toggleRegexScriptActivation(scriptId, enable) {
+    const normalizedScriptId = String(scriptId || "").trim();
+    if (!normalizedScriptId) return false;
+    const existingIdSet = getExistingRegexScriptIdSet();
+    if (!existingIdSet.has(normalizedScriptId)) {
+      console.info(
+        `[CFM] 已跳过不存在的正则脚本激活切换：${normalizedScriptId}`,
+      );
+      return false;
+    }
     const globalScripts = extension_settings.regex ?? [];
-    const script = globalScripts.find((s) => s.id === scriptId);
+    const script = globalScripts.find((s) => s.id === normalizedScriptId);
     if (script) {
       script.disabled = !enable;
+      return true;
     }
+    return false;
   }
 
   /**
@@ -28905,7 +37711,9 @@ jQuery(async () => {
           <div class="cfm-edit-field">
             <label>包含的正则脚本</label>
             <div class="cfm-wi-preset-edit-search">
-              <select class="cfm-edit-input" id="cfm-regex-preset-edit-folder-filter">${buildRegexFilterOptions()}</select>
+              <div class="cfm-nf-btn menu_button fa-solid fa-folder-tree" id="cfm-regex-preset-edit-folder-btn" title="文件夹过滤"></div>
+              <span class="cfm-wi-preset-edit-folder-label" id="cfm-regex-preset-edit-folder-label">显示全部</span>
+              <input type="hidden" id="cfm-regex-preset-edit-folder-filter" value="__all__">
               <input type="text" class="cfm-edit-input" id="cfm-regex-preset-edit-filter" placeholder="搜索...">
             </div>
             <div class="cfm-wi-preset-edit-list">${scriptsHtml}</div>
@@ -28920,10 +37728,18 @@ jQuery(async () => {
     $("body").append(overlay);
 
     // 组合过滤函数
+    function getRegexFolderFilterLabel(folderVal) {
+      if (!folderVal || folderVal === "__all__") return "显示全部";
+      if (folderVal === "__ungrouped__") return "未归类正则脚本";
+      return folderTree[folderVal]?.displayName || folderVal;
+    }
+
     function applyEditFilters() {
-      const folderVal = overlay
-        .find("#cfm-regex-preset-edit-folder-filter")
-        .val();
+      const folderVal =
+        overlay.find("#cfm-regex-preset-edit-folder-filter").val() || "__all__";
+      overlay
+        .find("#cfm-regex-preset-edit-folder-label")
+        .text(getRegexFolderFilterLabel(folderVal));
       const q = overlay
         .find("#cfm-regex-preset-edit-filter")
         .val()
@@ -28958,10 +37774,45 @@ jQuery(async () => {
         $(this).toggle(folderMatch && textMatch);
       });
     }
-    overlay
-      .find("#cfm-regex-preset-edit-folder-filter")
-      .on("change", applyEditFilters);
+    overlay.find("#cfm-regex-preset-edit-folder-btn").on("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      showPresetEditFolderFilterPanel($(this), {
+        panelKey: "regex_preset_edit",
+        folderTree,
+        getDisplayName: (id) => folderTree[id]?.displayName || id,
+        getItemCount: (folderId) => {
+          if (folderId === "__ungrouped__") {
+            return globalScripts.filter((script) => {
+              const grp = globalGroups[script.id];
+              return !grp || !folderTree[grp];
+            }).length;
+          }
+          const allowedFolders = new Set();
+          function collectChildren(pid) {
+            allowedFolders.add(pid);
+            const children = Object.keys(folderTree).filter(
+              (id) => folderTree[id].parentId === pid,
+            );
+            for (const c of children) collectChildren(c);
+          }
+          collectChildren(folderId);
+          return globalScripts.filter((script) =>
+            allowedFolders.has(globalGroups[script.id]),
+          ).length;
+        },
+        ungroupedLabel: "未归类正则脚本",
+        currentFilter:
+          overlay.find("#cfm-regex-preset-edit-folder-filter").val() ||
+          "__all__",
+        onSelect: (folderId) => {
+          overlay.find("#cfm-regex-preset-edit-folder-filter").val(folderId);
+          applyEditFilters();
+        },
+      });
+    });
     overlay.find("#cfm-regex-preset-edit-filter").on("input", applyEditFilters);
+    applyEditFilters();
     overlay.find(".cfm-edit-popup-cancel").on("click", () => overlay.remove());
     overlay.on("click", (e) => {
       if ($(e.target).is(overlay)) overlay.remove();
@@ -28999,108 +37850,42 @@ jQuery(async () => {
   }
 
   // ==================== 正则脚本排序弹窗 ====================
-  async function openRegexSortDialog() {
+  async function openRegexSortDialog(options = {}) {
     ensureResourceSettings();
+    const {
+      insertMode = false,
+      newScriptId = "",
+      onCancelInsert,
+    } = options || {};
     const globalScripts = getRegexGlobalScripts();
     const folderTree = extension_settings[extensionName].regexFolderTree || {};
     const globalGroups =
       extension_settings[extensionName].regexGlobalGroups || {};
 
     // 加载 jQuery UI Sortable（若尚未加载）
-    if (!$.fn.sortable) {
+    if (!insertMode && !$.fn.sortable) {
       await import("../../../../lib/jquery-ui.min.js").catch(() => {});
     }
 
     // 构建弹窗 DOM
     const overlay = $('<div class="cfm-sort-dialog-overlay"></div>');
     const dialog = $(`
-      <div class="cfm-sort-dialog">
+      <div class="cfm-sort-dialog ${insertMode ? "cfm-sort-dialog-insert" : ""}">
         <div class="cfm-sort-dialog-header">
           <span class="cfm-sort-dialog-title"><i class="fa-solid fa-sort"></i> 正则脚本排序</span>
-          <span class="cfm-sort-dialog-desc">拖动 <i class="fa-solid fa-grip-vertical"></i> 手柄调整脚本在 extension_settings.regex 中的顺序（影响执行优先级）</span>
+          <span class="cfm-sort-dialog-desc">${insertMode ? '新正则已创建，请先点击分隔线中间的 <i class="fa-solid fa-plus"></i> 选择插入位置，再点击确认按钮提交；点击跳过则保持在最后。' : '拖动 <i class="fa-solid fa-grip-vertical"></i> 手柄调整脚本在 extension_settings.regex 中的顺序（影响执行优先级）'}</span>
         </div>
         <div class="cfm-sort-dialog-body">
-          <div class="cfm-sort-dialog-list"></div>
+          <div class="cfm-sort-dialog-list ${insertMode ? "cfm-sort-dialog-list-insert" : ""}"></div>
         </div>
         <div class="cfm-sort-dialog-footer">
-          <button class="cfm-btn cfm-sort-dialog-confirm"><i class="fa-solid fa-check"></i> 确认排序</button>
-          <button class="cfm-btn cfm-sort-dialog-cancel"><i class="fa-solid fa-xmark"></i> 取消</button>
+          ${insertMode ? '<button class="cfm-btn cfm-sort-dialog-confirm cfm-sort-dialog-insert-confirm" disabled><i class="fa-solid fa-check"></i> 确认插入</button><button class="cfm-btn cfm-sort-dialog-skip"><i class="fa-solid fa-forward"></i> 跳过</button><button class="cfm-btn cfm-sort-dialog-cancel"><i class="fa-solid fa-xmark"></i> 取消</button>' : '<button class="cfm-btn cfm-sort-dialog-confirm"><i class="fa-solid fa-check"></i> 确认排序</button><button class="cfm-btn cfm-sort-dialog-cancel"><i class="fa-solid fa-xmark"></i> 取消</button>'}
         </div>
       </div>
     `);
 
     const sortList = dialog.find(".cfm-sort-dialog-list");
-
-    // 填充脚本列表行
-    for (const s of globalScripts) {
-      const groupId = globalGroups[s.id];
-      const folderName =
-        groupId && folderTree[groupId]
-          ? folderTree[groupId].displayName || groupId
-          : "未归类";
-      const isDisabled = !!s.disabled;
-      const row = $(`
-        <div class="cfm-sort-row ${isDisabled ? "cfm-sort-row-disabled" : ""}" data-script-id="${escapeHtml(s.id || "")}">
-          <span class="cfm-sort-handle" title="拖拽排序"><i class="fa-solid fa-grip-vertical"></i></span>
-          <button class="cfm-sort-arrow-btn cfm-sort-arrow-up" title="上移"><i class="fa-solid fa-chevron-up"></i></button>
-          <button class="cfm-sort-arrow-btn cfm-sort-arrow-down" title="下移"><i class="fa-solid fa-chevron-down"></i></button>
-          <span class="cfm-sort-row-name">${escapeHtml(s.scriptName || "(未命名)")}</span>
-          <span class="cfm-sort-row-folder">${escapeHtml(folderName)}</span>
-        </div>
-      `);
-      // 上移按钮
-      row.find(".cfm-sort-arrow-up").on("click touchend", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const prev = row.prev(".cfm-sort-row");
-        if (prev.length) {
-          row.insertBefore(prev);
-          updateArrowStates();
-        }
-      });
-      // 下移按钮
-      row.find(".cfm-sort-arrow-down").on("click touchend", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const next = row.next(".cfm-sort-row");
-        if (next.length) {
-          row.insertAfter(next);
-          updateArrowStates();
-        }
-      });
-      sortList.append(row);
-    }
-
-    // 更新所有箭头按钮的禁用状态（首行上箭头 & 末行下箭头置灰不可点）
-    function updateArrowStates() {
-      const rows = sortList.find(".cfm-sort-row");
-      rows.each(function (i) {
-        const isFirst = i === 0;
-        const isLast = i === rows.length - 1;
-        $(this)
-          .find(".cfm-sort-arrow-up")
-          .prop("disabled", isFirst)
-          .toggleClass("cfm-sort-arrow-disabled", isFirst);
-        $(this)
-          .find(".cfm-sort-arrow-down")
-          .prop("disabled", isLast)
-          .toggleClass("cfm-sort-arrow-disabled", isLast);
-      });
-    }
-
-    // 初始化箭头状态
-    updateArrowStates();
-
-    // 启用拖拽
-    sortList.sortable({
-      handle: ".cfm-sort-handle",
-      axis: "y",
-      tolerance: "pointer",
-      placeholder: "cfm-sort-placeholder",
-      forcePlaceholderSize: true,
-      stop: () => updateArrowStates(),
-    });
-    sortList.disableSelection();
+    let insertCancelHandler = null;
 
     // 关闭弹窗辅助
     function closeDialog() {
@@ -29108,39 +37893,240 @@ jQuery(async () => {
       dialog.remove();
     }
 
-    // 确认排序
-    dialog.find(".cfm-sort-dialog-confirm").on("click touchend", async (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const newOrder = [];
-      sortList.find(".cfm-sort-row[data-script-id]").each(function () {
-        const id = $(this).attr("data-script-id");
-        const script = globalScripts.find((s) => s.id === id);
-        if (script) newOrder.push(script);
-      });
-      // 补充未在列表中出现的脚本（防御性）
-      for (const s of globalScripts) {
-        if (!newOrder.find((n) => n.id === s.id)) newOrder.push(s);
-      }
-      extension_settings.regex = newOrder;
-      getContext().saveSettingsDebounced();
-      // 同步原生正则 UI 面板顺序 & 刷新 CFM 视图
-      await syncNativeRegexState();
-      renderRegexView();
-      toastr.success(`正则脚本顺序已保存（共 ${newOrder.length} 个）`);
-      closeDialog();
-    });
+    function getFolderName(script) {
+      const groupId = globalGroups[script.id];
+      return groupId && folderTree[groupId]
+        ? folderTree[groupId].displayName || groupId
+        : "未归类";
+    }
 
-    // 取消
-    dialog.find(".cfm-sort-dialog-cancel").on("click touchend", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      closeDialog();
-    });
+    if (insertMode) {
+      let selectedTargetIndex = null;
+      const confirmBtn = dialog.find(".cfm-sort-dialog-insert-confirm");
+      insertCancelHandler = async () => {
+        try {
+          if (typeof onCancelInsert === "function") {
+            await onCancelInsert();
+          }
+          closeDialog();
+        } catch (err) {
+          console.error("[CFM] 取消新建全局正则失败:", err);
+          toastr.error("取消新建失败: " + (err?.message || err));
+        }
+      };
+
+      function updateSelectedInsertSlot() {
+        sortList.find(".cfm-sort-insert-slot").each(function () {
+          const slot = $(this);
+          const isSelected =
+            Number(slot.attr("data-target-index")) === selectedTargetIndex;
+          const lineEl = slot.find(".cfm-sort-insert-line");
+          const btnEl = slot.find(".cfm-sort-insert-btn");
+          btnEl.attr(
+            "title",
+            isSelected ? "已选中，点击确认插入" : "选择插入到此处",
+          );
+          btnEl.attr("aria-pressed", isSelected ? "true" : "false");
+          btnEl.css({
+            color: isSelected ? "#a6e3a1" : "#89b4fa",
+            borderColor: isSelected
+              ? "rgba(166, 227, 161, 0.5)"
+              : "rgba(137, 180, 250, 0.35)",
+            backgroundColor: isSelected
+              ? "rgba(166, 227, 161, 0.14)"
+              : "var(--SmartThemeBlurTintColor, #1e1e2e)",
+            boxShadow: isSelected
+              ? "0 0 0 3px rgba(166, 227, 161, 0.08)"
+              : "none",
+          });
+          lineEl.css({
+            background: isSelected
+              ? "linear-gradient(90deg, rgba(166, 227, 161, 0.12) 0%, rgba(166, 227, 161, 0.55) 50%, rgba(166, 227, 161, 0.12) 100%)"
+              : "linear-gradient(90deg, rgba(137, 180, 250, 0.08) 0%, rgba(137, 180, 250, 0.35) 50%, rgba(137, 180, 250, 0.08) 100%)",
+          });
+        });
+        confirmBtn.prop("disabled", selectedTargetIndex === null);
+      }
+
+      const renderInsertSlot = (targetIndex) => {
+        const slot = $(`
+          <div class="cfm-sort-insert-slot" data-target-index="${targetIndex}">
+            <div class="cfm-sort-insert-line"></div>
+            <button class="cfm-sort-insert-btn" title="选择插入到此处"><i class="fa-solid fa-plus"></i></button>
+          </div>
+        `);
+        slot.find(".cfm-sort-insert-btn").on("click touchend", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          selectedTargetIndex = targetIndex;
+          updateSelectedInsertSlot();
+        });
+        return slot;
+      };
+
+      sortList.append(renderInsertSlot(0));
+      globalScripts.forEach((script, index) => {
+        const row = $(`
+          <div class="cfm-sort-row cfm-sort-row-static ${script.disabled ? "cfm-sort-row-disabled" : ""} ${script.id === newScriptId ? "cfm-sort-row-new" : ""}" data-script-id="${escapeHtml(script.id || "")}">
+            <span class="cfm-sort-row-static-index">${index + 1}</span>
+            <span class="cfm-sort-row-name">${escapeHtml(script.scriptName || "(未命名)")}</span>
+            <span class="cfm-sort-row-folder">${escapeHtml(getFolderName(script))}</span>
+            ${script.id === newScriptId ? '<span class="cfm-sort-row-badge cfm-sort-badge-new">新建</span>' : ""}
+          </div>
+        `);
+        sortList.append(row).append(renderInsertSlot(index + 1));
+      });
+
+      updateSelectedInsertSlot();
+
+      confirmBtn.on("click touchend", async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (selectedTargetIndex === null) {
+          toastr.warning("请先选择一个插入位置");
+          return;
+        }
+        const newOrder = moveRegexScriptToIndex(
+          newScriptId,
+          selectedTargetIndex,
+        );
+        if (!newOrder) {
+          toastr.warning("未找到新建的正则脚本，无法调整位置");
+          closeDialog();
+          return;
+        }
+        await applyRegexGlobalOrder(newOrder, "新正则插入位置已保存");
+        closeDialog();
+      });
+
+      dialog.find(".cfm-sort-dialog-skip").on("click touchend", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        renderRegexView();
+        toastr.success("新正则已创建，顺序保持在最后");
+        closeDialog();
+      });
+
+      dialog.find(".cfm-sort-dialog-cancel").on("click touchend", async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        await insertCancelHandler();
+      });
+    } else {
+      // 填充脚本列表行
+      for (const s of globalScripts) {
+        const isDisabled = !!s.disabled;
+        const row = $(`
+          <div class="cfm-sort-row ${isDisabled ? "cfm-sort-row-disabled" : ""}" data-script-id="${escapeHtml(s.id || "")}">
+            <span class="cfm-sort-handle" title="拖拽排序"><i class="fa-solid fa-grip-vertical"></i></span>
+            <button class="cfm-sort-arrow-btn cfm-sort-arrow-up" title="上移"><i class="fa-solid fa-chevron-up"></i></button>
+            <button class="cfm-sort-arrow-btn cfm-sort-arrow-down" title="下移"><i class="fa-solid fa-chevron-down"></i></button>
+            <span class="cfm-sort-row-name">${escapeHtml(s.scriptName || "(未命名)")}</span>
+            <span class="cfm-sort-row-folder">${escapeHtml(getFolderName(s))}</span>
+          </div>
+        `);
+        // 上移按钮
+        row.find(".cfm-sort-arrow-up").on("click touchend", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const prev = row.prev(".cfm-sort-row");
+          if (prev.length) {
+            row.insertBefore(prev);
+            updateArrowStates();
+            flashDraggedElement(row);
+          }
+        });
+        // 下移按钮
+        row.find(".cfm-sort-arrow-down").on("click touchend", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const next = row.next(".cfm-sort-row");
+          if (next.length) {
+            row.insertAfter(next);
+            updateArrowStates();
+            flashDraggedElement(row);
+          }
+        });
+        sortList.append(row);
+      }
+
+      // 更新所有箭头按钮的禁用状态（首行上箭头 & 末行下箭头置灰不可点）
+      function updateArrowStates() {
+        const rows = sortList.find(".cfm-sort-row");
+        rows.each(function (i) {
+          const isFirst = i === 0;
+          const isLast = i === rows.length - 1;
+          $(this)
+            .find(".cfm-sort-arrow-up")
+            .prop("disabled", isFirst)
+            .toggleClass("cfm-sort-arrow-disabled", isFirst);
+          $(this)
+            .find(".cfm-sort-arrow-down")
+            .prop("disabled", isLast)
+            .toggleClass("cfm-sort-arrow-disabled", isLast);
+        });
+      }
+
+      // 初始化箭头状态
+      updateArrowStates();
+
+      // 启用拖拽
+      if (cfmIsTouchDevice()) {
+        sortList.find(".cfm-sort-handle").css("display", "none");
+      }
+      sortList.sortable({
+        handle: ".cfm-sort-handle",
+        disabled: cfmIsTouchDevice(),
+        axis: "y",
+        tolerance: "pointer",
+        placeholder: "cfm-sort-placeholder",
+        forcePlaceholderSize: true,
+        stop: (_event, ui) => {
+          updateArrowStates();
+          flashDraggedElement(ui.item);
+        },
+      });
+      if (!cfmIsTouchDevice()) sortList.disableSelection();
+
+      // 确认排序
+      dialog
+        .find(".cfm-sort-dialog-confirm")
+        .on("click touchend", async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const newOrder = [];
+          sortList.find(".cfm-sort-row[data-script-id]").each(function () {
+            const id = $(this).attr("data-script-id");
+            const script = globalScripts.find((s) => s.id === id);
+            if (script) newOrder.push(script);
+          });
+          // 补充未在列表中出现的脚本（防御性）
+          for (const s of globalScripts) {
+            if (!newOrder.find((n) => n.id === s.id)) newOrder.push(s);
+          }
+          await applyRegexGlobalOrder(
+            newOrder,
+            `正则脚本顺序已保存（共 ${newOrder.length} 个）`,
+          );
+          closeDialog();
+        });
+
+      // 取消
+      dialog.find(".cfm-sort-dialog-cancel").on("click touchend", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        closeDialog();
+      });
+    }
 
     // 点击遮罩关闭
-    overlay.on("click", (e) => {
-      if ($(e.target).is(overlay)) closeDialog();
+    overlay.on("click", async (e) => {
+      if (!$(e.target).is(overlay)) return;
+      if (insertMode && typeof insertCancelHandler === "function") {
+        await insertCancelHandler();
+        return;
+      }
+      closeDialog();
     });
 
     // 挂载到主弹窗容器内（确保 position:absolute 相对于 #cfm-popup 定位）
@@ -29363,6 +38349,57 @@ jQuery(async () => {
           }
         });
         rightList.append(scriptRow);
+      }
+
+      if (cfmMultiSelectMode) {
+        const visible = getVisibleResourceIds();
+        const allSel =
+          visible.length > 0 && visible.every((id) => cfmMultiSelected.has(id));
+        const toolbar = $(`
+          <div class="cfm-multisel-toolbar">
+            <button class="cfm-btn cfm-btn-sm cfm-multisel-selectall"><i class="fa-solid fa-${allSel ? "square-minus" : "square-check"}"></i> ${allSel ? "全不选" : "全选"}</button>
+            <button class="cfm-btn cfm-btn-sm cfm-multisel-range ${cfmMultiSelectRangeMode ? "cfm-range-active" : ""}"><i class="fa-solid fa-arrow-down-short-wide"></i> 框选${cfmMultiSelectRangeMode ? "(开)" : ""}</button>
+            <button class="cfm-btn cfm-btn-sm cfm-multisel-activate" title="批量激活正则脚本"><i class="fa-solid fa-toggle-on"></i> 激活</button>
+            <button class="cfm-btn cfm-btn-sm cfm-multisel-deactivate" title="批量取消激活正则脚本"><i class="fa-solid fa-toggle-off"></i> 取消激活</button>
+            <span class="cfm-multisel-count">${cfmMultiSelected.size > 0 ? `已选 ${cfmMultiSelected.size} 项` : ""}</span>
+          </div>
+        `);
+        toolbar.find(".cfm-multisel-selectall").on("click touchend", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          selectAllVisible();
+          executeRegexSearch();
+        });
+        toolbar.find(".cfm-multisel-range").on("click touchend", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          cfmMultiSelectRangeMode = !cfmMultiSelectRangeMode;
+          if (cfmMultiSelectRangeMode) cfmMultiSelectLastClicked = null;
+          executeRegexSearch();
+        });
+        toolbar
+          .find(".cfm-multisel-activate")
+          .on("click touchend", async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const changed = await applyGlobalRegexMultiActivation(
+              Array.from(cfmMultiSelected),
+              true,
+            );
+            if (changed) executeRegexSearch();
+          });
+        toolbar
+          .find(".cfm-multisel-deactivate")
+          .on("click touchend", async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const changed = await applyGlobalRegexMultiActivation(
+              Array.from(cfmMultiSelected),
+              false,
+            );
+            if (changed) executeRegexSearch();
+          });
+        rightList.prepend(toolbar);
       }
     }
   }
@@ -29894,6 +38931,8 @@ jQuery(async () => {
           <div class="cfm-multisel-toolbar">
             <button class="cfm-btn cfm-btn-sm cfm-multisel-selectall"><i class="fa-solid fa-${allSel ? "square-minus" : "square-check"}"></i> ${allSel ? "全不选" : "全选"}</button>
             <button class="cfm-btn cfm-btn-sm cfm-multisel-range ${cfmMultiSelectRangeMode ? "cfm-range-active" : ""}"><i class="fa-solid fa-arrow-down-short-wide"></i> 框选${cfmMultiSelectRangeMode ? "(开)" : ""}</button>
+            <button class="cfm-btn cfm-btn-sm cfm-multisel-activate" title="批量激活正则脚本"><i class="fa-solid fa-toggle-on"></i> 激活</button>
+            <button class="cfm-btn cfm-btn-sm cfm-multisel-deactivate" title="批量取消激活正则脚本"><i class="fa-solid fa-toggle-off"></i> 取消激活</button>
             <span class="cfm-multisel-count">${cfmMultiSelected.size > 0 ? `已选 ${cfmMultiSelected.size} 项` : ""}</span>
           </div>
         `);
@@ -29910,6 +38949,28 @@ jQuery(async () => {
           if (cfmMultiSelectRangeMode) cfmMultiSelectLastClicked = null;
           renderRegexView();
         });
+        toolbar
+          .find(".cfm-multisel-activate")
+          .on("click touchend", async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const changed = await applyGlobalRegexMultiActivation(
+              Array.from(cfmMultiSelected),
+              true,
+            );
+            if (changed) renderRegexView();
+          });
+        toolbar
+          .find(".cfm-multisel-deactivate")
+          .on("click touchend", async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const changed = await applyGlobalRegexMultiActivation(
+              Array.from(cfmMultiSelected),
+              false,
+            );
+            if (changed) renderRegexView();
+          });
         rightList.prepend(toolbar);
       }
     }
@@ -30874,23 +39935,7 @@ jQuery(async () => {
             if (aid) allItems.push(aid);
           });
         } else {
-          allItems = [];
-          $("#world_editor_select option").each(function () {
-            const v = $(this).val();
-            const t = $(this).text();
-            if (v !== "" && t !== "--- 选择以编辑 ---") allItems.push(t);
-          });
-          // 如果原生过滤激活，被 detach 的 option 也要加入
-          if (
-            _worldInfoDetachedOptions &&
-            _worldInfoDetachedOptions.length > 0
-          ) {
-            for (const opt of _worldInfoDetachedOptions) {
-              const v = $(opt).val();
-              const t = $(opt).text();
-              if (v !== "" && t !== "--- 选择以编辑 ---") allItems.push(t);
-            }
-          }
+          allItems = collectWorldInfoNamesFromDom();
         }
         uncatCount = allItems.filter((name) => {
           const grp = groups[name];
@@ -30906,6 +39951,165 @@ jQuery(async () => {
       html += `</div>`;
     }
     return html;
+  }
+
+  function showPresetEditFolderFilterPanel(anchorEl, config) {
+    const {
+      panelKey,
+      folderTree,
+      getDisplayName,
+      getItemCount,
+      ungroupedLabel,
+      currentFilter,
+      onSelect,
+    } = config;
+
+    $(".cfm-nf-panel").remove();
+    $(document).off(
+      "mousedown.cfmPresetEditFolderPanel touchstart.cfmPresetEditFolderPanel",
+    );
+
+    if (!showPresetEditFolderFilterPanel._expanded)
+      showPresetEditFolderFilterPanel._expanded = {};
+    if (!showPresetEditFolderFilterPanel._expanded[panelKey])
+      showPresetEditFolderFilterPanel._expanded[panelKey] = new Set();
+    const expandedSet = showPresetEditFolderFilterPanel._expanded[panelKey];
+
+    function buildHtml(parentId, depth, activeId) {
+      const folderIds = Object.keys(folderTree)
+        .filter((id) => folderTree[id].parentId === parentId)
+        .sort((a, b) =>
+          getDisplayName(a).localeCompare(getDisplayName(b), "zh-CN"),
+        );
+      let html = "";
+      for (const fid of folderIds) {
+        const children = Object.keys(folderTree).filter(
+          (id) => folderTree[id].parentId === fid,
+        );
+        const hasChildren = children.length > 0;
+        const isExpanded = expandedSet.has(fid);
+        const isActive = fid === activeId;
+        html += `<div class="cfm-nf-item${isActive ? " cfm-nf-active" : ""}" data-folder-id="${escapeHtml(fid)}" style="padding-left:${12 + depth * 16}px;">`;
+        if (hasChildren) {
+          html += `<span class="cfm-nf-arrow ${isExpanded ? "cfm-nf-expanded" : ""}" data-folder-id="${escapeHtml(fid)}"><i class="fa-solid fa-chevron-right"></i></span>`;
+        } else {
+          html += `<span class="cfm-nf-arrow-placeholder"></span>`;
+        }
+        html += `<i class="fa-solid fa-folder cfm-nf-icon"></i>`;
+        html += `<span class="cfm-nf-name">${escapeHtml(getDisplayName(fid))}</span>`;
+        html += `<span class="cfm-nf-count">${getItemCount(fid)}</span>`;
+        html += `</div>`;
+        if (hasChildren && isExpanded) {
+          html += buildHtml(fid, depth + 1, activeId);
+        }
+      }
+      if (parentId === null) {
+        const isUncatActive = activeId === "__ungrouped__";
+        html += `<div class="cfm-nf-item cfm-nf-uncat${isUncatActive ? " cfm-nf-active" : ""}" data-folder-id="__ungrouped__" style="padding-left:12px;">`;
+        html += `<span class="cfm-nf-arrow-placeholder"></span>`;
+        html += `<i class="fa-solid fa-box-open cfm-nf-icon"></i>`;
+        html += `<span class="cfm-nf-name">${escapeHtml(ungroupedLabel)}</span>`;
+        html += `<span class="cfm-nf-count">${getItemCount("__ungrouped__")}</span>`;
+        html += `</div>`;
+      }
+      return html;
+    }
+
+    const panel = $(
+      `<div class="cfm-nf-panel" data-preset-folder-panel="${escapeHtml(panelKey)}"></div>`,
+    );
+    panel.css("z-index", 100001);
+    const toolbar = $(
+      `<div class="cfm-nf-toolbar">
+        <span class="cfm-nf-title"><i class="fa-solid fa-folder-tree"></i> 文件夹过滤</span>
+        <span class="cfm-nf-toolbar-actions">
+          <i class="fa-solid fa-angles-down cfm-nf-expand-all" title="展开全部"></i>
+          <i class="fa-solid fa-angles-up cfm-nf-collapse-all" title="收起全部"></i>
+        </span>
+      </div>`,
+    );
+    const showAllBtn =
+      $(`<div class="cfm-nf-item cfm-nf-show-all${!currentFilter || currentFilter === "__all__" ? " cfm-nf-active" : ""}">
+      <i class="fa-solid fa-layer-group cfm-nf-icon"></i>
+      <span class="cfm-nf-name">显示全部</span>
+    </div>`);
+    const treeContainer = $('<div class="cfm-nf-tree"></div>');
+
+    function renderTree(activeId) {
+      treeContainer.html(buildHtml(null, 0, activeId));
+    }
+
+    renderTree(currentFilter);
+    panel.append(toolbar, showAllBtn, treeContainer);
+    panel.on("mousedown mouseup click touchstart touchend", (e) =>
+      e.stopPropagation(),
+    );
+    $("body").append(panel);
+
+    const anchorRect = anchorEl[0].getBoundingClientRect();
+    let top = anchorRect.bottom + 4;
+    let left = anchorRect.left;
+    const panelWidth = panel.outerWidth();
+    const panelHeight = panel.outerHeight();
+    if (left + panelWidth > window.innerWidth)
+      left = window.innerWidth - panelWidth - 8;
+    if (left < 4) left = 4;
+    if (top + panelHeight > window.innerHeight)
+      top = anchorRect.top - panelHeight - 4;
+    panel.css({ top: `${top}px`, left: `${left}px` });
+
+    panel.on("click", ".cfm-nf-arrow", function (e) {
+      e.stopPropagation();
+      const fid = $(this).attr("data-folder-id");
+      if (expandedSet.has(fid)) expandedSet.delete(fid);
+      else expandedSet.add(fid);
+      renderTree(currentFilter);
+    });
+
+    toolbar.find(".cfm-nf-expand-all").on("click", function (e) {
+      e.stopPropagation();
+      Object.keys(folderTree).forEach((id) => expandedSet.add(id));
+      renderTree(currentFilter);
+    });
+
+    toolbar.find(".cfm-nf-collapse-all").on("click", function (e) {
+      e.stopPropagation();
+      expandedSet.clear();
+      renderTree(currentFilter);
+    });
+
+    showAllBtn.on("click", function (e) {
+      e.stopPropagation();
+      onSelect("__all__");
+      panel.remove();
+      $(document).off(
+        "mousedown.cfmPresetEditFolderPanel touchstart.cfmPresetEditFolderPanel",
+      );
+    });
+
+    panel.on("click", ".cfm-nf-item", function (e) {
+      if ($(e.target).closest(".cfm-nf-arrow").length) return;
+      e.stopPropagation();
+      onSelect($(this).attr("data-folder-id") || "__all__");
+      panel.remove();
+      $(document).off(
+        "mousedown.cfmPresetEditFolderPanel touchstart.cfmPresetEditFolderPanel",
+      );
+    });
+
+    setTimeout(() => {
+      $(document).on(
+        "mousedown.cfmPresetEditFolderPanel touchstart.cfmPresetEditFolderPanel",
+        function (e) {
+          if (!$(e.target).closest(".cfm-nf-panel, .cfm-nf-btn").length) {
+            $(".cfm-nf-panel").remove();
+            $(document).off(
+              "mousedown.cfmPresetEditFolderPanel touchstart.cfmPresetEditFolderPanel",
+            );
+          }
+        },
+      );
+    }, 0);
   }
 
   /**
@@ -31321,6 +40525,9 @@ jQuery(async () => {
   let _bgDetachedElements = [];
   let _globalWIDetachedOptions = [];
 
+  // 缓存 select 原始 option 顺序（value 列表），用于恢复时保持原生排序
+  const _selectOriginalOrder = new Map();
+
   /**
    * 预设过滤：通过 detach/append option 实现过滤
    * 兼容原生 select、select2、以及第三方美化脚本
@@ -31332,6 +40539,9 @@ jQuery(async () => {
     const pm = getContext().getPresetManager();
     const targetSelect =
       pm && pm.select && pm.select.length ? pm.select : select;
+
+    // 保存原始 option 顺序（仅首次）
+    _saveSelectOriginalOrder(targetSelect);
 
     // 先恢复之前 detach 的 option
     if (_presetDetachedOptions.length > 0) {
@@ -31366,6 +40576,9 @@ jQuery(async () => {
   function applyWorldInfoFilter() {
     const select = $("#world_editor_select");
     if (!select.length) return;
+
+    // 保存原始 option 顺序（仅首次）
+    _saveSelectOriginalOrder(select);
 
     // 先恢复之前 detach 的 option
     if (_worldInfoDetachedOptions.length > 0) {
@@ -31423,6 +40636,9 @@ jQuery(async () => {
   function applyThemeFilter() {
     const select = $("#themes");
     if (!select.length) return;
+
+    // 保存原始 option 顺序（仅首次）
+    _saveSelectOriginalOrder(select);
 
     // 先恢复之前 detach 的 option
     if (_themeDetachedOptions.length > 0) {
@@ -31496,11 +40712,42 @@ jQuery(async () => {
       const v = $(this).val();
       return v !== "" && v !== "gui" && v !== "default";
     });
-    rest.sort(function (a, b) {
-      return $(a).text().trim().localeCompare($(b).text().trim());
-    });
+    // 优先按保存的原始顺序还原，保持与 SillyTavern 原生排序一致
+    const selId = selectEl.attr("id") || "";
+    const origOrder = _selectOriginalOrder.get(selId);
+    if (origOrder && origOrder.length > 0) {
+      const orderMap = new Map();
+      origOrder.forEach((v, i) => orderMap.set(v, i));
+      rest.sort(function (a, b) {
+        const va = $(a).val();
+        const vb = $(b).val();
+        const ia = orderMap.has(va) ? orderMap.get(va) : 999999;
+        const ib = orderMap.has(vb) ? orderMap.get(vb) : 999999;
+        if (ia !== ib) return ia - ib;
+        // 新增的 option（不在原始顺序中）按 localeCompare 排在末尾
+        return $(a).text().trim().localeCompare($(b).text().trim(), "zh-CN");
+      });
+    } else {
+      rest.sort(function (a, b) {
+        return $(a).text().trim().localeCompare($(b).text().trim(), "zh-CN");
+      });
+    }
     selectEl.append(placeholder);
     selectEl.append(rest);
+  }
+
+  /**
+   * 保存 select 的原始 option 顺序（仅首次保存）
+   */
+  function _saveSelectOriginalOrder(selectEl) {
+    const selId = selectEl.attr("id") || "";
+    if (!selId || _selectOriginalOrder.has(selId)) return;
+    const order = [];
+    selectEl.find("option").each(function () {
+      const v = $(this).val();
+      if (v !== "" && v !== "gui" && v !== "default") order.push(v);
+    });
+    if (order.length > 0) _selectOriginalOrder.set(selId, order);
   }
 
   /**
@@ -31558,6 +40805,72 @@ jQuery(async () => {
       btn.removeClass("cfm-nf-btn-active");
       btn.attr("title", "文件夹过滤");
     }
+  }
+
+  let cfmNativePresetGroupButtonObserver = null;
+  let cfmNativePresetGroupButtonBootObserver = null;
+
+  function injectNativePresetGroupButton() {
+    const header = $(
+      "#completion_prompt_manager .completion_prompt_manager_header",
+    ).first();
+    if (!header.length) return false;
+
+    const promptBlock = header
+      .find(".completion_prompt_manager_header_advanced")
+      .first();
+    if (!promptBlock.length) return false;
+    if (promptBlock.find(".cfm-native-preset-group-btn").length) return true;
+
+    const btn = $(
+      `<span class="cfm-native-preset-group-btn menu_button menu_button_icon fa-solid fa-layer-group" title="预设条目激活分组" style="margin-left:0.35em;display:flex;align-items:center;"></span>`,
+    );
+    promptBlock.append(btn);
+    btn.on("click touchend", async function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      const presetName = getCurrentPresetName();
+      if (!presetName) {
+        toastr.warning("请先选择一个预设");
+        return;
+      }
+      await showPresetDetailGroupPanel(presetName);
+    });
+    return true;
+  }
+
+  function setupNativePresetGroupButtonObserver() {
+    const attachObserver = () => {
+      const root = document.querySelector("#completion_prompt_manager");
+      if (!root) return false;
+      if (cfmNativePresetGroupButtonObserver) {
+        injectNativePresetGroupButton();
+        return true;
+      }
+      cfmNativePresetGroupButtonObserver = new MutationObserver(() => {
+        injectNativePresetGroupButton();
+      });
+      cfmNativePresetGroupButtonObserver.observe(root, {
+        childList: true,
+        subtree: true,
+      });
+      injectNativePresetGroupButton();
+      return true;
+    };
+
+    if (attachObserver()) return;
+    if (cfmNativePresetGroupButtonBootObserver) return;
+
+    cfmNativePresetGroupButtonBootObserver = new MutationObserver(() => {
+      if (attachObserver()) {
+        cfmNativePresetGroupButtonBootObserver.disconnect();
+        cfmNativePresetGroupButtonBootObserver = null;
+      }
+    });
+    cfmNativePresetGroupButtonBootObserver.observe(document.body, {
+      childList: true,
+      subtree: true,
+    });
   }
 
   /**
@@ -31715,6 +41028,9 @@ jQuery(async () => {
   function applyGlobalWorldInfoFilter() {
     const select = $("#world_info");
     if (!select.length) return;
+
+    // 保存原始 option 顺序（仅首次）
+    _saveSelectOriginalOrder(select);
 
     // 先 destroy select2
     const hasSelect2 = select.hasClass("select2-hidden-accessible");
@@ -32153,6 +41469,7 @@ jQuery(async () => {
   autoCleanRedundantTags(); // 自动清理多余的路径标签
   initButton();
   injectNativeFilterButtons();
+  setupNativePresetGroupButtonObserver();
   setupCharWorldPopupFilterObserver();
   setupPersonaSelectionPopupEnhancer();
   initPinnedChatHook(); // 初始化聊天置顶 welcome-screen hook
@@ -32163,6 +41480,10 @@ jQuery(async () => {
   // 监听角色卡列表重新渲染事件，自动重新应用过滤
   const eventSource = getContext().eventSource;
   const event_types = getContext().eventTypes;
+  setTimeout(() => {
+    sanitizeCurrentOpenAIPresetRuntimeState(true);
+  }, 0);
+
   if (eventSource && event_types) {
     // 角色卡列表翻页/重新渲染后重新应用过滤（仅回退方案需要）
     // 当 entitiesFilter 可用时，过滤在数据层（分页前）完成，无需 DOM 级重新过滤
@@ -32220,25 +41541,40 @@ jQuery(async () => {
         }
       });
     }
+
+    let autoApplyWiTimer = null;
+    let autoApplyQrTimer = null;
+    const scheduleAutoApplyBoundGroups = () => {
+      if (autoApplyWiTimer) clearTimeout(autoApplyWiTimer);
+      if (autoApplyQrTimer) clearTimeout(autoApplyQrTimer);
+      autoApplyWiTimer = setTimeout(() => {
+        autoApplyWiTimer = null;
+        autoApplyWiPresets();
+      }, 300);
+      autoApplyQrTimer = setTimeout(() => {
+        autoApplyQrTimer = null;
+        autoApplyQrPresets();
+      }, 350);
+    };
+
     // 角色/聊天切换时自动应用/关闭世界书分组和快速回复分组
     if (event_types.CHAT_CHANGED) {
       eventSource.on(event_types.CHAT_CHANGED, () => {
         // 延迟执行，确保角色信息已更新
-        setTimeout(() => autoApplyWiPresets(), 300);
-        setTimeout(() => autoApplyQrPresets(), 350);
+        scheduleAutoApplyBoundGroups();
       });
     }
     // 预设切换时自动应用/关闭世界书分组和快速回复分组
     if (event_types.OAI_PRESET_CHANGED_AFTER) {
       eventSource.on(event_types.OAI_PRESET_CHANGED_AFTER, () => {
-        setTimeout(() => autoApplyWiPresets(), 300);
-        setTimeout(() => autoApplyQrPresets(), 350);
+        sanitizeCurrentOpenAIPresetRuntimeState(true);
+        scheduleAutoApplyBoundGroups();
       });
     }
     if (event_types.PRESET_CHANGED) {
       eventSource.on(event_types.PRESET_CHANGED, () => {
-        setTimeout(() => autoApplyWiPresets(), 300);
-        setTimeout(() => autoApplyQrPresets(), 350);
+        sanitizeCurrentOpenAIPresetRuntimeState(true);
+        scheduleAutoApplyBoundGroups();
       });
     }
   }
