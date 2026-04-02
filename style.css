@@ -322,6 +322,10 @@
   border-bottom: 1px solid var(--SmartThemeBorderColor, #45475a);
   background-color: rgba(0, 0, 0, 0.05);
 }
+.cfm-right-header .cfm-rh-path.cfm-rh-path-dragging {
+  opacity: 1;
+  color: var(--SmartThemeQuoteColor, #89b4fa);
+}
 .cfm-right-header .cfm-rh-path {
   flex: 1;
   opacity: 0.6;
@@ -1690,21 +1694,29 @@
 
 /* ========== 移动端适配 ========== */
 @media (max-width: 768px) {
-  /* 主弹窗全屏显示 */
+  /* 参考酒馆原生 drawer：从顶部栏下方开始，占据剩余视口，而不是整屏覆盖 */
+  #cfm-overlay {
+    --cfm-mobile-topbar-offset: max(35px, calc(env(safe-area-inset-top, 0px) + 35px));
+    top: var(--cfm-mobile-topbar-offset);
+    left: 0;
+    right: 0;
+    bottom: 0;
+    align-items: stretch;
+    justify-content: flex-start;
+    padding-top: 0;
+    height: calc(100dvh - var(--cfm-mobile-topbar-offset));
+    box-sizing: border-box;
+  }
+
+  /* 主弹窗占满 overlay 本身，不再自己额外制造顶部留白 */
   #cfm-popup {
     width: 100vw;
-    height: 100vh;
-    height: 100dvh; /* 动态视口高度，排除浏览器导航栏 */
+    height: calc(100dvh - var(--cfm-mobile-topbar-offset));
     max-width: 100vw;
-    max-height: 100vh;
-    max-height: 100dvh;
+    max-height: calc(100dvh - var(--cfm-mobile-topbar-offset));
     border-radius: 0;
     padding-top: 0;
-  }
-  #cfm-overlay {
-    padding-top: 0;
-    height: 100vh;
-    height: 100dvh;
+    flex: 0 0 auto;
   }
 
   /* 为底部可滚动列表添加安全边距，防止被浏览器导航栏遮挡 */
@@ -1728,12 +1740,20 @@
     border-bottom: 2px solid var(--SmartThemeBorderColor, #45475a);
     resize: vertical;
     overflow: hidden;
+    position: relative;
   }
 
   /* 右侧内容区域 */
   .cfm-right-pane {
     flex: 1;
     min-height: 0;
+  }
+
+  .cfm-right-header .cfm-rh-path {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
   }
 
   /* 增大触摸目标尺寸 */
@@ -1900,6 +1920,7 @@
     background: var(--SmartThemeBorderColor, #45475a);
     border-radius: 2px;
     opacity: 0.5;
+    pointer-events: none;
   }
 }
 
@@ -5480,6 +5501,50 @@ input[type="number"].cfm-wi-de-input::-webkit-outer-spin-button {
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 8px;
   margin: 6px 0 8px;
+}
+#cfm-overlay .cfm-preset-detail-opening-loading {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(17, 17, 27, 0.52);
+  backdrop-filter: blur(1.5px);
+  z-index: 10020;
+}
+#cfm-overlay .cfm-preset-detail-opening-loading-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  min-width: 200px;
+  padding: 12px 18px;
+  max-width: min(calc(100vw - 32px), 440px);
+  border-radius: 999px;
+  background: rgba(24, 24, 37, 0.98);
+  border: 1px solid rgba(137, 180, 250, 0.28);
+  color: #eef4ff;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+  text-align: center;
+  white-space: normal;
+  word-break: break-word;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.32);
+}
+#cfm-overlay .cfm-preset-detail-opening-loading-box span {
+  color: inherit;
+  opacity: 1;
+}
+#cfm-overlay .cfm-preset-detail-opening-loading-box i {
+  color: #89b4fa;
+  flex: 0 0 auto;
 }
 .cfm-persona-detail-section {
   display: flex;

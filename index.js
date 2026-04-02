@@ -471,6 +471,23 @@ jQuery(async () => {
   // 获取世界书列表（带缓存，优先从DOM读取避免网络延迟）
   let _worldInfoNamesCache = null;
   let _worldInfoPreloadPromise = null;
+  let _personaListCache = null;
+  let _personaListCacheTime = 0;
+  const PERSONA_LIST_CACHE_TTL = 5000;
+  // world-info.js 模块缓存：首次 import 后缓存引用，后续同步读取避免 await 延迟
+  let _wiModuleCache = null;
+  // 预加载 persona 数据的 Promise
+  let _personasPreloadPromise = null;
+  /** 获取已缓存的 world-info.js 模块引用（同步），返回 null 如果尚未缓存 */
+  function getWiModuleSync() {
+    return _wiModuleCache;
+  }
+  /** 确保 world-info.js 模块已缓存（异步），返回模块引用 */
+  async function ensureWiModule() {
+    if (_wiModuleCache) return _wiModuleCache;
+    _wiModuleCache = await import("../../../world-info.js");
+    return _wiModuleCache;
+  }
   function normalizeWorldInfoNameList(names) {
     const result = [];
     const seen = new Set();
@@ -2729,6 +2746,10 @@ jQuery(async () => {
     btn.find(".drawer-toggle").on("click touchend", (e) => {
       e.preventDefault();
       e.stopPropagation();
+      if ($("#cfm-overlay").length > 0) {
+        closeMainPopup();
+        return;
+      }
       showMainPopup();
     });
     // 创建按钮后自动检测并应用自定义图标（延迟等待美化主题样式加载）
@@ -7191,14 +7212,14 @@ jQuery(async () => {
 
   // ==================== 世界书激活状态管理 ====================
   /**
-   * 获取当前角色关联的世界书名称集合（主绑定 + charLore辅助世界书）
+   * 获取当前角色关联的世界书名称集合（同步优先，主绑定 + charLore辅助世界书）
    * 这些世界书的 toggle 应锁定不可操作
    */
-  async function getCharBoundWorldBooks() {
+  function getCharBoundWorldBooks() {
     const bound = new Set();
     try {
-      const wiModule = await import("../../../world-info.js");
-      const worldInfoObj = wiModule.world_info;
+      const wiMod = getWiModuleSync();
+      const worldInfoObj = wiMod ? wiMod.world_info : null;
       // 当前角色的主绑定世界书
       const ctx = getContext();
       const charId = ctx.characterId;
@@ -7235,39 +7256,39 @@ jQuery(async () => {
   }
 
   /**
-   * 判断世界书是否已在全局激活列表中
+   * 判断世界书是否已在全局激活列表中（同步优先）
    */
-  async function isWorldInfoActive(name) {
-    try {
-      const wiModule = await import("../../../world-info.js");
-      return wiModule.selected_world_info.includes(name);
-    } catch (e) {
-      // fallback: 从 DOM 读取
-      const select = $("#world_info");
-      const selectedNames = [];
-      select.find("option:selected").each(function () {
-        selectedNames.push($(this).text());
-      });
-      return selectedNames.includes(name);
+  function isWorldInfoActive(name) {
+    const wiMod = getWiModuleSync();
+    if (wiMod && Array.isArray(wiMod.selected_world_info)) {
+      return wiMod.selected_world_info.includes(name);
     }
+    // fallback: 从 DOM 读取
+    const select = $("#world_info");
+    const selectedNames = [];
+    select.find("option:selected").each(function () {
+      selectedNames.push($(this).text());
+    });
+    return selectedNames.includes(name);
   }
 
   /**
-   * 批量获取所有世界书的激活状态
+   * 批量获取所有世界书的激活状态（同步优先）
    * @returns {Set<string>} 当前激活的世界书名称集合
    */
-  async function getActiveWorldInfoSet() {
-    try {
-      const wiModule = await import("../../../world-info.js");
-      return new Set(wiModule.selected_world_info);
-    } catch (e) {
-      const select = $("#world_info");
-      const names = new Set();
-      select.find("option:selected").each(function () {
-        names.add($(this).text());
-      });
-      return names;
+  function getActiveWorldInfoSet() {
+    // 优先从已缓存的模块同步读取
+    const wiMod = getWiModuleSync();
+    if (wiMod && Array.isArray(wiMod.selected_world_info)) {
+      return new Set(wiMod.selected_world_info);
     }
+    // 回退：从 DOM 读取
+    const select = $("#world_info");
+    const names = new Set();
+    select.find("option:selected").each(function () {
+      names.add($(this).text());
+    });
+    return names;
   }
 
   function getExistingWorldInfoNameSet() {
@@ -7370,7 +7391,7 @@ jQuery(async () => {
       return false;
     }
     try {
-      const wiModule = await import("../../../world-info.js");
+      const wiModule = await ensureWiModule();
       const selectedWI = wiModule.selected_world_info;
       const worldNames = wiModule.world_names;
       const idx = selectedWI.indexOf(normalizedName);
@@ -7401,7 +7422,7 @@ jQuery(async () => {
    */
   async function applyWorldInfoPreset(bookNames, charBound) {
     try {
-      const wiModule = await import("../../../world-info.js");
+      const wiModule = await ensureWiModule();
       const selectedWI = wiModule.selected_world_info;
       const worldNames = wiModule.world_names;
       const existingNameSet = getExistingWorldInfoNameSet();
@@ -12507,39 +12528,41 @@ jQuery(async () => {
     );
     if (!rows.length) return $();
 
+    const getRowMeta = (rowEl) => {
+      const row = $(rowEl);
+      const nameEl = row.find(".completion_prompt_manager_prompt_name").first();
+      return {
+        row,
+        identifier: String(row.attr("data-pm-identifier") || "").trim(),
+        dataName: String(nameEl.attr("data-pm-name") || "").trim(),
+        visibleName: String(nameEl.text() || "")
+          .replace(/\s+/g, " ")
+          .trim(),
+        rowText: String(row.text() || "")
+          .replace(/\s+/g, " ")
+          .trim(),
+      };
+    };
+
+    const metas = rows.toArray().map(getRowMeta);
+
     if (normalizedPromptKey) {
-      const keyMatch = rows
-        .filter(function () {
-          return (
-            String($(this).attr("data-pm-identifier") || "") ===
-            normalizedPromptKey
-          );
-        })
-        .first();
-      if (keyMatch.length) return keyMatch;
+      const exactKeyMatch = metas.find(
+        (meta) => meta.identifier === normalizedPromptKey,
+      );
+      if (exactKeyMatch) return exactKeyMatch.row;
     }
 
     if (normalizedPromptLabel) {
-      const labelMatch = rows
-        .filter(function () {
-          const row = $(this);
-          const dataName = String(
-            row
-              .find(".completion_prompt_manager_prompt_name")
-              .attr("data-pm-name") || "",
-          ).trim();
-          const visibleName = String(
-            row.find(".completion_prompt_manager_prompt_name").text() || "",
-          )
-            .replace(/\s+/g, " ")
-            .trim();
-          return (
-            dataName === normalizedPromptLabel ||
-            visibleName.includes(normalizedPromptLabel)
-          );
-        })
-        .first();
-      if (labelMatch.length) return labelMatch;
+      const exactDataNameMatch = metas.find(
+        (meta) => meta.dataName === normalizedPromptLabel,
+      );
+      if (exactDataNameMatch) return exactDataNameMatch.row;
+
+      const exactVisibleNameMatch = metas.find(
+        (meta) => meta.visibleName === normalizedPromptLabel,
+      );
+      if (exactVisibleNameMatch) return exactVisibleNameMatch.row;
     }
 
     return $();
@@ -12581,6 +12604,85 @@ jQuery(async () => {
   let _nativePopupCleanupBound = false;
   /** 编辑非当前预设条目时，保存原始预设选择值以便弹窗关闭后恢复 */
   let _presetValueToRestore = null;
+  /** 临时静默“切换带正则预设时要求重载聊天”的原生 toast */
+  let _suppressPresetRegexToastDepth = 0;
+  let _suppressPresetRegexToastUntil = 0;
+  let _originalToastrFnsForPresetRegexToast = null;
+
+  function shouldSuppressPresetRegexToast(message) {
+    const text = String(message || "").trim();
+    if (
+      _suppressPresetRegexToastDepth <= 0 ||
+      Date.now() > _suppressPresetRegexToastUntil ||
+      !text
+    ) {
+      return false;
+    }
+
+    const normalized = text.toLowerCase();
+    const hasRegexHint =
+      text.includes("正则") ||
+      normalized.includes("regex") ||
+      text.includes("脚本");
+    const hasReloadHint =
+      text.includes("重新加载聊天") ||
+      text.includes("重载聊天") ||
+      text.includes("重新加载") ||
+      text.includes("重载") ||
+      normalized.includes("reload");
+
+    return hasRegexHint && hasReloadHint;
+  }
+
+  function beginSuppressPresetRegexToast(durationMs = 2600) {
+    _suppressPresetRegexToastDepth += 1;
+    _suppressPresetRegexToastUntil = Math.max(
+      _suppressPresetRegexToastUntil,
+      Date.now() + Math.max(0, Number(durationMs) || 0),
+    );
+    if (_suppressPresetRegexToastDepth !== 1) return;
+    if (!window.toastr) return;
+
+    const toastLevels = ["info", "warning", "success", "error"];
+    _originalToastrFnsForPresetRegexToast = {};
+
+    for (const level of toastLevels) {
+      if (typeof window.toastr[level] !== "function") continue;
+      const originalFn = window.toastr[level].bind(window.toastr);
+      _originalToastrFnsForPresetRegexToast[level] = originalFn;
+      window.toastr[level] = function (...args) {
+        if (shouldSuppressPresetRegexToast(args[0])) {
+          return null;
+        }
+        return originalFn(...args);
+      };
+    }
+  }
+
+  function endSuppressPresetRegexToast(delayMs = 0) {
+    const finalize = () => {
+      if (_suppressPresetRegexToastDepth > 0) {
+        _suppressPresetRegexToastDepth -= 1;
+      }
+      if (_suppressPresetRegexToastDepth !== 0) return;
+      if (_originalToastrFnsForPresetRegexToast && window.toastr) {
+        for (const [level, originalFn] of Object.entries(
+          _originalToastrFnsForPresetRegexToast,
+        )) {
+          window.toastr[level] = originalFn;
+        }
+      }
+      _originalToastrFnsForPresetRegexToast = null;
+      _suppressPresetRegexToastUntil = 0;
+    };
+
+    const delay = Math.max(0, Number(delayMs) || 0);
+    if (delay > 0) {
+      window.setTimeout(finalize, delay);
+      return;
+    }
+    finalize();
+  }
   function resetNativePresetPromptPopupStyles() {
     const popupEl = document.getElementById(
       "completion_prompt_manager_popup",
@@ -12606,6 +12708,59 @@ jQuery(async () => {
    * 在原生弹窗的关闭/保存按钮上绑定清理事件（仅绑定一次）。
    * 当用户点击关闭或保存后，延迟清理 bringNativePresetPromptPopupToFront 遗留的 inline style。
    */
+  async function persistCurrentPresetAfterNativePromptSave() {
+    try {
+      const context = getContext();
+      const pm = context?.getPresetManager?.();
+      if (!pm || String(pm.apiId || "") !== "openai") return false;
+
+      const presetName = String(
+        pm.select?.find("option:selected").text() || "",
+      ).trim();
+      if (!presetName) return false;
+
+      const runtimePresetList =
+        typeof pm.getPresetList === "function" ? pm.getPresetList() : null;
+      const runtimeSettings = runtimePresetList?.settings;
+      if (!runtimeSettings || typeof runtimeSettings !== "object") {
+        return false;
+      }
+
+      const runtimePresetData = structuredClone(runtimeSettings);
+      sanitizePresetPromptStructure(runtimePresetData);
+      await pm.savePreset(presetName, runtimePresetData, { skipUpdate: true });
+
+      try {
+        const presetList =
+          typeof pm.getPresetList === "function" ? pm.getPresetList() : null;
+        if (presetList) {
+          const { presets, preset_names } = presetList;
+          if (Array.isArray(presets) && preset_names) {
+            const nextPresetData = structuredClone(runtimePresetData);
+            if (Array.isArray(preset_names)) {
+              const idx = preset_names.indexOf(presetName);
+              if (idx !== -1) {
+                presets[idx] = nextPresetData;
+              }
+            } else {
+              const idx = preset_names[presetName];
+              if (Number.isInteger(idx) && idx >= 0 && idx < presets.length) {
+                presets[idx] = nextPresetData;
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.warn("[CFM] 同步已保存预设到内存列表失败", error);
+      }
+
+      return true;
+    } catch (error) {
+      console.warn("[CFM] 持久化原生预设条目编辑结果失败", error);
+      return false;
+    }
+  }
+
   function bindNativePopupCleanup() {
     if (_nativePopupCleanupBound) return;
     const popupEl = document.getElementById(
@@ -12614,20 +12769,34 @@ jQuery(async () => {
     if (!popupEl) return;
     _nativePopupCleanupBound = true;
 
+    const saveButtonId = "completion_prompt_manager_popup_entry_form_save";
     const closeButtonIds = [
       "completion_prompt_manager_popup_close_button",
       "completion_prompt_manager_popup_entry_form_close",
-      "completion_prompt_manager_popup_entry_form_save",
+      saveButtonId,
     ];
     for (const btnId of closeButtonIds) {
       const btn = document.getElementById(btnId);
       if (btn) {
+        const isSaveButton = btnId === saveButtonId;
         btn.addEventListener("click", () => {
-          // 延迟清理，等原生代码先完成弹窗隐藏
-          setTimeout(() => {
+          // 对于保存按钮，需要等原生 handleSavePrompt 完成，
+          // 再把当前运行时设置静默写回到当前选中的预设文件，
+          // 最后才恢复原来的预设选择。
+          // 对于关闭按钮，等弹窗隐藏后即可恢复。
+          const delay = isSaveButton ? 600 : 200;
+          setTimeout(async () => {
             resetNativePresetPromptPopupStyles();
+            if (isSaveButton) {
+              const persisted = await persistCurrentPresetAfterNativePromptSave();
+              if (!persisted) {
+                toastr.error(
+                  "预设条目已在运行时更新，但写回预设文件失败，请手动点击“更新当前预设”",
+                );
+              }
+            }
             restorePresetSelectionAfterEdit();
-          }, 100);
+          }, delay);
         });
       }
     }
@@ -12645,11 +12814,17 @@ jQuery(async () => {
       if (!pm?.select) return;
       const currentValue = String(pm.select.val() || "");
       if (currentValue !== valueToRestore) {
-        pm.select.val(valueToRestore);
-        pm.select.trigger("change");
+        beginSuppressPresetRegexToast();
+        try {
+          pm.select.val(valueToRestore);
+          pm.select.trigger("change");
+        } finally {
+          window.setTimeout(() => endSuppressPresetRegexToast(), 300);
+        }
       }
     } catch (e) {
       console.warn("[CFM] 恢复预设选择失败", e);
+      endSuppressPresetRegexToast();
     }
   }
 
@@ -12670,89 +12845,489 @@ jQuery(async () => {
     const pm = getContext().getPresetManager();
     if (!pm?.select) return false;
 
-    const bringNativePresetPromptPopupToFront = () => {
-      const popupEl = document.getElementById(
-        "completion_prompt_manager_popup",
-      );
-      if (!popupEl) return false;
+    beginSuppressPresetRegexToast();
+    try {
+      const hasVisibleNativePresetPromptPopup = () => {
+        const popupEl = document.getElementById(
+          "completion_prompt_manager_popup",
+        );
+        if (!(popupEl instanceof HTMLElement)) return false;
+        const style = window.getComputedStyle(popupEl);
+        return (
+          style.display !== "none" &&
+          style.visibility !== "hidden" &&
+          popupEl.getBoundingClientRect().height > 0 &&
+          popupEl.getBoundingClientRect().width > 0
+        );
+      };
 
-      const overlayEl = document.getElementById("cfm-overlay");
-      const overlayZ = Number.parseInt(
-        overlayEl ? window.getComputedStyle(overlayEl).zIndex : "",
-        10,
-      );
-      const nextZ = Number.isFinite(overlayZ) ? overlayZ + 2 : 10002;
+      const bringNativePresetPromptPopupToFront = () => {
+        const popupEl = document.getElementById(
+          "completion_prompt_manager_popup",
+        );
+        if (!popupEl) return false;
 
-      // 只提升 z-index，不改变 position/layout 属性
-      // 原生弹窗使用 position:absolute 并依赖父元素来确定尺寸，
-      // 强制改为 position:fixed 会导致移动端弹窗高度塌陷变得不可见
-      const wrapperEl = popupEl.parentElement;
-      if (wrapperEl instanceof HTMLElement) {
-        wrapperEl.style.setProperty("z-index", String(nextZ), "important");
-      }
-      popupEl.style.setProperty("z-index", String(nextZ + 1), "important");
+        const overlayEl = document.getElementById("cfm-overlay");
+        const overlayZ = Number.parseInt(
+          overlayEl ? window.getComputedStyle(overlayEl).zIndex : "",
+          10,
+        );
+        const nextZ = Number.isFinite(overlayZ) ? overlayZ + 2 : 10002;
 
-      // 绑定关闭/保存按钮的清理事件（仅绑定一次）
-      bindNativePopupCleanup();
-
-      return true;
-    };
-
-    const scheduleBringNativePresetPromptPopupToFront = () => {
-      bringNativePresetPromptPopupToFront();
-      let attempts = 0;
-      const maxAttempts = 20;
-      const timer = window.setInterval(() => {
-        attempts += 1;
-        bringNativePresetPromptPopupToFront();
-        if (attempts >= maxAttempts) {
-          window.clearInterval(timer);
+        // 只提升 z-index，不改变 position/layout 属性
+        // 原生弹窗使用 position:absolute 并依赖父元素来确定尺寸，
+        // 强制改为 position:fixed 会导致移动端弹窗高度塌陷变得不可见
+        const wrapperEl = popupEl.parentElement;
+        if (wrapperEl instanceof HTMLElement) {
+          wrapperEl.style.setProperty("z-index", String(nextZ), "important");
         }
-      }, 50);
-    };
+        popupEl.style.setProperty("z-index", String(nextZ + 1), "important");
 
-    const clickNativeEditButton = () => {
-      const row = findNativePresetPromptRow(
-        normalizedPromptKey,
-        normalizedPromptLabel,
-      );
-      const editButton = row.find(".prompt-manager-edit-action").first();
-      const nativeButton = editButton.get(0);
-      if (!nativeButton) return false;
-      nativeButton.click();
-      nativeButton.dispatchEvent(
-        new MouseEvent("click", { bubbles: true, cancelable: true }),
-      );
-      scheduleBringNativePresetPromptPopupToFront();
-      return true;
-    };
+        // 绑定关闭/保存按钮的清理事件（仅绑定一次）
+        bindNativePopupCleanup();
 
-    if (clickNativeEditButton()) {
-      return true;
-    }
+        return true;
+      };
 
-    const targetValue = findPresetSelectValueByName(pm, normalizedPresetName);
-    const currentValue = String(pm.select.val() || "");
+      const focusNativePresetPromptPopupField = () => {
+        const popupEl = document.getElementById(
+          "completion_prompt_manager_popup",
+        );
+        if (!popupEl) return false;
+        const field = popupEl.querySelector(
+          "textarea, .ace_text-input, input[type='text'], [contenteditable='true']",
+        );
+        if (!(field instanceof HTMLElement)) return false;
+        try {
+          field.focus({ preventScroll: true });
+        } catch {
+          field.focus();
+        }
+        if (
+          field instanceof HTMLTextAreaElement ||
+          field instanceof HTMLInputElement
+        ) {
+          const value = field.value;
+          if (typeof value === "string") {
+            const pos = value.length;
+            try {
+              field.setSelectionRange(pos, pos);
+            } catch {
+              // ignore
+            }
+          }
+        }
+        field.dispatchEvent(new FocusEvent("focus", { bubbles: true }));
+        field.dispatchEvent(new Event("input", { bubbles: true }));
+        field.dispatchEvent(new Event("change", { bubbles: true }));
+        return true;
+      };
 
-    if (targetValue && currentValue !== targetValue) {
-      // 保存原始预设值，弹窗关闭后恢复
-      _presetValueToRestore = currentValue;
-      pm.select.val(targetValue);
-      pm.select.trigger("change");
-      pm.select.trigger("input");
-    } else {
-      syncCurrentPresetSelection(pm, normalizedPresetName);
-    }
+      const scheduleBringNativePresetPromptPopupToFront = () => {
+        bringNativePresetPromptPopupToFront();
+        let attempts = 0;
+        const maxAttempts = 32;
+        const timer = window.setInterval(() => {
+          attempts += 1;
+          bringNativePresetPromptPopupToFront();
+          if (attempts === 3 || attempts === 8 || attempts === 14) {
+            focusNativePresetPromptPopupField();
+          }
+          if (attempts >= maxAttempts || hasVisibleNativePresetPromptPopup()) {
+            window.clearInterval(timer);
+          }
+        }, 50);
+      };
 
-    const startTime = Date.now();
-    while (Date.now() - startTime < 2500) {
-      if (clickNativeEditButton()) {
+      const isPresetSelectionStable = (targetValue) => {
+        if (!pm?.select || !targetValue) return false;
+        return String(pm.select.val() || "") === String(targetValue);
+      };
+
+      const getNativePromptRowState = () => {
+        const row = findNativePresetPromptRow(
+          normalizedPromptKey,
+          normalizedPromptLabel,
+        );
+        if (!row.length) {
+          return { row, editButton: $(), nativeButton: null, visible: false };
+        }
+        const editButton = row.find(".prompt-manager-edit-action").first();
+        const nativeButton = editButton.get(0);
+        const rowEl = row.get(0);
+        const visible =
+          row.is(":visible") ||
+          (!!rowEl && rowEl instanceof HTMLElement && rowEl.offsetParent !== null);
+        return { row, editButton, nativeButton, visible };
+      };
+
+      const clickNativeEditButton = () => {
+        const { row, nativeButton } = getNativePromptRowState();
+        if (!row.length || !nativeButton) return false;
+        if (row.length && row.get(0)?.scrollIntoView) {
+          try {
+            row.get(0).scrollIntoView({ block: "center", inline: "nearest" });
+          } catch {
+            row.get(0).scrollIntoView();
+          }
+        }
+        nativeButton.click();
+        scheduleBringNativePresetPromptPopupToFront();
+        window.setTimeout(() => focusNativePresetPromptPopupField(), 120);
+        window.setTimeout(() => focusNativePresetPromptPopupField(), 260);
+        window.setTimeout(() => focusNativePresetPromptPopupField(), 420);
+        return true;
+      };
+
+      const syncTargetPresetSelection = async () => {
+        const targetValue = findPresetSelectValueByName(pm, normalizedPresetName);
+        const currentValue = String(pm.select.val() || "");
+
+        if (targetValue && currentValue !== targetValue) {
+          // 保存原始预设值，弹窗关闭后恢复
+          _presetValueToRestore = currentValue;
+
+          // 等待原生 OAI_PRESET_CHANGED_AFTER 事件，确保 PromptManager 内部
+          // serviceSettings.prompts 已完全切换到目标预设的数据
+          const presetChangedPromise = new Promise((resolve) => {
+            const ctx = getContext();
+            const evtSource = ctx?.eventSource;
+            const evtTypes = ctx?.eventTypes;
+            const eventType = evtTypes?.OAI_PRESET_CHANGED_AFTER;
+            if (!eventType || !evtSource) {
+              // 无法监听事件，退回到固定延时
+              window.setTimeout(resolve, 800);
+              return;
+            }
+            let resolved = false;
+            const handler = () => {
+              if (resolved) return;
+              resolved = true;
+              try { evtSource.removeListener(eventType, handler); } catch {}
+              // 额外等待一帧，确保 PromptManager 的 renderDebounced 也已执行
+              window.setTimeout(resolve, 120);
+            };
+            evtSource.once(eventType, handler);
+            // 超时兜底
+            window.setTimeout(() => {
+              if (!resolved) {
+                resolved = true;
+                try { evtSource.removeListener(eventType, handler); } catch {}
+                resolve();
+              }
+            }, 3000);
+          });
+
+          pm.select.val(targetValue);
+          pm.select.trigger("change");
+
+          await presetChangedPromise;
+        } else if (targetValue && currentValue === targetValue) {
+          // 当前预设已选中，但移动端首开时原生 prompt 列表/按钮经常晚一拍才出现。
+          // 先主动触发一次渲染并等待列表出现，再给一次“直接点击”的二次机会，
+          // 尽量在进入严格稳定性轮询前就打开原生编辑弹窗。
+          const rows = $("#completion_prompt_manager .completion_prompt_manager_prompt");
+          if (!rows.length) {
+            if (typeof pm.render === "function") {
+              pm.render(false);
+            } else if (typeof pm.renderDebounced === "function") {
+              pm.renderDebounced();
+            }
+            const renderWaitStart = Date.now();
+            const renderWaitTimeout = 2200;
+            while (Date.now() - renderWaitStart < renderWaitTimeout) {
+              await new Promise((resolve) => window.setTimeout(resolve, 80));
+              if ($("#completion_prompt_manager .completion_prompt_manager_prompt").length) {
+                break;
+              }
+            }
+          }
+
+          await new Promise((resolve) => window.setTimeout(resolve, 180));
+          if (clickNativeEditButton()) {
+            await new Promise((resolve) => window.setTimeout(resolve, 260));
+            if (hasVisibleNativePresetPromptPopup()) {
+              scheduleBringNativePresetPromptPopupToFront();
+              return true;
+            }
+          }
+        } else if (!targetValue) {
+          syncCurrentPresetSelection(pm, normalizedPresetName);
+        }
+
+        return targetValue;
+      };
+
+      const currentPresetValue = String(pm.select.val() || "");
+      const currentPresetName = String(
+        pm.select.find("option:selected").text() || "",
+      ).trim();
+      const isOtherPresetRequest =
+        normalizedPresetName &&
+        !!(
+          (currentPresetName && currentPresetName !== normalizedPresetName) ||
+          (findPresetSelectValueByName(pm, normalizedPresetName) &&
+            String(findPresetSelectValueByName(pm, normalizedPresetName)) !==
+              currentPresetValue)
+        );
+
+      if (!isOtherPresetRequest && clickNativeEditButton()) {
         return true;
       }
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
 
-    return false;
+      const targetValue = await syncTargetPresetSelection();
+
+      const tryOpenAfterSelectionSettles = async (
+        timeoutMs = 4200,
+        options = {},
+      ) => {
+        const {
+          minSelectionStableMs = 100,
+          minListStableMs = 180,
+          minRowStableMs = 140,
+          clickConfirmMs = 220,
+          pollIntervalMs = 45,
+        } = options;
+        const startTime = Date.now();
+        let stableSelectionSeenAt = 0;
+        let stableListSeenAt = 0;
+        let stableRowSeenAt = 0;
+        let clickIssuedAt = 0;
+        let lastListSignature = "";
+        let lastRowSignature = "";
+        while (Date.now() - startTime < timeoutMs) {
+          if (hasVisibleNativePresetPromptPopup()) {
+            scheduleBringNativePresetPromptPopupToFront();
+            return true;
+          }
+
+          if (!targetValue || isPresetSelectionStable(targetValue)) {
+            if (!stableSelectionSeenAt) {
+              stableSelectionSeenAt = Date.now();
+            }
+          } else {
+            stableSelectionSeenAt = 0;
+            stableListSeenAt = 0;
+            stableRowSeenAt = 0;
+            clickIssuedAt = 0;
+            lastListSignature = "";
+            lastRowSignature = "";
+            await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+            continue;
+          }
+
+          const promptRows = $("#completion_prompt_manager .completion_prompt_manager_prompt");
+          const listSignature = promptRows
+            .map((_, el) => {
+              const row = $(el);
+              const identifier = String(row.attr("data-pm-identifier") || "").trim();
+              const name = String(
+                row.find(".completion_prompt_manager_prompt_name").first().attr("data-pm-name") ||
+                  row.find(".completion_prompt_manager_prompt_name").first().text() ||
+                  "",
+              )
+                .replace(/\s+/g, " ")
+                .trim();
+              return `${identifier}::${name}`;
+            })
+            .get()
+            .join("||");
+          const listContainsRequestedPrompt = !!promptRows.filter((_, el) => {
+            const row = $(el);
+            const identifier = String(row.attr("data-pm-identifier") || "").trim();
+            const name = String(
+              row.find(".completion_prompt_manager_prompt_name").first().attr("data-pm-name") ||
+                row.find(".completion_prompt_manager_prompt_name").first().text() ||
+                "",
+            )
+              .replace(/\s+/g, " ")
+              .trim();
+            return (
+              (!!normalizedPromptKey && identifier === normalizedPromptKey) ||
+              (!!normalizedPromptLabel && name === normalizedPromptLabel)
+            );
+          }).length;
+
+          if (listSignature !== lastListSignature) {
+            lastListSignature = listSignature;
+            stableListSeenAt = Date.now();
+            stableRowSeenAt = 0;
+            clickIssuedAt = 0;
+          } else if (!stableListSeenAt) {
+            stableListSeenAt = Date.now();
+          }
+
+          const rowState = getNativePromptRowState();
+          const rowIdentifier = String(
+            rowState.row.attr("data-pm-identifier") || "",
+          ).trim();
+          const rowName = String(
+            rowState.row
+              .find(".completion_prompt_manager_prompt_name")
+              .first()
+              .attr("data-pm-name") ||
+              rowState.row
+                .find(".completion_prompt_manager_prompt_name")
+                .first()
+                .text() ||
+              "",
+          )
+            .replace(/\s+/g, " ")
+            .trim();
+          const rowSignature = `${rowIdentifier}::${rowName}`;
+          const matchesRequestedPrompt =
+            (!!normalizedPromptKey && rowIdentifier === normalizedPromptKey) ||
+            (!!normalizedPromptLabel && rowName === normalizedPromptLabel);
+
+          if (
+            stableSelectionSeenAt &&
+            Date.now() - stableSelectionSeenAt >= minSelectionStableMs &&
+            stableListSeenAt &&
+            Date.now() - stableListSeenAt >= minListStableMs &&
+            listContainsRequestedPrompt &&
+            rowState.row.length &&
+            rowState.nativeButton &&
+            matchesRequestedPrompt
+          ) {
+            if (rowSignature !== lastRowSignature) {
+              lastRowSignature = rowSignature;
+              stableRowSeenAt = Date.now();
+            } else if (!stableRowSeenAt) {
+              stableRowSeenAt = Date.now();
+            }
+
+            if (!clickIssuedAt && Date.now() - stableRowSeenAt >= minRowStableMs) {
+              if (clickNativeEditButton()) {
+                clickIssuedAt = Date.now();
+              }
+            }
+          } else {
+            stableRowSeenAt = 0;
+            lastRowSignature = rowSignature;
+          }
+
+          if (clickIssuedAt && Date.now() - clickIssuedAt >= clickConfirmMs) {
+            if (hasVisibleNativePresetPromptPopup()) {
+              scheduleBringNativePresetPromptPopupToFront();
+              return true;
+            }
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+        }
+        return hasVisibleNativePresetPromptPopup();
+      };
+
+      if (isOtherPresetRequest) {
+        if (
+          await tryOpenAfterSelectionSettles(4200, {
+            minSelectionStableMs: 320,
+            minListStableMs: 700,
+            minRowStableMs: 700,
+            clickConfirmMs: 360,
+            pollIntervalMs: 70,
+          })
+        ) {
+          return true;
+        }
+      } else {
+        if (
+          await tryOpenAfterSelectionSettles(2400, {
+            minSelectionStableMs: 80,
+            minListStableMs: 120,
+            minRowStableMs: 140,
+            clickConfirmMs: 260,
+            pollIntervalMs: 40,
+          })
+        ) {
+          return true;
+        }
+
+        if (
+          await tryOpenAfterSelectionSettles(4200, {
+            minSelectionStableMs: 220,
+            minListStableMs: 320,
+            minRowStableMs: 520,
+            clickConfirmMs: 360,
+            pollIntervalMs: 70,
+          })
+        ) {
+          return true;
+        }
+      }
+
+      // 兜底：仅当目标预设实际上未切换到位时，才补触发一次同步和短暂重试，
+      // 避免移动端对带正则的预设重复触发原生 toast。
+      if (targetValue && String(pm.select.val() || "") !== String(targetValue)) {
+        await syncTargetPresetSelection();
+        if (
+          await tryOpenAfterSelectionSettles(2600, {
+            minSelectionStableMs: 180,
+            minRowStableMs: 420,
+            clickConfirmMs: 300,
+            pollIntervalMs: 60,
+          })
+        ) {
+          return true;
+        }
+      }
+
+      // 最终兜底：移动端偶发会在点击后稍晚才真正显示弹窗，
+      // 或目标 row 晚一拍才可点击。这里在彻底失败前再做一次短时救援，
+      // 避免第一次点已经接近成功却过早返回 false。
+      await new Promise((resolve) => window.setTimeout(resolve, 260));
+      if (hasVisibleNativePresetPromptPopup()) {
+        scheduleBringNativePresetPromptPopupToFront();
+        return true;
+      }
+
+      const finalRescueStart = Date.now();
+      const finalRescueTimeout = 1200;
+      while (Date.now() - finalRescueStart < finalRescueTimeout) {
+        if (clickNativeEditButton()) {
+          await new Promise((resolve) => window.setTimeout(resolve, 260));
+          if (hasVisibleNativePresetPromptPopup()) {
+            scheduleBringNativePresetPromptPopupToFront();
+            return true;
+          }
+        }
+
+        await new Promise((resolve) => window.setTimeout(resolve, 120));
+        if (hasVisibleNativePresetPromptPopup()) {
+          scheduleBringNativePresetPromptPopupToFront();
+          return true;
+        }
+      }
+
+      // 失败时不立即恢复当前预设，避免再触发一次原生 regex toast。
+      return false;
+    } finally {
+      endSuppressPresetRegexToast();
+    }
+  }
+
+  function showPresetEditorOpeningLoading(fieldKey, label = "") {
+    const normalizedFieldKey = String(fieldKey || "").trim();
+    if (!normalizedFieldKey) return null;
+
+    const host = $("#cfm-overlay");
+    if (!host.length) return null;
+
+    host.find(".cfm-preset-detail-opening-loading").remove();
+
+    const loading = $(`
+      <div class="cfm-preset-detail-opening-loading" aria-live="polite" aria-busy="true">
+        <div class="cfm-preset-detail-opening-loading-box">
+          <i class="fa-solid fa-spinner fa-spin"></i>
+          <span>正在打开编辑器${label ? `：${escapeHtml(label)}` : "..."}</span>
+        </div>
+      </div>
+    `);
+
+    host.append(loading);
+    return () => {
+      loading.remove();
+    };
   }
 
   async function editPresetDetailField(presetName, fieldKey) {
@@ -12781,13 +13356,18 @@ jQuery(async () => {
     }
 
     const promptKey = fieldKey.slice("prompts.".length);
-    const opened = await openNativePresetPromptEditor(
-      presetName,
-      promptKey,
-      field.label,
-    );
-    if (!opened) {
-      toastr.error(`无法打开预设条目「${field.label}」的原生编辑弹窗`);
+    const hideLoading = showPresetEditorOpeningLoading(fieldKey, field.label);
+    try {
+      const opened = await openNativePresetPromptEditor(
+        presetName,
+        promptKey,
+        field.label,
+      );
+      if (!opened) {
+        toastr.error(`无法打开预设条目「${field.label}」的原生编辑弹窗`);
+      }
+    } finally {
+      hideLoading?.();
     }
   }
 
@@ -14279,7 +14859,7 @@ jQuery(async () => {
     }
     // 同步更新 world_names 数组（内存中的世界书名称列表）
     try {
-      const wiModule = await import("../../../world-info.js");
+      const wiModule = await ensureWiModule();
       const wNames = wiModule.world_names;
       if (Array.isArray(wNames)) {
         const oldIdx = wNames.indexOf(oldName);
@@ -14730,7 +15310,7 @@ jQuery(async () => {
 
     // 2. 更新辅助世界书 (world_info.charLore[].extraBooks)
     try {
-      const wiModule = await import("../../../world-info.js");
+      const wiModule = await ensureWiModule();
       const worldInfoObj = wiModule.world_info;
       if (worldInfoObj?.charLore && Array.isArray(worldInfoObj.charLore)) {
         let changed = false;
@@ -18722,10 +19302,13 @@ jQuery(async () => {
       }
     }
 
-    // 清除世界书缓存，确保每次打开弹窗都获取最新数据（与酒馆原生界面同步）
-    _worldInfoNamesCache = null;
     // 预加载世界书数据，保存 Promise 以便切换标签时直接复用
+    // 不再每次打开都清空缓存，避免世界书页反复白屏等待
     _worldInfoPreloadPromise = getWorldInfoNames();
+    // 预加载 world-info.js 模块（后台，不阻塞），使后续 getActiveWorldInfoSet/getCharBoundWorldBooks 能同步读取
+    ensureWiModule();
+    // 预加载 persona 列表（后台，不阻塞），使切到 User 标签时缓存已可用
+    _personasPreloadPromise = getCurrentPersonas();
 
     const overlay = $('<div id="cfm-overlay"></div>');
     const popup = $(`
@@ -19140,6 +19723,150 @@ jQuery(async () => {
     overlay.append(popup);
     $("body").append(overlay);
 
+    const bindMobilePanePathDrag = () => {
+      if (window.innerWidth > 768) return;
+      const MIN_LEFT_PANE_HEIGHT = 160;
+      const MIN_RIGHT_PANE_HEIGHT = 220;
+      popup.find(".cfm-dual-pane").each(function () {
+        const dualPane = this;
+        const $dualPane = $(dualPane);
+        const leftPane = dualPane.querySelector(".cfm-left-pane");
+        const rightPane = dualPane.querySelector(".cfm-right-pane");
+        const pathEl = dualPane.querySelector(".cfm-right-header .cfm-rh-path");
+        if (!leftPane || !rightPane || !pathEl || pathEl.dataset.cfmPaneDragBound === "1") {
+          return;
+        }
+        pathEl.dataset.cfmPaneDragBound = "1";
+        pathEl.style.touchAction = "none";
+
+        let dragging = false;
+        let startY = 0;
+        let startLeftHeight = 0;
+
+        const stopDrag = () => {
+          if (!dragging) return;
+          dragging = false;
+          pathEl.classList.remove("cfm-rh-path-dragging");
+          document.removeEventListener("pointermove", onPointerMove);
+          document.removeEventListener("pointerup", stopDrag);
+          document.removeEventListener("pointercancel", stopDrag);
+        };
+
+        const onPointerMove = (ev) => {
+          if (!dragging) return;
+          ev.preventDefault();
+          const rect = $dualPane[0].getBoundingClientRect();
+          const totalHeight = rect.height;
+          const deltaY = ev.clientY - startY;
+          const nextLeftHeight = Math.min(
+            Math.max(startLeftHeight + deltaY, MIN_LEFT_PANE_HEIGHT),
+            Math.max(MIN_LEFT_PANE_HEIGHT, totalHeight - MIN_RIGHT_PANE_HEIGHT),
+          );
+          leftPane.style.height = `${nextLeftHeight}px`;
+          leftPane.style.maxHeight = `${nextLeftHeight}px`;
+        };
+
+        pathEl.addEventListener("pointerdown", (ev) => {
+          if (window.innerWidth > 768) return;
+          dragging = true;
+          startY = ev.clientY;
+          startLeftHeight = leftPane.getBoundingClientRect().height;
+          pathEl.classList.add("cfm-rh-path-dragging");
+          document.addEventListener("pointermove", onPointerMove, { passive: false });
+          document.addEventListener("pointerup", stopDrag);
+          document.addEventListener("pointercancel", stopDrag);
+        });
+      });
+    };
+
+    bindMobilePanePathDrag();
+
+    const bindMobileTapGuard = () => {
+      if (window.innerWidth > 768) return;
+      const MOVE_THRESHOLD = 12;
+      const interactiveSelector = [
+        "button",
+        ".cfm-tab",
+        ".cfm-tnode",
+        ".cfm-tree-item",
+        ".cfm-row",
+        ".cfm-row-action-btn",
+        ".cfm-sort-trigger",
+        ".cfm-multisel-toggle",
+        ".cfm-import-btn",
+        ".cfm-export-btn",
+        ".cfm-res-delete-btn",
+        ".cfm-edit-char-btn",
+        ".cfm-chat-mode-btn",
+        ".cfm-regex-create-btn",
+        ".cfm-regex-sort-btn",
+        ".cfm-config-arrow",
+        ".cfm-worldinfo-entry-expand",
+        ".cfm-worldinfo-entry-edit",
+        ".cfm-worldinfo-entry-duplicate",
+        ".cfm-worldinfo-entry-delete",
+        ".cfm-preset-detail-edit",
+        ".cfm-preset-detail-copy",
+        ".cfm-preset-detail-delete",
+      ].join(", ");
+
+      let touchStartX = 0;
+      let touchStartY = 0;
+      let touchMoved = false;
+      let suppressTapUntil = 0;
+
+      popup[0].addEventListener(
+        "touchstart",
+        (ev) => {
+          const touch = ev.touches?.[0];
+          if (!touch) return;
+          touchStartX = touch.clientX;
+          touchStartY = touch.clientY;
+          touchMoved = false;
+        },
+        { passive: true },
+      );
+
+      popup[0].addEventListener(
+        "touchmove",
+        (ev) => {
+          const touch = ev.touches?.[0];
+          if (!touch || touchMoved) return;
+          const deltaX = Math.abs(touch.clientX - touchStartX);
+          const deltaY = Math.abs(touch.clientY - touchStartY);
+          if (deltaX > MOVE_THRESHOLD || deltaY > MOVE_THRESHOLD) {
+            touchMoved = true;
+            suppressTapUntil = Date.now() + 250;
+          }
+        },
+        { passive: true },
+      );
+
+      popup[0].addEventListener(
+        "touchend",
+        () => {
+          if (touchMoved) {
+            suppressTapUntil = Date.now() + 250;
+          }
+        },
+        { passive: true },
+      );
+
+      popup[0].addEventListener(
+        "click",
+        (ev) => {
+          if (Date.now() > suppressTapUntil) return;
+          if (!ev.target.closest(interactiveSelector)) return;
+          ev.preventDefault();
+          ev.stopPropagation();
+          ev.stopImmediatePropagation();
+        },
+        true,
+      );
+    };
+
+    bindMobileTapGuard();
+
     // 如果初始tab不是chars，动态切换tab/视图/搜索栏的显示状态
     if (initialTab !== "chars") {
       popup.find(".cfm-tab").removeClass("cfm-tab-active");
@@ -19253,6 +19980,40 @@ jQuery(async () => {
       e.preventDefault();
       closeMainPopup();
     });
+
+    if (window.innerWidth <= 768) {
+      $(document)
+        .off("click.cfmMobileAutoClose touchend.cfmMobileAutoClose")
+        .on("click.cfmMobileAutoClose touchend.cfmMobileAutoClose", (e) => {
+          if (!$("#cfm-overlay").length) return;
+          const target = $(e.target);
+          if (
+            target.closest("#cfm-overlay").length ||
+            target.closest("#cfm-topbar-button").length
+          ) {
+            return;
+          }
+
+          const topbarTrigger = target.closest(
+            [
+              "#rightNavHolder .drawer",
+              "#rightNavHolder .drawer-toggle",
+              "#top-settings-holder .drawer",
+              "#top-settings-holder .drawer-toggle",
+              "#left-nav-panel .drawer",
+              "#left-nav-panel .drawer-toggle",
+              ".drawer-content .drawer",
+              ".drawer-content .drawer-toggle",
+            ].join(", "),
+          );
+
+          if (!topbarTrigger.length) {
+            return;
+          }
+
+          closeMainPopup();
+        });
+    }
     popup.find("#cfm-btn-config").on("click touchend", (e) => {
       e.preventDefault();
       showConfigPopup();
@@ -23215,6 +23976,7 @@ jQuery(async () => {
       console.error("[CFM] 关闭插件时静默恢复QR分组失败", e),
     );
     $("#cfm-overlay").remove();
+    $(document).off("click.cfmMobileAutoClose touchend.cfmMobileAutoClose");
     clearNewlyImportedHighlight();
     $("#cfm-topbar-button .drawer-icon")
       .removeClass("openIcon")
@@ -29888,35 +30650,33 @@ jQuery(async () => {
     const pathEl = $("#cfm-worldinfo-rh-path");
     const countEl = $("#cfm-worldinfo-rh-count");
 
-    // 每次渲染时清除缓存以确保与酒馆原生界面保持同步
-    _worldInfoNamesCache = null;
     let names;
-    // 优先从DOM同步读取（getWorldInfoNames内部会先尝试DOM）
+    const hasExistingWorldInfoUi =
+      leftTree.children().length > 0 || rightList.children().length > 0;
+    // 优先从DOM同步读取（最快路径，无 await）
     const domNames = collectWorldInfoNamesFromDom();
     if (domNames.length > 0) {
       names = domNames;
       _worldInfoNamesCache = domNames;
-    } else if (_worldInfoPreloadPromise) {
-      leftTree.empty();
-      rightList.html(
-        '<div class="cfm-right-empty"><i class="fa-solid fa-spinner fa-spin"></i> 加载中...</div>',
-      );
-      names = await _worldInfoPreloadPromise;
+    } else if (Array.isArray(_worldInfoNamesCache) && _worldInfoNamesCache.length > 0) {
+      // 缓存命中也走同步路径
+      names = _worldInfoNamesCache;
     } else {
-      leftTree.empty();
-      rightList.html(
-        '<div class="cfm-right-empty"><i class="fa-solid fa-spinner fa-spin"></i> 加载中...</div>',
-      );
-      names = await getWorldInfoNames();
+      if (!hasExistingWorldInfoUi) {
+        leftTree.empty();
+        rightList.html(
+          '<div class="cfm-right-empty"><i class="fa-solid fa-spinner fa-spin"></i> 加载中...</div>',
+        );
+      }
+      names = await (_worldInfoPreloadPromise || getWorldInfoNames());
     }
 
-    // 获取世界书激活状态和角色关联世界书（用于 toggle 开关）
-    const wiActiveSet = await getActiveWorldInfoSet();
-    const wiCharBound = await getCharBoundWorldBooks();
+    // 同步获取世界书激活状态和角色关联世界书（已改为同步函数，无需 await）
+    const wiActiveSet = getActiveWorldInfoSet();
+    const wiCharBound = getCharBoundWorldBooks();
 
     if (renderVersion !== _worldInfoRenderVersion) return;
 
-    leftTree.empty();
     const tree = getResFolderTree("worldinfo");
     const allFolderIds = getResFolderIds("worldinfo");
     const groups = getResourceGroups("worldinfo");
@@ -29948,7 +30708,7 @@ jQuery(async () => {
       }
     }
 
-    leftTree.empty();
+    const newLeftTree = $("<div></div>");
 
     // 递归渲染左侧树节点
     function renderWiTreeNode(container, folderId, depth) {
@@ -30164,13 +30924,13 @@ jQuery(async () => {
       selectedWorldInfoFolder = "__favorites__";
       renderWorldInfoView();
     });
-    leftTree.append(wiFavNode);
+    newLeftTree.append(wiFavNode);
 
     const topFolders = sortResFolders(
       "worldinfo",
       getResTopLevelFolders("worldinfo"),
     );
-    for (const fid of topFolders) renderWiTreeNode(leftTree, fid, 0);
+    for (const fid of topFolders) renderWiTreeNode(newLeftTree, fid, 0);
 
     // 未归类入口
     const uncatNode = $(`
@@ -30226,7 +30986,7 @@ jQuery(async () => {
         );
       }
     });
-    leftTree.append(uncatNode);
+    newLeftTree.append(uncatNode);
 
     if (topFolders.length === 0) {
       uncatNode.before(
@@ -30242,7 +31002,7 @@ jQuery(async () => {
       return;
     }
 
-    rightList.empty();
+    const newRightList = $("<div></div>");
 
     let displayItems = [];
     let displayTitle = "选择左侧文件夹查看内容";
@@ -30288,23 +31048,23 @@ jQuery(async () => {
     }
 
     if (!selectedWorldInfoFolder) {
-      rightList.html(
+      newRightList.append(
         '<div class="cfm-right-empty">← 点击左侧文件夹查看内容</div>',
       );
     } else if (
       selectedWorldInfoFolder === "__favorites__" &&
       totalItems === 0
     ) {
-      rightList.html(
+      newRightList.append(
         '<div class="cfm-right-empty">还没有收藏任何世界书<br><span style="font-size:12px;opacity:0.5;">点击世界书行右侧的 ☆ 按钮添加收藏</span></div>',
       );
     } else if (
       selectedWorldInfoFolder === "__ungrouped__" &&
       totalItems === 0
     ) {
-      rightList.html('<div class="cfm-right-empty">没有未归类的世界书</div>');
+      newRightList.append('<div class="cfm-right-empty">没有未归类的世界书</div>');
     } else if (totalItems === 0) {
-      rightList.html('<div class="cfm-right-empty">此文件夹为空</div>');
+      newRightList.append('<div class="cfm-right-empty">此文件夹为空</div>');
     } else {
       // 子文件夹行
       for (const childId of childFolders) {
@@ -30464,7 +31224,7 @@ jQuery(async () => {
           id: childId,
           name: getResFolderDisplayName("worldinfo", childId),
         }));
-        rightList.append(row);
+        newRightList.append(row);
       }
       // 世界书行（带星标 + 多选支持 + 备注 + 激活开关）
       for (const n of displayItems) {
@@ -30639,19 +31399,19 @@ jQuery(async () => {
           const singleData = { type: "worldinfo", name: n };
           return getMultiDragData(singleData);
         });
-        rightList.append(row);
+        newRightList.append(row);
         if (isEntryExpanded)
           renderWorldInfoEntrySubList(row, n, refreshWorldInfoPanelView);
       }
 
       // 删除工具栏（世界书文件夹视图）
-      prependResDeleteToolbar(rightList, renderWorldInfoView);
+      prependResDeleteToolbar(newRightList, renderWorldInfoView);
       // 导出工具栏（世界书文件夹视图）
-      prependExportToolbar(rightList, renderWorldInfoView);
+      prependExportToolbar(newRightList, renderWorldInfoView);
       // 备注编辑工具栏（世界书）
-      prependWorldInfoNoteToolbar(rightList, renderWorldInfoView);
+      prependWorldInfoNoteToolbar(newRightList, renderWorldInfoView);
       // 重命名工具栏（世界书）
-      prependWorldInfoRenameToolbar(rightList, renderWorldInfoView);
+      prependWorldInfoRenameToolbar(newRightList, renderWorldInfoView);
       // 多选工具栏（世界书）
       if (cfmMultiSelectMode && selectedWorldInfoFolder) {
         const visible = getVisibleResourceIds();
@@ -30701,7 +31461,7 @@ jQuery(async () => {
             );
             if (changed) renderWorldInfoView();
           });
-        rightList.prepend(toolbar);
+        newRightList.prepend(toolbar);
       }
       bindWorldInfoEntryCollapseTargets(refreshWorldInfoPanelView);
     }
@@ -30766,6 +31526,9 @@ jQuery(async () => {
         }
       });
     }
+
+    leftTree.empty().append(newLeftTree.children());
+    rightList.empty().append(newRightList.children());
   }
 
   // ==================== 快速回复激活状态管理 ====================
@@ -33576,7 +34339,15 @@ jQuery(async () => {
   }
 
   // 获取当前 persona 列表
-  async function getCurrentPersonas() {
+  async function getCurrentPersonas(forceRefresh = false) {
+    const now = Date.now();
+    if (
+      !forceRefresh &&
+      Array.isArray(_personaListCache) &&
+      now - _personaListCacheTime < PERSONA_LIST_CACHE_TTL
+    ) {
+      return _personaListCache;
+    }
     try {
       const resp = await fetch("/api/avatars/get", {
         method: "POST",
@@ -33588,7 +34359,7 @@ jQuery(async () => {
       const pu = getContext().powerUserSettings;
       if (!pu) return [];
       const orderedAvatarIds = syncPersonaCustomOrder(avatarIds);
-      return orderedAvatarIds.map((id) => ({
+      const personas = orderedAvatarIds.map((id) => ({
         avatarId: id,
         name: (pu.personas && pu.personas[id]) || "[未命名User]",
         description:
@@ -33607,9 +34378,12 @@ jQuery(async () => {
             pu.persona_descriptions[id].connections) ||
           [],
       }));
+      _personaListCache = personas;
+      _personaListCacheTime = now;
+      return personas;
     } catch (e) {
       console.error("[CFM] 获取User列表失败", e);
-      return [];
+      return Array.isArray(_personaListCache) ? _personaListCache : [];
     }
   }
 
@@ -34807,12 +35581,21 @@ jQuery(async () => {
     if (!renderPersonasView._renderId) renderPersonasView._renderId = 0;
     const thisRenderId = ++renderPersonasView._renderId;
 
-    const personas = await getCurrentPersonas();
+    const hasExistingPersonaUi =
+      leftTree.children().length > 0 || rightList.children().length > 0;
+    // 优先使用预加载的 promise（打开弹窗时已开始加载），避免重复请求
+    const personaPromise = _personasPreloadPromise || getCurrentPersonas();
+    _personasPreloadPromise = null; // 消费后清空，下次重新请求
+    if (!hasExistingPersonaUi) {
+      rightList.html(
+        '<div class="cfm-right-empty"><i class="fa-solid fa-spinner fa-spin"></i> 加载中...</div>',
+      );
+    }
+    const personas = await personaPromise;
 
     // 如果在 await 期间有新的渲染被触发，放弃当前渲染
     if (thisRenderId !== renderPersonasView._renderId) return;
 
-    leftTree.empty();
     const tree = getResFolderTree("personas");
     const allFolderIds = getResFolderIds("personas");
 
@@ -34865,7 +35648,8 @@ jQuery(async () => {
       selectedPersonaFolder = "__favorites__";
       renderPersonasView();
     });
-    leftTree.append(personaFavNode);
+    const newLeftTree = $("<div></div>");
+    newLeftTree.append(personaFavNode);
 
     // 递归渲染左侧树节点
     function renderResTreeNode(container, folderId, depth) {
@@ -35072,7 +35856,7 @@ jQuery(async () => {
       "personas",
       getResTopLevelFolders("personas"),
     );
-    for (const fid of topFolders) renderResTreeNode(leftTree, fid, 0);
+    for (const fid of topFolders) renderResTreeNode(newLeftTree, fid, 0);
 
     // 未归类入口
     const uncatNode = $(`
@@ -35130,7 +35914,7 @@ jQuery(async () => {
         }
       }
     });
-    leftTree.append(uncatNode);
+    newLeftTree.append(uncatNode);
 
     if (topFolders.length === 0) {
       uncatNode.before(
@@ -35146,7 +35930,7 @@ jQuery(async () => {
       return;
     }
 
-    rightList.empty();
+    const newRightList = $("<div></div>");
 
     const currentUserAvatar =
       $("#user_avatar_block .avatar-container.selected").attr(
@@ -35223,17 +36007,17 @@ jQuery(async () => {
     }
 
     if (!selectedPersonaFolder) {
-      rightList.html(
+      newRightList.append(
         '<div class="cfm-right-empty">← 点击左侧文件夹查看内容</div>',
       );
     } else if (selectedPersonaFolder === "__favorites__" && totalItems === 0) {
-      rightList.html(
+      newRightList.append(
         '<div class="cfm-right-empty">还没有收藏任何User<br><span style="font-size:12px;opacity:0.5;">点击User行右侧的 ☆ 按钮添加收藏</span></div>',
       );
     } else if (selectedPersonaFolder === "__ungrouped__" && totalItems === 0) {
-      rightList.html('<div class="cfm-right-empty">没有未归类的User</div>');
+      newRightList.append('<div class="cfm-right-empty">没有未归类的User</div>');
     } else if (totalItems === 0) {
-      rightList.html('<div class="cfm-right-empty">此文件夹为空</div>');
+      newRightList.append('<div class="cfm-right-empty">此文件夹为空</div>');
     } else {
       // 子文件夹行
       for (const childId of childFolders) {
@@ -35393,7 +36177,7 @@ jQuery(async () => {
           id: childId,
           name: getResFolderDisplayName("personas", childId),
         }));
-        rightList.append(row);
+        newRightList.append(row);
       }
       // User行（带头像 + 星标 + 多选支持 + 备注）
       for (const p of displayItems) {
@@ -35557,18 +36341,18 @@ jQuery(async () => {
           };
           return getMultiDragData(singleData);
         });
-        rightList.append(row);
+        newRightList.append(row);
         if (personaItemExpandedIds.has(p.avatarId)) {
           renderPersonaDetailSubList(row, p);
         }
       }
 
       // 删除工具栏
-      prependResDeleteToolbar(rightList, renderPersonasView);
+      prependResDeleteToolbar(newRightList, renderPersonasView);
       // 导出工具栏
-      prependExportToolbar(rightList, renderPersonasView);
+      prependExportToolbar(newRightList, renderPersonasView);
       // User备注工具栏
-      prependPersonaNoteToolbar(rightList, renderPersonasView);
+      prependPersonaNoteToolbar(newRightList, renderPersonasView);
       // 多选工具栏
       if (cfmMultiSelectMode && selectedPersonaFolder) {
         const visible = getVisibleResourceIds();
@@ -35594,7 +36378,7 @@ jQuery(async () => {
           if (cfmMultiSelectRangeMode) cfmMultiSelectLastClicked = null;
           renderPersonasView();
         });
-        rightList.prepend(toolbar);
+        newRightList.prepend(toolbar);
       }
     }
 
@@ -35658,6 +36442,9 @@ jQuery(async () => {
         }
       });
     }
+
+    leftTree.empty().append(newLeftTree.children());
+    rightList.empty().append(newRightList.children());
   }
 
   // User搜索
