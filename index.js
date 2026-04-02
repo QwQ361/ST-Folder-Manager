@@ -12577,6 +12577,82 @@ jQuery(async () => {
     return null;
   }
 
+  /** 清理 bringNativePresetPromptPopupToFront 设置的 inline style（仅 z-index） */
+  let _nativePopupCleanupBound = false;
+  /** 编辑非当前预设条目时，保存原始预设选择值以便弹窗关闭后恢复 */
+  let _presetValueToRestore = null;
+  function resetNativePresetPromptPopupStyles() {
+    const popupEl = document.getElementById(
+      "completion_prompt_manager_popup",
+    );
+    if (popupEl) {
+      // 清理所有可能被设置过的 inline style（兼容旧版本残留）
+      const propsToRemove = [
+        "position", "top", "left", "right", "bottom", "inset",
+        "transform", "margin", "max-height", "max-width", "z-index",
+      ];
+      for (const prop of propsToRemove) {
+        popupEl.style.removeProperty(prop);
+      }
+    }
+    const wrapperEl = popupEl?.parentElement;
+    if (wrapperEl instanceof HTMLElement) {
+      wrapperEl.style.removeProperty("position");
+      wrapperEl.style.removeProperty("z-index");
+    }
+  }
+
+  /**
+   * 在原生弹窗的关闭/保存按钮上绑定清理事件（仅绑定一次）。
+   * 当用户点击关闭或保存后，延迟清理 bringNativePresetPromptPopupToFront 遗留的 inline style。
+   */
+  function bindNativePopupCleanup() {
+    if (_nativePopupCleanupBound) return;
+    const popupEl = document.getElementById(
+      "completion_prompt_manager_popup",
+    );
+    if (!popupEl) return;
+    _nativePopupCleanupBound = true;
+
+    const closeButtonIds = [
+      "completion_prompt_manager_popup_close_button",
+      "completion_prompt_manager_popup_entry_form_close",
+      "completion_prompt_manager_popup_entry_form_save",
+    ];
+    for (const btnId of closeButtonIds) {
+      const btn = document.getElementById(btnId);
+      if (btn) {
+        btn.addEventListener("click", () => {
+          // 延迟清理，等原生代码先完成弹窗隐藏
+          setTimeout(() => {
+            resetNativePresetPromptPopupStyles();
+            restorePresetSelectionAfterEdit();
+          }, 100);
+        });
+      }
+    }
+  }
+
+  /**
+   * 弹窗关闭后恢复原始预设选择（如果之前因编辑非当前预设而切换过）
+   */
+  function restorePresetSelectionAfterEdit() {
+    if (_presetValueToRestore === null) return;
+    const valueToRestore = _presetValueToRestore;
+    _presetValueToRestore = null;
+    try {
+      const pm = getContext().getPresetManager();
+      if (!pm?.select) return;
+      const currentValue = String(pm.select.val() || "");
+      if (currentValue !== valueToRestore) {
+        pm.select.val(valueToRestore);
+        pm.select.trigger("change");
+      }
+    } catch (e) {
+      console.warn("[CFM] 恢复预设选择失败", e);
+    }
+  }
+
   async function openNativePresetPromptEditor(
     presetName,
     promptKey,
@@ -12605,46 +12681,21 @@ jQuery(async () => {
         overlayEl ? window.getComputedStyle(overlayEl).zIndex : "",
         10,
       );
-      let nextZ = Number.isFinite(overlayZ) ? overlayZ + 2 : 10002;
+      const nextZ = Number.isFinite(overlayZ) ? overlayZ + 2 : 10002;
 
-      const applyLayerStyle = (el, { position = null } = {}) => {
-        if (!(el instanceof HTMLElement)) return false;
-        if (position) {
-          el.style.setProperty("position", position, "important");
-        }
-        el.style.setProperty("z-index", String(nextZ), "important");
-        nextZ += 1;
-        return true;
-      };
-
+      // 只提升 z-index，不改变 position/layout 属性
+      // 原生弹窗使用 position:absolute 并依赖父元素来确定尺寸，
+      // 强制改为 position:fixed 会导致移动端弹窗高度塌陷变得不可见
       const wrapperEl = popupEl.parentElement;
-      let applied = false;
-
       if (wrapperEl instanceof HTMLElement) {
-        applied =
-          applyLayerStyle(wrapperEl, { position: "relative" }) || applied;
+        wrapperEl.style.setProperty("z-index", String(nextZ), "important");
       }
+      popupEl.style.setProperty("z-index", String(nextZ + 1), "important");
 
-      popupEl.style.setProperty("position", "fixed", "important");
-      popupEl.style.setProperty("top", "50%", "important");
-      popupEl.style.setProperty("left", "50%", "important");
-      popupEl.style.setProperty("right", "auto", "important");
-      popupEl.style.setProperty("bottom", "auto", "important");
-      popupEl.style.setProperty(
-        "transform",
-        "translate(-50%, -50%)",
-        "important",
-      );
-      popupEl.style.setProperty("margin", "0", "important");
-      popupEl.style.setProperty(
-        "max-height",
-        `${Math.max(240, window.innerHeight - 24)}px`,
-        "important",
-      );
-      popupEl.style.setProperty("max-width", `calc(100vw - 32px)`, "important");
-      applied = applyLayerStyle(popupEl, { position: "fixed" }) || applied;
+      // 绑定关闭/保存按钮的清理事件（仅绑定一次）
+      bindNativePopupCleanup();
 
-      return applied;
+      return true;
     };
 
     const scheduleBringNativePresetPromptPopupToFront = () => {
@@ -12684,6 +12735,8 @@ jQuery(async () => {
     const currentValue = String(pm.select.val() || "");
 
     if (targetValue && currentValue !== targetValue) {
+      // 保存原始预设值，弹窗关闭后恢复
+      _presetValueToRestore = currentValue;
       pm.select.val(targetValue);
       pm.select.trigger("change");
       pm.select.trigger("input");
@@ -23105,6 +23158,8 @@ jQuery(async () => {
       cfmQrLastFocusedSetName = null;
       closeWorldInfoEntryPanels();
       cfmWorldInfoEntryLastFocusedName = null;
+      resetNativePresetPromptPopupStyles();
+      restorePresetSelectionAfterEdit();
 
       cfmChatMode = false;
       cfmChatExpandedAvatars.clear();

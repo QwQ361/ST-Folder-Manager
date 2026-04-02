@@ -1,4 +1,4 @@
-/* ========== 浮动按钮 ========== */
+弹窗/* ========== 浮动按钮 ========== */
 #cfm-folder-button {
   position: fixed !important;
   z-index: 1050;
@@ -4290,6 +4290,109 @@ select.cfm-wi-ctrl {
   font-size: 0.72em;
   color: rgba(255, 255, 255, 0.45);
   margin-left: 1px;
+}
+
+/* ==================== 世界书条目行内控件 移动端适配 ==================== */
+@media (max-width: 768px) {
+  /* 条目行标签区域允许换行，让控件换到第二行 */
+  .cfm-preset-detail-label:has(.cfm-wi-entry-controls) {
+    flex-wrap: wrap;
+  }
+  /* 条目名称保证最小宽度，不被完全挤掉 */
+  .cfm-preset-detail-label .cfm-preset-detail-label-text {
+    flex: 1 1 auto;
+    min-width: 60px;
+  }
+  /* 行内控件组换到新行，占满宽度 */
+  .cfm-wi-entry-controls {
+    flex: 1 0 100%;
+    flex-wrap: wrap;
+    order: 10;
+    margin-left: 0;
+    margin-top: 4px;
+    gap: 3px;
+  }
+  /* 行内控件更紧凑 */
+  .cfm-wi-ctrl {
+    font-size: 0.72em;
+    height: 20px;
+    line-height: 18px;
+    padding: 1px 3px;
+  }
+  select.cfm-wi-ctrl {
+    height: 20px;
+    line-height: 18px;
+    padding: 1px 3px;
+  }
+  .cfm-wi-ctrl-position {
+    min-width: 50px;
+    max-width: 120px;
+  }
+  .cfm-wi-ctrl-depth,
+  .cfm-wi-ctrl-order {
+    width: 44px;
+  }
+  .cfm-wi-ctrl-prob {
+    width: 38px;
+  }
+  /* 操作按钮保持在名称同一行 */
+  .cfm-preset-detail-label .cfm-chat-actions {
+    order: 5;
+  }
+  /* 详情编辑面板移动端适配 */
+  .cfm-wi-de {
+    padding: 8px 6px;
+    gap: 8px;
+  }
+  .cfm-wi-de-row {
+    gap: 6px;
+  }
+  .cfm-wi-de-field-flex {
+    min-width: 80px;
+  }
+  .cfm-wi-de-field-wide {
+    min-width: 100px;
+  }
+  .cfm-wi-de-grid {
+    gap: 4px 6px;
+  }
+  .cfm-wi-de-input,
+  .cfm-wi-de-select {
+    font-size: 11px;
+    padding: 2px 4px;
+  }
+  input[type="number"].cfm-wi-de-input {
+    width: 60px;
+  }
+  .cfm-wi-de-cb-label {
+    font-size: 10px;
+  }
+}
+
+/* 超小屏幕（手机竖屏）进一步压缩 */
+@media (max-width: 480px) {
+  .cfm-wi-entry-controls {
+    gap: 2px;
+  }
+  .cfm-wi-ctrl-position {
+    min-width: 40px;
+    max-width: 100px;
+    font-size: 0.68em;
+  }
+  .cfm-wi-ctrl-depth,
+  .cfm-wi-ctrl-order {
+    width: 38px;
+  }
+  .cfm-wi-ctrl-prob {
+    width: 34px;
+  }
+  .cfm-wi-de-field {
+    min-width: 60px;
+  }
+  .cfm-wi-de-field-flex {
+    flex: 1 1 100%;
+    min-width: unset;
+  }
 }
 
 /* ==================== 世界书条目详情编辑面板 ==================== */
