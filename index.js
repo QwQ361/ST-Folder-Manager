@@ -3415,6 +3415,10 @@ jQuery(async () => {
       borderColor: "#45475a",
       accentColor: "#89b4fa",
       blur: 0,
+      detailBgColor: "#ffffff",
+      detailBgOpacity: 0.03,
+      detailTextColor: "#e0e0e0",
+      detailLabelColor: "#89b4fa",
     },
     light: {
       name: "浅色",
@@ -3423,8 +3427,12 @@ jQuery(async () => {
       bgOpacity: 0.95,
       textColor: "#4c4f69",
       borderColor: "#ccd0da",
-      accentColor: "#1e66f5",
+      accentColor: "#4377deff",
       blur: 0,
+      detailBgColor: "#d0d3de",
+      detailBgOpacity: 0.45,
+      detailTextColor: "#5c5f75",
+      detailLabelColor: "#74a2ec",
     },
     transparent: {
       name: "半透明",
@@ -3435,6 +3443,10 @@ jQuery(async () => {
       borderColor: "#555555",
       accentColor: "#89b4fa",
       blur: 10,
+      detailBgColor: "#ffffff",
+      detailBgOpacity: 0.05,
+      detailTextColor: "#e0e0e0",
+      detailLabelColor: "#89b4fa",
     },
     highContrast: {
       name: "高对比度",
@@ -3445,6 +3457,10 @@ jQuery(async () => {
       borderColor: "#ffffff",
       accentColor: "#00ff00",
       blur: 0,
+      detailBgColor: "#333333",
+      detailBgOpacity: 1.0,
+      detailTextColor: "#ffffff",
+      detailLabelColor: "#00ff00",
     },
   };
 
@@ -3553,6 +3569,16 @@ jQuery(async () => {
     if (style.accentColor) {
       cssVars += `  --SmartThemeQuoteColor: ${style.accentColor} !important;\n`;
     }
+    if (style.detailBgColor) {
+      const detailBgRgba = hexToRgba(style.detailBgColor, style.detailBgOpacity ?? 0.03);
+      cssVars += `  --cfm-detail-bg: ${detailBgRgba} !important;\n`;
+    }
+    if (style.detailTextColor) {
+      cssVars += `  --cfm-detail-text: ${style.detailTextColor} !important;\n`;
+    }
+    if (style.detailLabelColor) {
+      cssVars += `  --cfm-detail-label: ${style.detailLabelColor} !important;\n`;
+    }
 
     let blurCSS = "";
     if (style.blur > 0) {
@@ -3586,11 +3612,20 @@ jQuery(async () => {
     const accentColor =
       config.accentColor || "var(--SmartThemeQuoteColor, #89b4fa)";
     const blur = config.blur || 0;
+    const detailBgRgba = hexToRgba(
+      config.detailBgColor || "#ffffff",
+      config.detailBgOpacity ?? 0.03,
+    );
+    const detailTextColor = config.detailTextColor || "#ffffff";
+    const detailLabelColor = config.detailLabelColor || "#89b4fa";
 
     previewEl.style.setProperty("--preview-bg", bgRgba);
     previewEl.style.setProperty("--preview-text", textColor);
     previewEl.style.setProperty("--preview-border", borderColor);
     previewEl.style.setProperty("--preview-accent", accentColor);
+    previewEl.style.setProperty("--preview-detail-bg", detailBgRgba);
+    previewEl.style.setProperty("--preview-detail-text", detailTextColor);
+    previewEl.style.setProperty("--preview-detail-label", detailLabelColor);
     if (blur > 0) {
       previewEl.style.setProperty(
         "backdrop-filter",
@@ -3621,6 +3656,10 @@ jQuery(async () => {
       borderColor: saved.borderColor || themeDefaults.borderColor,
       accentColor: saved.accentColor || themeDefaults.accentColor,
       blur: saved.blur ?? 0,
+      detailBgColor: saved.detailBgColor || "#ffffff",
+      detailBgOpacity: saved.detailBgOpacity ?? 0.03,
+      detailTextColor: saved.detailTextColor || "#ffffff",
+      detailLabelColor: saved.detailLabelColor || "#89b4fa",
     };
 
     const overlay = $(`
@@ -3652,6 +3691,10 @@ jQuery(async () => {
                   <span class="cfm-theme-preview-name">这是普通文字示例</span>
                 </div>
                 <div class="cfm-theme-preview-border-demo">边框效果展示</div>
+                <div class="cfm-theme-preview-detail">
+                  <span class="cfm-theme-preview-detail-label">条目名称</span>
+                  <span class="cfm-theme-preview-detail-text">详情区域文字</span>
+                </div>
               </div>
             </div>
 
@@ -3711,6 +3754,38 @@ jQuery(async () => {
                   <span class="cfm-theme-slider-val" id="cfm-theme-blur-val">${draft.blur}px</span>
                 </div>
               </div>
+              <div class="cfm-theme-separator"><span>展开详情区域</span></div>
+              <div class="cfm-theme-row">
+                <label>详情背景颜色</label>
+                <div class="cfm-theme-row-right">
+                  <input type="color" id="cfm-theme-detail-bg-color" value="${draft.detailBgColor}">
+                  <input type="text" class="cfm-theme-color-hex" id="cfm-theme-detail-bg-hex" value="${draft.detailBgColor}" spellcheck="false" autocomplete="off">
+                  <button class="cfm-theme-reset-btn" data-target="detailBgColor" title="重置"><i class="fa-solid fa-rotate-left"></i></button>
+                </div>
+              </div>
+              <div class="cfm-theme-row">
+                <label>详情背景不透明度</label>
+                <div class="cfm-theme-row-right">
+                  <input type="range" id="cfm-theme-detail-bg-opacity" min="0" max="100" value="${Math.round(draft.detailBgOpacity * 100)}" class="cfm-theme-slider">
+                  <span class="cfm-theme-slider-val" id="cfm-theme-detail-opacity-val">${Math.round(draft.detailBgOpacity * 100)}%</span>
+                </div>
+              </div>
+              <div class="cfm-theme-row">
+                <label>详情文字颜色</label>
+                <div class="cfm-theme-row-right">
+                  <input type="color" id="cfm-theme-detail-text-color" value="${draft.detailTextColor}">
+                  <input type="text" class="cfm-theme-color-hex" id="cfm-theme-detail-text-hex" value="${draft.detailTextColor}" spellcheck="false" autocomplete="off">
+                  <button class="cfm-theme-reset-btn" data-target="detailTextColor" title="重置"><i class="fa-solid fa-rotate-left"></i></button>
+                </div>
+              </div>
+              <div class="cfm-theme-row">
+                <label>详情条目名称颜色</label>
+                <div class="cfm-theme-row-right">
+                  <input type="color" id="cfm-theme-detail-label-color" value="${draft.detailLabelColor}">
+                  <input type="text" class="cfm-theme-color-hex" id="cfm-theme-detail-label-hex" value="${draft.detailLabelColor}" spellcheck="false" autocomplete="off">
+                  <button class="cfm-theme-reset-btn" data-target="detailLabelColor" title="重置"><i class="fa-solid fa-rotate-left"></i></button>
+                </div>
+              </div>
             </div>
 
             <!-- 快捷预设 -->
@@ -3723,6 +3798,23 @@ jQuery(async () => {
                       `<button class="cfm-theme-preset-btn" data-preset="${key}"><i class="fa-solid ${preset.icon}"></i> ${preset.name}</button>`,
                   )
                   .join("")}
+              </div>
+            </div>
+
+            <!-- 自定义预设 -->
+            <div class="cfm-theme-presets cfm-user-presets-section">
+              <div class="cfm-theme-presets-label">自定义预设</div>
+              <div class="cfm-theme-presets-btns">
+                <button class="cfm-theme-preset-btn cfm-user-preset-save-btn" id="cfm-user-preset-save"><i class="fa-solid fa-floppy-disk"></i> 保存当前</button>
+                <button class="cfm-theme-preset-btn cfm-user-preset-list-btn" id="cfm-user-preset-list-toggle"><i class="fa-solid fa-list"></i> 我的预设</button>
+              </div>
+              <div class="cfm-user-presets-dropdown" id="cfm-user-presets-dropdown" style="display:none;">
+                <div class="cfm-user-presets-search-wrap">
+                  <i class="fa-solid fa-magnifying-glass"></i>
+                  <input type="text" id="cfm-user-presets-search" placeholder="搜索预设..." spellcheck="false" autocomplete="off">
+                </div>
+                <div class="cfm-user-presets-list" id="cfm-user-presets-list"></div>
+                <div class="cfm-user-presets-empty" id="cfm-user-presets-empty">暂无自定义预设</div>
               </div>
             </div>
           </div>
@@ -3780,6 +3872,21 @@ jQuery(async () => {
       overlay.find("#cfm-theme-accent-hex").val(this.value);
       refreshPreview();
     });
+    overlay.find("#cfm-theme-detail-bg-color").on("input", function () {
+      draft.detailBgColor = this.value;
+      overlay.find("#cfm-theme-detail-bg-hex").val(this.value);
+      refreshPreview();
+    });
+    overlay.find("#cfm-theme-detail-text-color").on("input", function () {
+      draft.detailTextColor = this.value;
+      overlay.find("#cfm-theme-detail-text-hex").val(this.value);
+      refreshPreview();
+    });
+    overlay.find("#cfm-theme-detail-label-color").on("input", function () {
+      draft.detailLabelColor = this.value;
+      overlay.find("#cfm-theme-detail-label-hex").val(this.value);
+      refreshPreview();
+    });
 
     // 色码文本输入框（支持手填 #RRGGBB / #RGB）
     function normalizeHexColor(value) {
@@ -3822,6 +3929,9 @@ jQuery(async () => {
     bindHexInput("#cfm-theme-text-hex", "#cfm-theme-text-color", "textColor");
     bindHexInput("#cfm-theme-border-hex", "#cfm-theme-border-color", "borderColor");
     bindHexInput("#cfm-theme-accent-hex", "#cfm-theme-accent-color", "accentColor");
+    bindHexInput("#cfm-theme-detail-bg-hex", "#cfm-theme-detail-bg-color", "detailBgColor");
+    bindHexInput("#cfm-theme-detail-text-hex", "#cfm-theme-detail-text-color", "detailTextColor");
+    bindHexInput("#cfm-theme-detail-label-hex", "#cfm-theme-detail-label-color", "detailLabelColor");
 
     // 滑块
     overlay.find("#cfm-theme-bg-opacity").on("input", function () {
@@ -3834,6 +3944,11 @@ jQuery(async () => {
       overlay.find("#cfm-theme-blur-val").text(this.value + "px");
       refreshPreview();
     });
+    overlay.find("#cfm-theme-detail-bg-opacity").on("input", function () {
+      draft.detailBgOpacity = parseInt(this.value) / 100;
+      overlay.find("#cfm-theme-detail-opacity-val").text(this.value + "%");
+      refreshPreview();
+    });
 
     // 单项重置按钮
     overlay.find(".cfm-theme-reset-btn").on("click", function () {
@@ -3843,6 +3958,9 @@ jQuery(async () => {
         textColor: themeDefaults.textColor,
         borderColor: themeDefaults.borderColor,
         accentColor: themeDefaults.accentColor,
+        detailBgColor: "#ffffff",
+        detailTextColor: "#ffffff",
+        detailLabelColor: "#89b4fa",
       };
       if (defaults[target]) {
         draft[target] = defaults[target];
@@ -3852,12 +3970,18 @@ jQuery(async () => {
           textColor: "#cfm-theme-text-color",
           borderColor: "#cfm-theme-border-color",
           accentColor: "#cfm-theme-accent-color",
+          detailBgColor: "#cfm-theme-detail-bg-color",
+          detailTextColor: "#cfm-theme-detail-text-color",
+          detailLabelColor: "#cfm-theme-detail-label-color",
         };
         const hexMap = {
           bgColor: "#cfm-theme-bg-hex",
           textColor: "#cfm-theme-text-hex",
           borderColor: "#cfm-theme-border-hex",
           accentColor: "#cfm-theme-accent-hex",
+          detailBgColor: "#cfm-theme-detail-bg-hex",
+          detailTextColor: "#cfm-theme-detail-text-hex",
+          detailLabelColor: "#cfm-theme-detail-label-hex",
         };
         overlay.find(inputMap[target]).val(defaults[target]);
         overlay.find(hexMap[target]).val(defaults[target]);
@@ -3865,40 +3989,181 @@ jQuery(async () => {
       }
     });
 
-    // 快捷预设
-    overlay.find(".cfm-theme-preset-btn").on("click", function () {
-      const key = $(this).data("preset");
-      const preset = CFM_STYLE_PRESETS[key];
-      if (!preset) return;
-
+    // ─── 通用：将预设对象应用到 draft 并同步表单 ───
+    function applyPresetToForm(preset) {
       draft.bgColor = preset.bgColor;
       draft.bgOpacity = preset.bgOpacity;
       draft.textColor = preset.textColor;
       draft.borderColor = preset.borderColor;
       draft.accentColor = preset.accentColor;
-      draft.blur = preset.blur;
+      draft.blur = preset.blur ?? 0;
+      draft.detailBgColor = preset.detailBgColor || "#ffffff";
+      draft.detailBgOpacity = preset.detailBgOpacity ?? 0.03;
+      draft.detailTextColor = preset.detailTextColor || "#ffffff";
+      draft.detailLabelColor = preset.detailLabelColor || "#89b4fa";
       draft.enabled = true;
 
-      // 更新表单
       overlay.find("#cfm-theme-enabled").prop("checked", true);
-      overlay.find("#cfm-theme-bg-color").val(preset.bgColor);
-      overlay.find("#cfm-theme-bg-hex").text(preset.bgColor);
-      overlay
-        .find("#cfm-theme-bg-opacity")
-        .val(Math.round(preset.bgOpacity * 100));
-      overlay
-        .find("#cfm-theme-opacity-val")
-        .text(Math.round(preset.bgOpacity * 100) + "%");
-      overlay.find("#cfm-theme-text-color").val(preset.textColor);
-      overlay.find("#cfm-theme-text-hex").text(preset.textColor);
-      overlay.find("#cfm-theme-border-color").val(preset.borderColor);
-      overlay.find("#cfm-theme-border-hex").text(preset.borderColor);
-      overlay.find("#cfm-theme-accent-color").val(preset.accentColor);
-      overlay.find("#cfm-theme-accent-hex").text(preset.accentColor);
-      overlay.find("#cfm-theme-blur").val(preset.blur);
-      overlay.find("#cfm-theme-blur-val").text(preset.blur + "px");
+      overlay.find("#cfm-theme-bg-color").val(draft.bgColor);
+      overlay.find("#cfm-theme-bg-hex").val(draft.bgColor);
+      overlay.find("#cfm-theme-bg-opacity").val(Math.round(draft.bgOpacity * 100));
+      overlay.find("#cfm-theme-opacity-val").text(Math.round(draft.bgOpacity * 100) + "%");
+      overlay.find("#cfm-theme-text-color").val(draft.textColor);
+      overlay.find("#cfm-theme-text-hex").val(draft.textColor);
+      overlay.find("#cfm-theme-border-color").val(draft.borderColor);
+      overlay.find("#cfm-theme-border-hex").val(draft.borderColor);
+      overlay.find("#cfm-theme-accent-color").val(draft.accentColor);
+      overlay.find("#cfm-theme-accent-hex").val(draft.accentColor);
+      overlay.find("#cfm-theme-blur").val(draft.blur);
+      overlay.find("#cfm-theme-blur-val").text(draft.blur + "px");
+      overlay.find("#cfm-theme-detail-bg-color").val(draft.detailBgColor);
+      overlay.find("#cfm-theme-detail-bg-hex").val(draft.detailBgColor);
+      overlay.find("#cfm-theme-detail-bg-opacity").val(Math.round(draft.detailBgOpacity * 100));
+      overlay.find("#cfm-theme-detail-opacity-val").text(Math.round(draft.detailBgOpacity * 100) + "%");
+      overlay.find("#cfm-theme-detail-text-color").val(draft.detailTextColor);
+      overlay.find("#cfm-theme-detail-text-hex").val(draft.detailTextColor);
+      overlay.find("#cfm-theme-detail-label-color").val(draft.detailLabelColor);
+      overlay.find("#cfm-theme-detail-label-hex").val(draft.detailLabelColor);
       updateControlsState();
       refreshPreview();
+    }
+
+    // 快捷预设
+    overlay.find(".cfm-theme-preset-btn:not(.cfm-user-preset-save-btn):not(.cfm-user-preset-list-btn)").on("click", function () {
+      const key = $(this).data("preset");
+      const preset = CFM_STYLE_PRESETS[key];
+      if (!preset) return;
+      applyPresetToForm(preset);
+    });
+
+    // ─── 自定义预设功能 ───
+    function getUserPresets() {
+      if (!extension_settings[extensionName].userPresets) {
+        extension_settings[extensionName].userPresets = [];
+      }
+      return extension_settings[extensionName].userPresets;
+    }
+
+    function saveUserPresets() {
+      getContext().saveSettingsDebounced();
+    }
+
+    function renderUserPresetsList(filter) {
+      const listEl = overlay.find("#cfm-user-presets-list");
+      const emptyEl = overlay.find("#cfm-user-presets-empty");
+      const presets = getUserPresets();
+      const keyword = (filter || "").trim().toLowerCase();
+      const filtered = keyword
+        ? presets.filter((p) => p.name.toLowerCase().includes(keyword))
+        : presets;
+
+      listEl.empty();
+      if (filtered.length === 0) {
+        emptyEl.show();
+        emptyEl.text(keyword ? "未找到匹配的预设" : "暂无自定义预设");
+        return;
+      }
+      emptyEl.hide();
+
+      filtered.forEach((p, idx) => {
+        // 找到在原数组中的真实索引
+        const realIdx = presets.indexOf(p);
+        const item = $(`
+          <div class="cfm-user-preset-item" data-idx="${realIdx}">
+            <span class="cfm-user-preset-name" title="${p.name}">${p.name}</span>
+            <div class="cfm-user-preset-actions">
+              <button class="cfm-user-preset-action-btn cfm-user-preset-rename" title="重命名"><i class="fa-solid fa-pen"></i></button>
+              <button class="cfm-user-preset-action-btn cfm-user-preset-delete" title="删除"><i class="fa-solid fa-trash"></i></button>
+            </div>
+          </div>
+        `);
+
+        // 点击预设名称 → 应用
+        item.find(".cfm-user-preset-name").on("click", function () {
+          applyPresetToForm(p.style);
+          cfmToastr.success(`已应用预设「${p.name}」`, "自定义预设", { timeOut: 1500 });
+        });
+
+        // 重命名
+        item.find(".cfm-user-preset-rename").on("click", function (e) {
+          e.stopPropagation();
+          const nameEl = item.find(".cfm-user-preset-name");
+          const oldName = p.name;
+          // 替换为输入框
+          const input = $(`<input type="text" class="cfm-user-preset-rename-input" value="${oldName}" spellcheck="false" autocomplete="off">`);
+          nameEl.replaceWith(input);
+          input.focus().select();
+
+          function finishRename() {
+            const newName = input.val().trim();
+            if (newName && newName !== oldName) {
+              p.name = newName;
+              saveUserPresets();
+            }
+            renderUserPresetsList(overlay.find("#cfm-user-presets-search").val());
+          }
+          input.on("blur", finishRename);
+          input.on("keydown", function (ev) {
+            if (ev.key === "Enter") { ev.preventDefault(); input.blur(); }
+            if (ev.key === "Escape") { input.val(oldName); input.blur(); }
+          });
+        });
+
+        // 删除
+        item.find(".cfm-user-preset-delete").on("click", function (e) {
+          e.stopPropagation();
+          if (!cfmConfirm(`确定删除预设「${p.name}」吗？`)) return;
+          presets.splice(realIdx, 1);
+          saveUserPresets();
+          renderUserPresetsList(overlay.find("#cfm-user-presets-search").val());
+          cfmToastr.success(`已删除预设「${p.name}」`, "自定义预设", { timeOut: 1500 });
+        });
+
+        listEl.append(item);
+      });
+    }
+
+    // 保存当前为自定义预设
+    overlay.find("#cfm-user-preset-save").on("click", function () {
+      const name = prompt("请输入预设名称：");
+      if (!name || !name.trim()) return;
+      const presets = getUserPresets();
+      const style = {
+        bgColor: draft.bgColor,
+        bgOpacity: draft.bgOpacity,
+        textColor: draft.textColor,
+        borderColor: draft.borderColor,
+        accentColor: draft.accentColor,
+        blur: draft.blur,
+        detailBgColor: draft.detailBgColor,
+        detailBgOpacity: draft.detailBgOpacity,
+        detailTextColor: draft.detailTextColor,
+        detailLabelColor: draft.detailLabelColor,
+      };
+      presets.push({ name: name.trim(), style });
+      saveUserPresets();
+      // 如果下拉列表已展开则刷新
+      if (overlay.find("#cfm-user-presets-dropdown").is(":visible")) {
+        renderUserPresetsList(overlay.find("#cfm-user-presets-search").val());
+      }
+      cfmToastr.success(`预设「${name.trim()}」已保存`, "自定义预设", { timeOut: 1500 });
+    });
+
+    // 展开/收起我的预设下拉列表
+    overlay.find("#cfm-user-preset-list-toggle").on("click", function () {
+      const dropdown = overlay.find("#cfm-user-presets-dropdown");
+      if (dropdown.is(":visible")) {
+        dropdown.slideUp(150);
+      } else {
+        renderUserPresetsList("");
+        overlay.find("#cfm-user-presets-search").val("");
+        dropdown.slideDown(150);
+      }
+    });
+
+    // 搜索过滤
+    overlay.find("#cfm-user-presets-search").on("input", function () {
+      renderUserPresetsList($(this).val());
     });
 
     // 恢复默认
@@ -3946,20 +4211,31 @@ jQuery(async () => {
     const savedPos = JSON.parse(
       localStorage.getItem(STORAGE_KEY_BTN_POS) || "null",
     );
-    if (savedPos)
+    if (savedPos) {
+      // 边界校正：防止在不同设备/分辨率下按钮超出屏幕
+      let posTop = parseInt(savedPos.top, 10) || 150;
+      let posLeft = parseInt(savedPos.left, 10);
+      const btnSize = 44;
+      const winW = $(window).width();
+      const winH = $(window).height();
+      if (isNaN(posLeft) || posLeft > winW - btnSize) posLeft = winW - btnSize - 10;
+      if (posLeft < 0) posLeft = 10;
+      if (posTop > winH - btnSize) posTop = winH - btnSize - 10;
+      if (posTop < 0) posTop = 10;
       btn.css({
-        top: savedPos.top,
-        left: savedPos.left,
+        top: posTop + "px",
+        left: posLeft + "px",
         right: "auto",
         bottom: "auto",
       });
-    else
+    } else {
       btn.css({
         top: "150px",
         right: "15px",
         left: "auto",
         bottom: "auto",
       });
+    }
 
     let isDragging = false,
       hasMoved = false,
