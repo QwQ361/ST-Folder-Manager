@@ -975,6 +975,9 @@ jQuery(async () => {
         },
       };
     }
+    // 自定义外观样式：按主题名索引，每个主题可独立配置
+    if (!extension_settings[extensionName].customStyles)
+      extension_settings[extensionName].customStyles = {};
     // 世界书激活分组预设：[{name, books, scope, bindChars, bindPresets}]
     if (!extension_settings[extensionName].wiActivePresets)
       extension_settings[extensionName].wiActivePresets = [];
@@ -3209,6 +3212,522 @@ jQuery(async () => {
           }
         }, 500);
       }
+      // 主题切换后重新应用自定义外观
+      setTimeout(() => applyCustomStyle(), 600);
+    });
+  }
+
+  // ==================== 自定义外观 ====================
+
+  /** 获取当前酒馆主题名 */
+  function getCurrentThemeName() {
+    const themesSelect = document.getElementById("themes");
+    return themesSelect?.value || "__default__";
+  }
+
+  /** hex 颜色 + 不透明度 → rgba 字符串 */
+  function hexToRgba(hex, opacity) {
+    if (!hex) return null;
+    hex = hex.replace(/^#/, "");
+    if (hex.length === 3)
+      hex = hex
+        .split("")
+        .map((c) => c + c)
+        .join("");
+    const r = parseInt(hex.substring(0, 2), 16);
+    const g = parseInt(hex.substring(2, 4), 16);
+    const b = parseInt(hex.substring(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${opacity ?? 1})`;
+  }
+
+  /** 快捷预设方案 */
+  const CFM_STYLE_PRESETS = {
+    dark: {
+      name: "深色",
+      icon: "fa-moon",
+      bgColor: "#1e1e2e",
+      bgOpacity: 0.95,
+      textColor: "#cdd6f4",
+      borderColor: "#45475a",
+      accentColor: "#89b4fa",
+      blur: 0,
+    },
+    light: {
+      name: "浅色",
+      icon: "fa-sun",
+      bgColor: "#eff1f5",
+      bgOpacity: 0.95,
+      textColor: "#4c4f69",
+      borderColor: "#ccd0da",
+      accentColor: "#1e66f5",
+      blur: 0,
+    },
+    transparent: {
+      name: "半透明",
+      icon: "fa-droplet",
+      bgColor: "#000000",
+      bgOpacity: 0.6,
+      textColor: "#ffffff",
+      borderColor: "#555555",
+      accentColor: "#89b4fa",
+      blur: 10,
+    },
+    highContrast: {
+      name: "高对比度",
+      icon: "fa-circle-half-stroke",
+      bgColor: "#000000",
+      bgOpacity: 1.0,
+      textColor: "#ffffff",
+      borderColor: "#ffffff",
+      accentColor: "#00ff00",
+      blur: 0,
+    },
+  };
+
+  /**
+   * 从当前主题中读取实际生效的 CSS 变量值，作为自定义美化弹窗的默认值
+   * 需要先临时移除自定义覆盖样式，读取原生主题值后再恢复
+   */
+  function getComputedThemeDefaults() {
+    // 临时移除自定义覆盖以读取原生主题色
+    const overrideEl = document.getElementById("cfm-custom-style-override");
+    if (overrideEl) overrideEl.remove();
+
+    const ref = document.getElementById("cfm-popup") || document.documentElement;
+    const cs = getComputedStyle(ref);
+
+    /**
+     * 将 CSS 颜色值（rgb/rgba/hex/named）转为 #RRGGBB hex 字符串
+     */
+    function colorToHex(raw) {
+      if (!raw) return null;
+      const s = raw.trim();
+      if (/^#[0-9a-f]{6}$/i.test(s)) return s;
+      if (/^#[0-9a-f]{3}$/i.test(s)) {
+        return "#" + s[1] + s[1] + s[2] + s[2] + s[3] + s[3];
+      }
+      // rgb(r, g, b) / rgba(r, g, b, a)
+      const m = s.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+      if (m) {
+        const r = parseInt(m[1]).toString(16).padStart(2, "0");
+        const g = parseInt(m[2]).toString(16).padStart(2, "0");
+        const b = parseInt(m[3]).toString(16).padStart(2, "0");
+        return `#${r}${g}${b}`;
+      }
+      return null;
+    }
+
+    /**
+     * 从 CSS 颜色值中提取 alpha 值
+     */
+    function colorToAlpha(raw) {
+      if (!raw) return 1;
+      const m = raw.trim().match(/rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([\d.]+)\s*\)/i);
+      return m ? parseFloat(m[1]) : 1;
+    }
+
+    const bgRaw = cs.getPropertyValue("--SmartThemeBlurTintColor").trim();
+    const textRaw = cs.getPropertyValue("--SmartThemeBodyColor").trim();
+    const borderRaw = cs.getPropertyValue("--SmartThemeBorderColor").trim();
+    const accentRaw = cs.getPropertyValue("--SmartThemeQuoteColor").trim();
+
+    const defaults = {
+      bgColor: colorToHex(bgRaw) || "#1e1e2e",
+      bgOpacity: bgRaw ? colorToAlpha(bgRaw) : 0.95,
+      textColor: colorToHex(textRaw) || "#cdd6f4",
+      borderColor: colorToHex(borderRaw) || "#45475a",
+      accentColor: colorToHex(accentRaw) || "#89b4fa",
+    };
+
+    // 恢复自定义覆盖
+    if (overrideEl) document.head.appendChild(overrideEl);
+
+    return defaults;
+  }
+
+  /**
+   * 将用户的自定义外观应用到所有 CFM 相关元素（主弹窗、子弹窗、浮动按钮）
+   * 通过注入/更新一个 <style> 标签，用多选择器覆盖 CSS 自定义属性
+   * 这样即使子弹窗 append 到 body 上，也能获得自定义样式
+   */
+  function applyCustomStyle() {
+    const STYLE_ID = "cfm-custom-style-override";
+    let styleEl = document.getElementById(STYLE_ID);
+
+    const themeName = getCurrentThemeName();
+    const styles = extension_settings[extensionName].customStyles || {};
+    const style = styles[themeName];
+
+    // 如果未启用或无配置，移除覆盖样式
+    if (!style?.enabled) {
+      if (styleEl) styleEl.remove();
+      return;
+    }
+
+    // 构建 CSS 变量覆盖规则
+    const selector = [
+      "#cfm-popup",
+      ".cfm-edit-popup-overlay",
+      ".cfm-edit-popup",
+      "#cfm-folder-button",
+      ".cfm-theme-popup-overlay",
+      ".cfm-config-overlay",
+      ".cfm-batch-overlay",
+    ].join(",\n");
+
+    let cssVars = "";
+    if (style.bgColor) {
+      const rgba = hexToRgba(style.bgColor, style.bgOpacity ?? 1);
+      cssVars += `  --SmartThemeBlurTintColor: ${rgba} !important;\n`;
+    }
+    if (style.textColor) {
+      cssVars += `  --SmartThemeBodyColor: ${style.textColor} !important;\n`;
+    }
+    if (style.borderColor) {
+      cssVars += `  --SmartThemeBorderColor: ${style.borderColor} !important;\n`;
+    }
+    if (style.accentColor) {
+      cssVars += `  --SmartThemeQuoteColor: ${style.accentColor} !important;\n`;
+    }
+
+    let blurCSS = "";
+    if (style.blur > 0) {
+      const blurVal = `blur(${style.blur}px)`;
+      // backdrop-filter 只对有背景的容器元素生效
+      const blurSelector = "#cfm-popup, .cfm-edit-popup, #cfm-folder-button";
+      blurCSS = `\n${blurSelector} {\n  backdrop-filter: ${blurVal} !important;\n  -webkit-backdrop-filter: ${blurVal} !important;\n}`;
+    }
+
+    const cssText = `${selector} {\n${cssVars}}${blurCSS}`;
+
+    if (!styleEl) {
+      styleEl = document.createElement("style");
+      styleEl.id = STYLE_ID;
+      document.head.appendChild(styleEl);
+    }
+    styleEl.textContent = cssText;
+  }
+
+  /** 更新预览区的外观 */
+  function updateThemePreview(previewEl, config) {
+    if (!previewEl) return;
+    const bgRgba = hexToRgba(
+      config.bgColor || "#1e1e2e",
+      config.bgOpacity ?? 1,
+    );
+    const textColor =
+      config.textColor || "var(--SmartThemeBodyColor, #cdd6f4)";
+    const borderColor =
+      config.borderColor || "var(--SmartThemeBorderColor, #45475a)";
+    const accentColor =
+      config.accentColor || "var(--SmartThemeQuoteColor, #89b4fa)";
+    const blur = config.blur || 0;
+
+    previewEl.style.setProperty("--preview-bg", bgRgba);
+    previewEl.style.setProperty("--preview-text", textColor);
+    previewEl.style.setProperty("--preview-border", borderColor);
+    previewEl.style.setProperty("--preview-accent", accentColor);
+    if (blur > 0) {
+      previewEl.style.setProperty(
+        "backdrop-filter",
+        `blur(${blur}px)`,
+      );
+    } else {
+      previewEl.style.removeProperty("backdrop-filter");
+    }
+  }
+
+  /** 显示自定义外观弹窗 */
+  function showThemeCustomizePopup() {
+    if ($("#cfm-theme-popup-overlay").length > 0) return;
+
+    const themeName = getCurrentThemeName();
+    const styles = extension_settings[extensionName].customStyles || {};
+    const saved = styles[themeName] || {};
+
+    // 读取当前主题的实际颜色作为默认值
+    const themeDefaults = getComputedThemeDefaults();
+
+    // 工作副本（修改只影响预览，不影响保存的数据）
+    const draft = {
+      enabled: saved.enabled ?? false,
+      bgColor: saved.bgColor || themeDefaults.bgColor,
+      bgOpacity: saved.bgOpacity ?? themeDefaults.bgOpacity,
+      textColor: saved.textColor || themeDefaults.textColor,
+      borderColor: saved.borderColor || themeDefaults.borderColor,
+      accentColor: saved.accentColor || themeDefaults.accentColor,
+      blur: saved.blur ?? 0,
+    };
+
+    const overlay = $(`
+      <div id="cfm-theme-popup-overlay" class="cfm-theme-popup-overlay">
+        <div class="cfm-theme-popup">
+          <div class="cfm-theme-popup-header">
+            <span><i class="fa-solid fa-palette"></i> 自定义外观</span>
+            <button class="cfm-btn-close" id="cfm-theme-close">&times;</button>
+          </div>
+          <div class="cfm-theme-popup-subheader">
+            当前主题：<strong>${escapeHtml(themeName === "__default__" ? "默认" : themeName)}</strong>
+          </div>
+          <div class="cfm-theme-popup-body">
+            <!-- 预览区 -->
+            <div class="cfm-theme-preview" id="cfm-theme-preview">
+              <div class="cfm-theme-preview-header">
+                <span>📁 资源管理器</span>
+                <span style="opacity:0.5;">✕</span>
+              </div>
+              <div class="cfm-theme-preview-body">
+                <div class="cfm-theme-preview-folder">
+                  <i class="fa-solid fa-folder" style="margin-right:6px;"></i>示例文件夹
+                </div>
+                <div class="cfm-theme-preview-item">
+                  <span class="cfm-theme-preview-name">角色卡名称</span>
+                  <span class="cfm-theme-preview-accent-text">强调色文本</span>
+                </div>
+                <div class="cfm-theme-preview-item">
+                  <span class="cfm-theme-preview-name">这是普通文字示例</span>
+                </div>
+                <div class="cfm-theme-preview-border-demo">边框效果展示</div>
+              </div>
+            </div>
+
+            <!-- 启用开关 -->
+            <div class="cfm-theme-row cfm-theme-row-toggle">
+              <label class="cfm-theme-toggle-label">
+                <input type="checkbox" id="cfm-theme-enabled" ${draft.enabled ? "checked" : ""}>
+                <span>启用自定义样式</span>
+              </label>
+            </div>
+
+            <!-- 颜色控制 -->
+            <div class="cfm-theme-controls" id="cfm-theme-controls">
+              <div class="cfm-theme-row">
+                <label>背景颜色</label>
+                <div class="cfm-theme-row-right">
+                  <input type="color" id="cfm-theme-bg-color" value="${draft.bgColor}">
+                  <span class="cfm-theme-color-hex" id="cfm-theme-bg-hex">${draft.bgColor}</span>
+                  <button class="cfm-theme-reset-btn" data-target="bgColor" title="重置"><i class="fa-solid fa-rotate-left"></i></button>
+                </div>
+              </div>
+              <div class="cfm-theme-row">
+                <label>背景不透明度</label>
+                <div class="cfm-theme-row-right">
+                  <input type="range" id="cfm-theme-bg-opacity" min="0" max="100" value="${Math.round(draft.bgOpacity * 100)}" class="cfm-theme-slider">
+                  <span class="cfm-theme-slider-val" id="cfm-theme-opacity-val">${Math.round(draft.bgOpacity * 100)}%</span>
+                </div>
+              </div>
+              <div class="cfm-theme-row">
+                <label>文字颜色</label>
+                <div class="cfm-theme-row-right">
+                  <input type="color" id="cfm-theme-text-color" value="${draft.textColor}">
+                  <span class="cfm-theme-color-hex" id="cfm-theme-text-hex">${draft.textColor}</span>
+                  <button class="cfm-theme-reset-btn" data-target="textColor" title="重置"><i class="fa-solid fa-rotate-left"></i></button>
+                </div>
+              </div>
+              <div class="cfm-theme-row">
+                <label>边框颜色</label>
+                <div class="cfm-theme-row-right">
+                  <input type="color" id="cfm-theme-border-color" value="${draft.borderColor}">
+                  <span class="cfm-theme-color-hex" id="cfm-theme-border-hex">${draft.borderColor}</span>
+                  <button class="cfm-theme-reset-btn" data-target="borderColor" title="重置"><i class="fa-solid fa-rotate-left"></i></button>
+                </div>
+              </div>
+              <div class="cfm-theme-row">
+                <label>强调色</label>
+                <div class="cfm-theme-row-right">
+                  <input type="color" id="cfm-theme-accent-color" value="${draft.accentColor}">
+                  <span class="cfm-theme-color-hex" id="cfm-theme-accent-hex">${draft.accentColor}</span>
+                  <button class="cfm-theme-reset-btn" data-target="accentColor" title="重置"><i class="fa-solid fa-rotate-left"></i></button>
+                </div>
+              </div>
+              <div class="cfm-theme-row">
+                <label>背景模糊</label>
+                <div class="cfm-theme-row-right">
+                  <input type="range" id="cfm-theme-blur" min="0" max="30" value="${draft.blur}" class="cfm-theme-slider">
+                  <span class="cfm-theme-slider-val" id="cfm-theme-blur-val">${draft.blur}px</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 快捷预设 -->
+            <div class="cfm-theme-presets">
+              <div class="cfm-theme-presets-label">快捷预设</div>
+              <div class="cfm-theme-presets-btns">
+                ${Object.entries(CFM_STYLE_PRESETS)
+                  .map(
+                    ([key, preset]) =>
+                      `<button class="cfm-theme-preset-btn" data-preset="${key}"><i class="fa-solid ${preset.icon}"></i> ${preset.name}</button>`,
+                  )
+                  .join("")}
+              </div>
+            </div>
+          </div>
+
+          <div class="cfm-theme-popup-footer">
+            <button class="cfm-btn" id="cfm-theme-reset-all"><i class="fa-solid fa-rotate-left"></i> 恢复默认</button>
+            <button class="cfm-btn cfm-theme-apply-btn" id="cfm-theme-apply"><i class="fa-solid fa-check"></i> 应用</button>
+          </div>
+        </div>
+      </div>
+    `);
+
+    $("body").append(overlay);
+
+    const previewEl = overlay.find("#cfm-theme-preview")[0];
+    const controlsEl = overlay.find("#cfm-theme-controls");
+
+    // 初始化预览
+    function refreshPreview() {
+      updateThemePreview(previewEl, draft);
+    }
+    refreshPreview();
+
+    // 启用开关控制 controls 区域可操作性
+    function updateControlsState() {
+      controlsEl.toggleClass("cfm-theme-controls-disabled", !draft.enabled);
+    }
+    updateControlsState();
+
+    // 启用开关
+    overlay.find("#cfm-theme-enabled").on("change", function () {
+      draft.enabled = this.checked;
+      updateControlsState();
+      refreshPreview();
+    });
+
+    // 颜色选择器
+    overlay.find("#cfm-theme-bg-color").on("input", function () {
+      draft.bgColor = this.value;
+      overlay.find("#cfm-theme-bg-hex").text(this.value);
+      refreshPreview();
+    });
+    overlay.find("#cfm-theme-text-color").on("input", function () {
+      draft.textColor = this.value;
+      overlay.find("#cfm-theme-text-hex").text(this.value);
+      refreshPreview();
+    });
+    overlay.find("#cfm-theme-border-color").on("input", function () {
+      draft.borderColor = this.value;
+      overlay.find("#cfm-theme-border-hex").text(this.value);
+      refreshPreview();
+    });
+    overlay.find("#cfm-theme-accent-color").on("input", function () {
+      draft.accentColor = this.value;
+      overlay.find("#cfm-theme-accent-hex").text(this.value);
+      refreshPreview();
+    });
+
+    // 滑块
+    overlay.find("#cfm-theme-bg-opacity").on("input", function () {
+      draft.bgOpacity = parseInt(this.value) / 100;
+      overlay.find("#cfm-theme-opacity-val").text(this.value + "%");
+      refreshPreview();
+    });
+    overlay.find("#cfm-theme-blur").on("input", function () {
+      draft.blur = parseInt(this.value);
+      overlay.find("#cfm-theme-blur-val").text(this.value + "px");
+      refreshPreview();
+    });
+
+    // 单项重置按钮
+    overlay.find(".cfm-theme-reset-btn").on("click", function () {
+      const target = $(this).data("target");
+      const defaults = {
+        bgColor: themeDefaults.bgColor,
+        textColor: themeDefaults.textColor,
+        borderColor: themeDefaults.borderColor,
+        accentColor: themeDefaults.accentColor,
+      };
+      if (defaults[target]) {
+        draft[target] = defaults[target];
+        // 更新对应的 color input 和 hex 显示
+        const inputMap = {
+          bgColor: "#cfm-theme-bg-color",
+          textColor: "#cfm-theme-text-color",
+          borderColor: "#cfm-theme-border-color",
+          accentColor: "#cfm-theme-accent-color",
+        };
+        const hexMap = {
+          bgColor: "#cfm-theme-bg-hex",
+          textColor: "#cfm-theme-text-hex",
+          borderColor: "#cfm-theme-border-hex",
+          accentColor: "#cfm-theme-accent-hex",
+        };
+        overlay.find(inputMap[target]).val(defaults[target]);
+        overlay.find(hexMap[target]).text(defaults[target]);
+        refreshPreview();
+      }
+    });
+
+    // 快捷预设
+    overlay.find(".cfm-theme-preset-btn").on("click", function () {
+      const key = $(this).data("preset");
+      const preset = CFM_STYLE_PRESETS[key];
+      if (!preset) return;
+
+      draft.bgColor = preset.bgColor;
+      draft.bgOpacity = preset.bgOpacity;
+      draft.textColor = preset.textColor;
+      draft.borderColor = preset.borderColor;
+      draft.accentColor = preset.accentColor;
+      draft.blur = preset.blur;
+      draft.enabled = true;
+
+      // 更新表单
+      overlay.find("#cfm-theme-enabled").prop("checked", true);
+      overlay.find("#cfm-theme-bg-color").val(preset.bgColor);
+      overlay.find("#cfm-theme-bg-hex").text(preset.bgColor);
+      overlay
+        .find("#cfm-theme-bg-opacity")
+        .val(Math.round(preset.bgOpacity * 100));
+      overlay
+        .find("#cfm-theme-opacity-val")
+        .text(Math.round(preset.bgOpacity * 100) + "%");
+      overlay.find("#cfm-theme-text-color").val(preset.textColor);
+      overlay.find("#cfm-theme-text-hex").text(preset.textColor);
+      overlay.find("#cfm-theme-border-color").val(preset.borderColor);
+      overlay.find("#cfm-theme-border-hex").text(preset.borderColor);
+      overlay.find("#cfm-theme-accent-color").val(preset.accentColor);
+      overlay.find("#cfm-theme-accent-hex").text(preset.accentColor);
+      overlay.find("#cfm-theme-blur").val(preset.blur);
+      overlay.find("#cfm-theme-blur-val").text(preset.blur + "px");
+      updateControlsState();
+      refreshPreview();
+    });
+
+    // 恢复默认
+    overlay.find("#cfm-theme-reset-all").on("click", function () {
+      if (
+        !confirm(
+          `确定要恢复当前主题「${themeName === "__default__" ? "默认" : themeName}」的插件外观为默认吗？\n这将删除该主题的所有自定义样式设置。`,
+        )
+      )
+        return;
+      const allStyles = extension_settings[extensionName].customStyles || {};
+      delete allStyles[themeName];
+      extension_settings[extensionName].customStyles = allStyles;
+      getContext().saveSettingsDebounced();
+      applyCustomStyle();
+      overlay.remove();
+      toastr.success("已恢复默认外观", "自定义外观", { timeOut: 2000 });
+    });
+
+    // 应用
+    overlay.find("#cfm-theme-apply").on("click", function () {
+      if (!extension_settings[extensionName].customStyles)
+        extension_settings[extensionName].customStyles = {};
+      extension_settings[extensionName].customStyles[themeName] = {
+        ...draft,
+      };
+      getContext().saveSettingsDebounced();
+      applyCustomStyle();
+      overlay.remove();
+      toastr.success("外观已应用", "自定义外观", { timeOut: 2000 });
+    });
+
+    // 关闭（不保存）
+    overlay.find("#cfm-theme-close").on("click", function () {
+      overlay.remove();
     });
   }
 
@@ -19337,6 +19856,7 @@ jQuery(async () => {
                     <h3>📁 资源管理器</h3>
                     <div class="cfm-header-actions">
                         <button id="cfm-btn-copymode" class="cfm-copymode-btn ${cfmCopyMode ? "cfm-copymode-active" : ""}" title="${cfmCopyMode ? "当前：复制模式（拖拽角色会保留原位置）" : "当前：移动模式（拖拽角色会从原位置移除）"}"><i class="fa-solid fa-${cfmCopyMode ? "copy" : "arrows-turn-to-dots"}"></i> ${cfmCopyMode ? "复制" : "移动"}</button>
+                        <button id="cfm-btn-theme" title="自定义外观"><i class="fa-solid fa-palette"></i></button>
                         <button id="cfm-btn-config" title="标签管理"><i class="fa-solid fa-gear"></i></button>
                         <button id="cfm-btn-backup" title="导入/导出"><i class="fa-solid fa-arrow-right-arrow-left"></i></button>
                         <button class="cfm-btn-close" id="cfm-btn-close-main">&times;</button>
@@ -19743,6 +20263,9 @@ jQuery(async () => {
     overlay.append(popup);
     $("body").append(overlay);
 
+    // 应用自定义外观
+    applyCustomStyle();
+
     const bindMobilePanePathDrag = () => {
       if (window.innerWidth > 768) return;
       const MIN_LEFT_PANE_HEIGHT = 160;
@@ -20034,6 +20557,10 @@ jQuery(async () => {
           closeMainPopup();
         });
     }
+    popup.find("#cfm-btn-theme").on("click touchend", (e) => {
+      e.preventDefault();
+      showThemeCustomizePopup();
+    });
     popup.find("#cfm-btn-config").on("click touchend", (e) => {
       e.preventDefault();
       showConfigPopup();

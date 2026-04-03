@@ -1696,7 +1696,10 @@
 @media (max-width: 768px) {
   /* 参考酒馆原生 drawer：从顶部栏下方开始，占据剩余视口，而不是整屏覆盖 */
   #cfm-overlay {
-    --cfm-mobile-topbar-offset: max(35px, calc(env(safe-area-inset-top, 0px) + 35px));
+    --cfm-mobile-topbar-offset: max(
+      35px,
+      calc(env(safe-area-inset-top, 0px) + 35px)
+    );
     top: var(--cfm-mobile-topbar-offset);
     left: 0;
     right: 0;
@@ -6379,4 +6382,299 @@ input[type="number"].cfm-wi-de-input::-webkit-outer-spin-button {
   color: var(--SmartThemeBodyColor, #a6adc8);
   opacity: 0.5;
   margin-top: 2px;
+}
+
+/* ========== 自定义外观弹窗 ========== */
+.cfm-theme-popup-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 100010;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+}
+.cfm-theme-popup {
+  background: var(--SmartThemeBlurTintColor, #1e1e2e);
+  color: var(--SmartThemeBodyColor, #cdd6f4);
+  border: 1px solid var(--SmartThemeBorderColor, #45475a);
+  border-radius: 10px;
+  width: 420px;
+  max-width: 95vw;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+.cfm-theme-popup-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--SmartThemeBorderColor, #45475a);
+  font-size: 15px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.cfm-theme-popup-header .cfm-btn-close {
+  background: none;
+  border: none;
+  color: var(--SmartThemeBodyColor, #cdd6f4);
+  font-size: 20px;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+.cfm-theme-popup-header .cfm-btn-close:hover {
+  opacity: 1;
+}
+.cfm-theme-popup-subheader {
+  padding: 6px 16px;
+  font-size: 12px;
+  opacity: 0.7;
+  border-bottom: 1px solid var(--SmartThemeBorderColor, #45475a);
+  flex-shrink: 0;
+}
+.cfm-theme-popup-body {
+  padding: 16px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.cfm-theme-popup-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-top: 1px solid var(--SmartThemeBorderColor, #45475a);
+  flex-shrink: 0;
+}
+.cfm-theme-apply-btn {
+  background: rgba(137, 180, 250, 0.2) !important;
+  border-color: rgba(137, 180, 250, 0.4) !important;
+  color: #89b4fa !important;
+}
+.cfm-theme-apply-btn:hover {
+  background: rgba(137, 180, 250, 0.35) !important;
+}
+
+/* 预览区 */
+.cfm-theme-preview {
+  background-color: var(--preview-bg, var(--SmartThemeBlurTintColor, #1e1e2e));
+  color: var(--preview-text, var(--SmartThemeBodyColor, #cdd6f4));
+  border: 1px solid var(--preview-border, var(--SmartThemeBorderColor, #45475a));
+  border-radius: 8px;
+  padding: 0;
+  margin-bottom: 16px;
+  overflow: hidden;
+  transition: all 0.2s;
+}
+.cfm-theme-preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid
+    var(--preview-border, var(--SmartThemeBorderColor, #45475a));
+  font-size: 13px;
+  font-weight: 600;
+}
+.cfm-theme-preview-body {
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cfm-theme-preview-folder {
+  font-size: 13px;
+  opacity: 0.9;
+}
+.cfm-theme-preview-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.04);
+}
+.cfm-theme-preview-name {
+  flex: 1;
+}
+.cfm-theme-preview-accent-text {
+  color: var(--preview-accent, var(--SmartThemeQuoteColor, #89b4fa));
+  font-size: 11px;
+}
+.cfm-theme-preview-border-demo {
+  border: 1px solid var(--preview-border, var(--SmartThemeBorderColor, #45475a));
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  text-align: center;
+  opacity: 0.8;
+}
+
+/* 启用开关 */
+.cfm-theme-row-toggle {
+  margin-bottom: 12px;
+}
+.cfm-theme-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+}
+.cfm-theme-toggle-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+/* 颜色控制区 */
+.cfm-theme-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+  transition: opacity 0.2s;
+}
+.cfm-theme-controls-disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+.cfm-theme-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.cfm-theme-row > label {
+  font-size: 12px;
+  min-width: 80px;
+  flex-shrink: 0;
+}
+.cfm-theme-row-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  justify-content: flex-end;
+}
+.cfm-theme-row-right input[type="color"] {
+  width: 32px;
+  height: 28px;
+  border: 1px solid var(--SmartThemeBorderColor, #45475a);
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+  padding: 2px;
+}
+.cfm-theme-color-hex {
+  font-family: monospace;
+  font-size: 11px;
+  opacity: 0.7;
+  min-width: 60px;
+}
+.cfm-theme-reset-btn {
+  background: none;
+  border: none;
+  color: var(--SmartThemeBodyColor, #cdd6f4);
+  opacity: 0.4;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 4px;
+  transition: opacity 0.15s;
+}
+.cfm-theme-reset-btn:hover {
+  opacity: 0.9;
+}
+
+/* 滑块 */
+.cfm-theme-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 120px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.15);
+  outline: none;
+  cursor: pointer;
+}
+.cfm-theme-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--SmartThemeQuoteColor, #89b4fa);
+  cursor: pointer;
+}
+.cfm-theme-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--SmartThemeQuoteColor, #89b4fa);
+  cursor: pointer;
+  border: none;
+}
+.cfm-theme-slider-val {
+  font-family: monospace;
+  font-size: 11px;
+  min-width: 36px;
+  text-align: right;
+  opacity: 0.7;
+}
+
+/* 快捷预设 */
+.cfm-theme-presets {
+  border-top: 1px solid var(--SmartThemeBorderColor, #45475a);
+  padding-top: 12px;
+}
+.cfm-theme-presets-label {
+  font-size: 12px;
+  opacity: 0.6;
+  margin-bottom: 8px;
+}
+.cfm-theme-presets-btns {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.cfm-theme-preset-btn {
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--SmartThemeBorderColor, #45475a);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--SmartThemeBodyColor, #cdd6f4);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.cfm-theme-preset-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: var(--SmartThemeQuoteColor, #89b4fa);
+}
+
+/* 调色板按钮（顶栏） */
+#cfm-btn-theme {
+  background: none;
+  border: none;
+  color: var(--SmartThemeBodyColor, #cdd6f4);
+  cursor: pointer;
+  font-size: 15px;
+  padding: 4px 6px;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+}
+#cfm-btn-theme:hover {
+  opacity: 1;
 }
