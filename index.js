@@ -20761,23 +20761,99 @@ jQuery(async () => {
         const leftPane = dualPane.querySelector(".cfm-left-pane");
         const rightPane = dualPane.querySelector(".cfm-right-pane");
         const pathEl = dualPane.querySelector(".cfm-right-header .cfm-rh-path");
+        const countEl = dualPane.querySelector(".cfm-right-header .cfm-rh-count");
         if (!leftPane || !rightPane || !pathEl || pathEl.dataset.cfmPaneDragBound === "1") {
           return;
         }
         pathEl.dataset.cfmPaneDragBound = "1";
         pathEl.style.touchAction = "none";
+        if (countEl) {
+          countEl.style.touchAction = "none";
+        }
 
         let dragging = false;
         let startY = 0;
         let startLeftHeight = 0;
 
+        // ── 全屏模式辅助 ──
+        let _fullscreenConfirmPending = false;
+
+        const enterBottomFullscreen = () => {
+          $dualPane.addClass("cfm-bottom-fullscreen");
+          // 确保退出按钮存在
+          const $rightHeader = $(rightPane).find(".cfm-right-header");
+          if (!$rightHeader.find(".cfm-exit-fullscreen-btn").length) {
+            const exitBtn = $('<button class="cfm-exit-fullscreen-btn" title="退出全屏"><i class="fa-solid fa-compress"></i></button>');
+            exitBtn.on("click touchend", (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              exitBottomFullscreen();
+            });
+            $rightHeader.prepend(exitBtn);
+          }
+        };
+
+        const exitBottomFullscreen = () => {
+          $dualPane.removeClass("cfm-bottom-fullscreen");
+          // 恢复左侧面板默认高度
+          leftPane.style.height = "";
+          leftPane.style.maxHeight = "";
+          leftPane.style.minHeight = "";
+        };
+
+        const showFullscreenConfirm = () => {
+          if (_fullscreenConfirmPending) return;
+          _fullscreenConfirmPending = true;
+          // 创建确认弹窗
+          const overlay = $('<div class="cfm-fullscreen-confirm-overlay"></div>');
+          const dialog = $(`
+            <div class="cfm-fullscreen-confirm-dialog">
+              <div class="cfm-fullscreen-confirm-icon"><i class="fa-solid fa-expand"></i></div>
+              <div class="cfm-fullscreen-confirm-title">下方内容区全屏</div>
+              <div class="cfm-fullscreen-confirm-desc">将隐藏上方文件夹面板，内容区域全屏显示。可随时点击退出按钮恢复。</div>
+              <div class="cfm-fullscreen-confirm-actions">
+                <button class="cfm-btn cfm-fullscreen-cancel">取消</button>
+                <button class="cfm-btn cfm-fullscreen-ok"><i class="fa-solid fa-check"></i> 确定</button>
+              </div>
+            </div>
+          `);
+          dialog.find(".cfm-fullscreen-ok").on("click touchend", (e) => {
+            e.preventDefault();
+            overlay.remove();
+            dialog.remove();
+            _fullscreenConfirmPending = false;
+            enterBottomFullscreen();
+          });
+          dialog.find(".cfm-fullscreen-cancel").on("click touchend", (e) => {
+            e.preventDefault();
+            overlay.remove();
+            dialog.remove();
+            _fullscreenConfirmPending = false;
+            // 保持在最顶部（最小高度），不恢复
+          });
+          overlay.on("click touchend", (e) => {
+            e.preventDefault();
+            overlay.remove();
+            dialog.remove();
+            _fullscreenConfirmPending = false;
+            // 保持在最顶部（最小高度），不恢复
+          });
+          $("#cfm-popup").append(overlay).append(dialog);
+        };
+
         const stopDrag = () => {
           if (!dragging) return;
           dragging = false;
           pathEl.classList.remove("cfm-rh-path-dragging");
+          if (countEl) countEl.classList.remove("cfm-rh-path-dragging");
           document.removeEventListener("pointermove", onPointerMove);
           document.removeEventListener("pointerup", stopDrag);
           document.removeEventListener("pointercancel", stopDrag);
+          // 检查是否拖到了最小值 → 触发全屏确认
+          const currentHeight = leftPane.getBoundingClientRect().height;
+          if (currentHeight <= MIN_LEFT_PANE_HEIGHT + 5) {
+            showFullscreenConfirm();
+          }
         };
 
         const onPointerMove = (ev) => {
@@ -20792,18 +20868,26 @@ jQuery(async () => {
           );
           leftPane.style.height = `${nextLeftHeight}px`;
           leftPane.style.maxHeight = `${nextLeftHeight}px`;
+          leftPane.style.minHeight = `${nextLeftHeight}px`;
         };
 
-        pathEl.addEventListener("pointerdown", (ev) => {
+        const onPointerDown = (ev) => {
           if (window.innerWidth > 768) return;
+          // 如果已经是全屏模式，不启动拖动
+          if ($dualPane.hasClass("cfm-bottom-fullscreen")) return;
           dragging = true;
           startY = ev.clientY;
           startLeftHeight = leftPane.getBoundingClientRect().height;
           pathEl.classList.add("cfm-rh-path-dragging");
+          if (countEl) countEl.classList.add("cfm-rh-path-dragging");
           document.addEventListener("pointermove", onPointerMove, { passive: false });
           document.addEventListener("pointerup", stopDrag);
           document.addEventListener("pointercancel", stopDrag);
-        });
+        };
+        pathEl.addEventListener("pointerdown", onPointerDown);
+        if (countEl) {
+          countEl.addEventListener("pointerdown", onPointerDown);
+        }
       });
     };
 
@@ -21014,10 +21098,28 @@ jQuery(async () => {
         .off("click.cfmMobileAutoClose touchend.cfmMobileAutoClose")
         .on("click.cfmMobileAutoClose touchend.cfmMobileAutoClose", (e) => {
           if (!$("#cfm-overlay").length) return;
+          // 忽略程序化触发的点击（如 openNativePresetPromptEditor 中的 nativeButton.click()）
+          if (e.originalEvent && !e.originalEvent.isTrusted) return;
+          // 临时抑制自动关闭（如 syncNativePersonaUI 中的 selectPersona 调用）
+          if (_cfmSuppressAutoClose) return;
           const target = $(e.target);
           if (
             target.closest("#cfm-overlay").length ||
             target.closest("#cfm-topbar-button").length
+          ) {
+            return;
+          }
+          // 排除 SillyTavern 原生弹窗（如预设编辑器、世界书编辑器等）
+          if (
+            target.closest(
+              [
+                "#completion_prompt_manager_popup",
+                "#world_info_data_container",
+                ".popup",
+                ".dialogue_popup",
+                ".shadow_popup",
+              ].join(", "),
+            ).length
           ) {
             return;
           }
@@ -35874,6 +35976,7 @@ jQuery(async () => {
       getContext().saveSettingsDebounced();
       cfmToastr.success("已更新User名称");
       refreshPersonaPanelView();
+      syncNativePersonaUI(persona.avatarId);
       return;
     }
 
@@ -35886,6 +35989,31 @@ jQuery(async () => {
     getContext().saveSettingsDebounced();
     cfmToastr.success(field === "title" ? "已更新User标题" : "已更新User具体设定");
     refreshPersonaPanelView();
+    syncNativePersonaUI(persona.avatarId);
+  }
+
+  /**
+   * 在 CFM 编辑 persona 后同步酒馆原生 UI，
+   * 使名称/描述等更改立即可见，无需刷新页面。
+   */
+  let _cfmSuppressAutoClose = false;
+  function syncNativePersonaUI(avatarId) {
+    if (!avatarId) return;
+    // 延迟执行，确保 saveSettingsDebounced 已完成写入
+    setTimeout(() => {
+      // 刷新原生头像列表（如果可用）
+      if (typeof getUserAvatarsFunc === "function") {
+        try {
+          getUserAvatarsFunc(true);
+        } catch (e) {
+          console.warn("[CFM] 刷新原生头像列表失败", e);
+        }
+      }
+      // 临时抑制移动端自动关闭，再重新选择 persona
+      _cfmSuppressAutoClose = true;
+      selectPersona(avatarId);
+      setTimeout(() => { _cfmSuppressAutoClose = false; }, 500);
+    }, 300);
   }
 
   async function showCharacterDetailFieldPopup(char, field) {
@@ -36630,8 +36758,16 @@ jQuery(async () => {
     });
     // 来自 @habc12138 老师的超级好用user人设生成器~做了小小联动
 
+    // 移动端：记录 touchstart 位置，用于区分滑动和点击
     subList
       .find(".cfm-persona-detail-description")
+      .on("touchstart", function (e) {
+        const touch = e.originalEvent?.touches?.[0];
+        if (touch) {
+          $(this).data("cfmTouchStartX", touch.clientX);
+          $(this).data("cfmTouchStartY", touch.clientY);
+        }
+      })
       .on("click touchend", async (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -36640,6 +36776,18 @@ jQuery(async () => {
         const lastTouchAt = Number(target.data("cfmPersonaDescTouchAt") || 0);
         if (e.type === "touchend") {
           target.data("cfmPersonaDescTouchAt", now);
+          // 检测是否为滑动而非点击
+          const touch = e.originalEvent?.changedTouches?.[0];
+          if (touch) {
+            const startX = Number(target.data("cfmTouchStartX") || 0);
+            const startY = Number(target.data("cfmTouchStartY") || 0);
+            const deltaX = Math.abs(touch.clientX - startX);
+            const deltaY = Math.abs(touch.clientY - startY);
+            if (deltaX > 10 || deltaY > 10) {
+              // 位移超过 10px，视为滑动，不触发编辑
+              return;
+            }
+          }
         } else if (lastTouchAt && now - lastTouchAt < 500) {
           return;
         }
@@ -42895,9 +43043,14 @@ jQuery(async () => {
       !$("#themes").parent().find(".cfm-nf-btn").length
     ) {
       const themeBtn = $(
-        `<div class="cfm-nf-btn menu_button fa-solid fa-folder-tree" data-nf-type="themes" title="文件夹过滤"></div>`,
+        `<div class="cfm-nf-btn menu_button menu_button_icon fa-solid fa-folder-tree" data-nf-type="themes" title="文件夹过滤"></div>`,
       );
-      $("#themes").after(themeBtn);
+      // 插入到原生导入按钮的左边
+      if ($("#ui_preset_import_button").length) {
+        $("#ui_preset_import_button").before(themeBtn);
+      } else {
+        $("#themes").after(themeBtn);
+      }
       themeBtn.on("click touchend", function (e) {
         e.preventDefault();
         e.stopPropagation();

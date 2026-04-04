@@ -322,7 +322,8 @@
   border-bottom: 1px solid var(--SmartThemeBorderColor, #45475a);
   background-color: rgba(0, 0, 0, 0.05);
 }
-.cfm-right-header .cfm-rh-path.cfm-rh-path-dragging {
+.cfm-right-header .cfm-rh-path.cfm-rh-path-dragging,
+.cfm-right-header .cfm-rh-count.cfm-rh-path-dragging {
   opacity: 1;
   color: var(--SmartThemeQuoteColor, #89b4fa);
 }
@@ -401,9 +402,9 @@
 }
 .cfm-row .cfm-row-name {
   flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 .cfm-row .cfm-row-meta {
   font-size: 11px;
@@ -1286,11 +1287,10 @@
   gap: 0 6px;
 }
 .cfm-char-name-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   flex-shrink: 1;
   min-width: 0;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 /* ========== 角色卡创作者/版本信息 ========== */
@@ -1769,7 +1769,8 @@
     min-height: 0;
   }
 
-  .cfm-right-header .cfm-rh-path {
+  .cfm-right-header .cfm-rh-path,
+  .cfm-right-header .cfm-rh-count {
     -webkit-user-select: none;
     user-select: none;
     -webkit-touch-callout: none;
@@ -1942,6 +1943,142 @@
     opacity: 0.5;
     pointer-events: none;
   }
+}
+
+/* ========== 移动端下方内容区全屏模式 ========== */
+@media (max-width: 768px) {
+  /* 全屏模式：隐藏上方文件夹面板，下方占满 */
+  .cfm-dual-pane.cfm-bottom-fullscreen .cfm-left-pane {
+    display: none !important;
+  }
+  .cfm-dual-pane.cfm-bottom-fullscreen .cfm-right-pane {
+    flex: 1;
+    height: 100% !important;
+    min-height: 0;
+  }
+  /* 隐藏分隔手柄伪元素 */
+  .cfm-dual-pane.cfm-bottom-fullscreen .cfm-left-pane::after {
+    display: none;
+  }
+}
+
+/* 退出全屏按钮 */
+.cfm-exit-fullscreen-btn {
+  display: none;
+}
+@media (max-width: 768px) {
+  .cfm-dual-pane.cfm-bottom-fullscreen .cfm-exit-fullscreen-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    border: none;
+    background: rgba(255, 100, 100, 0.15);
+    color: #ff6b6b;
+    border-radius: 8px;
+    font-size: 16px;
+    cursor: pointer;
+    transition:
+      background 0.2s,
+      color 0.2s,
+      transform 0.15s;
+    margin-right: 6px;
+    flex-shrink: 0;
+  }
+  .cfm-dual-pane.cfm-bottom-fullscreen .cfm-exit-fullscreen-btn:hover {
+    background: rgba(255, 100, 100, 0.3);
+    color: #ff4444;
+  }
+  .cfm-dual-pane.cfm-bottom-fullscreen .cfm-exit-fullscreen-btn:active {
+    transform: scale(0.9);
+  }
+}
+
+/* 全屏确认弹窗 */
+.cfm-fullscreen-confirm-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 9998;
+  border-radius: inherit;
+}
+.cfm-fullscreen-confirm-dialog {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 9999;
+  background: var(--SmartThemeBlurTintColor, #1e1e2e);
+  border: 1px solid var(--SmartThemeBorderColor, #45475a);
+  border-radius: 16px;
+  padding: 28px 24px 20px;
+  width: min(320px, 85vw);
+  text-align: center;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+  animation: cfm-fullscreen-confirm-in 0.25s ease-out;
+}
+@keyframes cfm-fullscreen-confirm-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+.cfm-fullscreen-confirm-icon {
+  font-size: 36px;
+  color: #89b4fa;
+  margin-bottom: 12px;
+}
+.cfm-fullscreen-confirm-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.92);
+  margin-bottom: 8px;
+}
+.cfm-fullscreen-confirm-desc {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.55);
+  line-height: 1.5;
+  margin-bottom: 20px;
+}
+.cfm-fullscreen-confirm-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+.cfm-fullscreen-confirm-actions .cfm-btn {
+  flex: 1;
+  padding: 10px 0;
+  font-size: 14px;
+  border-radius: 10px;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+  transition:
+    background 0.2s,
+    transform 0.1s;
+}
+.cfm-fullscreen-confirm-actions .cfm-fullscreen-cancel {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.7);
+}
+.cfm-fullscreen-confirm-actions .cfm-fullscreen-cancel:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+.cfm-fullscreen-confirm-actions .cfm-fullscreen-ok {
+  background: linear-gradient(135deg, #89b4fa, #74c7ec);
+  color: #1e1e2e;
+}
+.cfm-fullscreen-confirm-actions .cfm-fullscreen-ok:hover {
+  background: linear-gradient(135deg, #74c7ec, #89b4fa);
+}
+.cfm-fullscreen-confirm-actions .cfm-btn:active {
+  transform: scale(0.96);
 }
 
 /* 移动端搜索栏适配 */
@@ -2722,9 +2859,9 @@
   flex: 1;
   font-size: 13px;
   color: var(--SmartThemeBodyColor, #cdd6f4);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 /* 插入模式序号 */
@@ -3960,9 +4097,8 @@ option.cfm-nf-hidden {
   font-weight: 500;
   flex-shrink: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 /* 标题标签 */
 .cfm-persona-title {
@@ -4705,9 +4841,8 @@ input[type="number"].cfm-wi-de-input::-webkit-outer-spin-button {
 }
 .cfm-wi-preset-item-name {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
   cursor: pointer;
 }
 .cfm-wi-preset-item-name i {
@@ -4815,9 +4950,8 @@ input[type="number"].cfm-wi-de-input::-webkit-outer-spin-button {
 .cfm-wi-bind-entry-name {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 .cfm-wi-bind-remove {
   cursor: pointer;
