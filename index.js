@@ -746,15 +746,10 @@ jQuery(async () => {
     return [];
   }
 
-  // 获取主题列表（从SillyTavern全局themes数组或DOM #themes下拉框）
+  const _importedThemeRuntimeCache = new Map();
+
+  // 获取主题列表（从 DOM #themes 下拉框及被过滤暂存的 option 获取）
   function getThemeNames() {
-    // 优先从全局 themes 数组获取
-    if (typeof themes !== "undefined" && Array.isArray(themes)) {
-      return themes
-        .map((t) => (typeof t === "object" ? t.name : t))
-        .filter(Boolean);
-    }
-    // 降级：从DOM #themes 下拉框获取
     const names = [];
     $("#themes option").each(function () {
       const v = $(this).val();
@@ -768,6 +763,131 @@ jQuery(async () => {
       }
     }
     return names;
+  }
+
+  function normalizeImportedThemeData(themeData, fallbackName = "") {
+    const normalizedData =
+      themeData && typeof themeData === "object" ? structuredClone(themeData) : {};
+
+    const normalizedName = String(
+      normalizedData.name ?? fallbackName ?? "",
+    ).trim();
+    if (normalizedName) {
+      normalizedData.name = normalizedName;
+    }
+
+    const customCssCandidates = [
+      normalizedData.custom_css,
+      normalizedData.customCSS,
+      normalizedData.customCss,
+      normalizedData.css,
+      normalizedData.theme_css,
+      normalizedData.themeCss,
+      normalizedData.user_css,
+      normalizedData.userCss,
+    ];
+    const resolvedCustomCss = customCssCandidates.find(
+      (value) => typeof value === "string" && value.trim().length > 0,
+    );
+
+    if (typeof resolvedCustomCss === "string") {
+      normalizedData.custom_css = resolvedCustomCss;
+    } else if (typeof normalizedData.custom_css !== "string") {
+      normalizedData.custom_css = "";
+    }
+
+    return normalizedData;
+  }
+
+  function rememberImportedThemeRuntime(themeName, themeData) {
+    const normalizedName = String(themeName || "").trim();
+    if (!normalizedName) return;
+    const runtimeThemeData =
+      themeData && typeof themeData === "object"
+        ? structuredClone(themeData)
+        : { name: normalizedName };
+    runtimeThemeData.name = normalizedName;
+    _importedThemeRuntimeCache.set(normalizedName, runtimeThemeData);
+  }
+
+  let _nativeThemeRuntimeReloadPromise = null;
+
+  async function reloadNativeThemeRuntime() {
+    if (_nativeThemeRuntimeReloadPromise) {
+      return _nativeThemeRuntimeReloadPromise;
+    }
+
+    _nativeThemeRuntimeReloadPromise = (async () => {
+      try {
+        const [{ loadPowerUserSettings, applyPowerUserSettings }, resp] =
+          await Promise.all([
+            import("/scripts/power-user.js"),
+            fetch("/api/settings/get", {
+              method: "POST",
+              headers: getContext().getRequestHeaders(),
+              body: JSON.stringify({}),
+              cache: "no-cache",
+            }),
+          ]);
+
+        if (!resp.ok) {
+          throw new Error(`HTTP ${resp.status}`);
+        }
+
+        const data = await resp.json();
+        const settings =
+          data && data.settings ? JSON.parse(data.settings) : undefined;
+        if (!settings || typeof settings !== "object") {
+          throw new Error("settings payload missing");
+        }
+
+        const themesSelect = document.getElementById("themes");
+        const movingUIPresetsSelect = document.getElementById("movingUIPresets");
+        if (themesSelect) {
+          themesSelect.replaceChildren();
+        }
+        if (movingUIPresetsSelect) {
+          movingUIPresetsSelect.replaceChildren();
+        }
+        _themeDetachedOptions = [];
+        _selectOriginalOrder.delete("themes");
+
+        await loadPowerUserSettings(settings, data);
+        applyPowerUserSettings();
+        return true;
+      } catch (error) {
+        console.warn("[CFM] 重载酒馆主题运行时失败，回退到 CSS 同步", error);
+        return false;
+      } finally {
+        _nativeThemeRuntimeReloadPromise = null;
+      }
+    })();
+
+    return _nativeThemeRuntimeReloadPromise;
+  }
+
+  function applyImportedThemeCustomCss(themeName) {
+    const normalizedName = String(themeName || "").trim();
+    if (!normalizedName) return false;
+    const themeData = _importedThemeRuntimeCache.get(normalizedName);
+    if (!themeData || typeof themeData !== "object") return false;
+
+    const customCss =
+      typeof themeData.custom_css === "string" ? themeData.custom_css : "";
+    const customCssTextarea = document.getElementById("customCSS");
+    if (customCssTextarea && "value" in customCssTextarea) {
+      customCssTextarea.value = customCss;
+    }
+
+    let customStyle = document.getElementById("custom-style");
+    if (!customStyle) {
+      customStyle = document.createElement("style");
+      customStyle.setAttribute("type", "text/css");
+      customStyle.setAttribute("id", "custom-style");
+      document.head.appendChild(customStyle);
+    }
+    customStyle.textContent = customCss;
+    return true;
   }
 
   // 应用主题（通过设置 #themes 下拉框值并触发 change 事件）
@@ -787,6 +907,103 @@ jQuery(async () => {
     themesSelect.value = themeName;
     themesSelect.dispatchEvent(new Event("change", { bubbles: true }));
   }
+
+  // 重新整理主题下拉框的 option 顺序，保持可见项与被过滤暂存项一致。
+  function syncThemeSelectOptionsWithRuntimeThemes() {
+    const themeSelect = $("#themes");
+    if (!themeSelect.length) return;
+
+    const currentValue = String(themeSelect.val() ?? "");
+    const placeholderOptions = themeSelect
+      .find("option")
+      .filter(function () {
+        return String($(this).val() ?? "") === "";
+      })
+      .map(function () {
+        return $(this).clone();
+      })
+      .get();
+
+    const runtimeThemeNames = [
+      ...themeSelect
+        .find("option")
+        .map(function () {
+          const val = $(this).val();
+          return val !== "" && val !== undefined ? String(val) : null;
+        })
+        .get(),
+      ...(_themeDetachedOptions || []).map((opt) => {
+        const val = $(opt).val();
+        return val !== "" && val !== undefined ? String(val) : null;
+      }),
+    ].filter(Boolean);
+
+    const nextThemeNames = [];
+    const seen = new Set();
+    for (const name of runtimeThemeNames) {
+      const normalizedName = String(name || "").trim();
+      if (!normalizedName || seen.has(normalizedName)) continue;
+      seen.add(normalizedName);
+      nextThemeNames.push(normalizedName);
+    }
+
+    themeSelect.empty();
+    if (placeholderOptions.length > 0) {
+      themeSelect.append(placeholderOptions);
+    }
+    for (const name of nextThemeNames) {
+      themeSelect.append($("<option></option>").val(name).text(name));
+    }
+
+    _themeDetachedOptions = [];
+    if (nextThemeNames.length > 0) {
+      _selectOriginalOrder.set("themes", [...nextThemeNames]);
+    }
+    if (currentValue && seen.has(currentValue)) {
+      themeSelect.val(currentValue);
+    }
+  }
+
+  async function refreshThemeRuntimeAfterImport(reapplyCurrentTheme = false) {
+    const themesSelectBeforeRefresh = document.getElementById("themes");
+    const currentThemeBeforeRefresh = String(
+      themesSelectBeforeRefresh?.value || "",
+    );
+
+    await reloadNativeThemeRuntime();
+
+    syncThemeSelectOptionsWithRuntimeThemes();
+    if (currentThemeBeforeRefresh) {
+      $("#themes").val(currentThemeBeforeRefresh);
+    }
+    applyThemeFilter();
+
+    if (!reapplyCurrentTheme) return;
+
+    requestAnimationFrame(() => {
+      const themesSelect = document.getElementById("themes");
+      if (!themesSelect) return;
+      const currentTheme = String(
+        themesSelect.value || currentThemeBeforeRefresh || "",
+      );
+      if (!currentTheme) return;
+      themesSelect.value = currentTheme;
+      themesSelect.dispatchEvent(new Event("change", { bubbles: true }));
+      requestAnimationFrame(() => {
+        applyImportedThemeCustomCss(currentTheme);
+      });
+    });
+  }
+
+  $(document)
+    .off("change.cfmImportedThemeRuntime", "#themes")
+    .on("change.cfmImportedThemeRuntime", "#themes", function () {
+      const currentTheme = String(this.value || "");
+      if (!currentTheme) return;
+      requestAnimationFrame(() => {
+        applyImportedThemeCustomCss(currentTheme);
+      });
+    });
 
   // 获取背景列表（从DOM #bg_menu_content 中的 .bg_example 元素）
   function getBackgroundNames() {
@@ -6111,8 +6328,11 @@ jQuery(async () => {
   }
 
   function showEntryTransferCompletionDialog(options = {}) {
-    const { targetType = "preset", targetName = "", insertedCount = 0 } =
-      options || {};
+    const {
+      targetType = "preset",
+      targetName = "",
+      insertedCount = 0,
+    } = options || {};
     const targetTypeLabel = targetType === "worldinfo" ? "世界书" : "预设";
 
     return new Promise((resolve) => {
@@ -6282,7 +6502,9 @@ jQuery(async () => {
     renderPresetsView();
     scrollElementIntoViewCentered(() =>
       Array.from(
-        document.querySelectorAll("#cfm-preset-right-list .cfm-row[data-res-id]"),
+        document.querySelectorAll(
+          "#cfm-preset-right-list .cfm-row[data-res-id]",
+        ),
       ).find((el) => el.getAttribute("data-res-id") === normalizedName),
     );
     return true;
@@ -6438,20 +6660,28 @@ jQuery(async () => {
         throw new Error(`找不到预设「${targetPresetName}」的数据`);
 
       const promptList = ensurePresetPromptList(presetData);
+      const detailFields = getPresetDetailFields(presetData);
       const existingIds = new Set(
         promptList.map((p) => getPresetPromptIdentifier(p)).filter(Boolean),
       );
       const existingLabels = new Set(
-        getPresetDetailFields(presetData)
-          .map((f) => String(f?.label || "").trim())
-          .filter(Boolean),
+        detailFields.map((f) => String(f?.label || "").trim()).filter(Boolean),
       );
-      const currentOrderedFieldKeys = getPresetDetailFields(presetData)
+      const currentOrderedFieldKeys = detailFields
         .map((field) => String(field?.key || "").trim())
         .filter((fieldKey) => fieldKey.startsWith("prompts."));
 
       const insertedPrompts = [];
       const insertedFieldKeys = [];
+      const normalizedInsertIndex = Math.max(
+        0,
+        Math.min(
+          Number.isInteger(insertIndex)
+            ? insertIndex
+            : currentOrderedFieldKeys.length,
+          currentOrderedFieldKeys.length,
+        ),
+      );
 
       for (let i = 0; i < sourceEntries.length; i++) {
         const entry = sourceEntries[i];
@@ -6486,13 +6716,16 @@ jQuery(async () => {
               injection_depth: 4,
             };
           }
+          const promptEnabled = entry.enabled !== false;
           newPrompt.identifier = newKey;
           if ("id" in newPrompt) newPrompt.id = newKey;
           if ("key" in newPrompt) newPrompt.key = newKey;
           if ("prompt" in newPrompt) newPrompt.prompt = newKey;
           newPrompt.name = newLabel;
+          newPrompt.enabled = promptEnabled;
 
           promptList.push(newPrompt);
+          setPresetPromptEnabled(presetData, newKey, promptEnabled);
           insertedPrompts.push(newPrompt);
           insertedFieldKeys.push(`prompts.${newKey}`);
         } catch (innerErr) {
@@ -6508,28 +6741,14 @@ jQuery(async () => {
         }
       }
 
-      const normalizedInsertIndex = Math.max(
-        0,
-        Math.min(
-          Number.isInteger(insertIndex)
-            ? insertIndex
-            : currentOrderedFieldKeys.length,
-          currentOrderedFieldKeys.length,
-        ),
-      );
       const nextOrderedFieldKeys = [...currentOrderedFieldKeys];
       nextOrderedFieldKeys.splice(
         normalizedInsertIndex,
         0,
         ...insertedFieldKeys,
       );
-      const appendedFieldKeys = [
-        ...currentOrderedFieldKeys,
-        ...insertedFieldKeys,
-      ];
-      const shouldReorder = appendedFieldKeys.some(
-        (fieldKey, index) => nextOrderedFieldKeys[index] !== fieldKey,
-      );
+      const shouldReorder =
+        normalizedInsertIndex < currentOrderedFieldKeys.length;
 
       await saveNormalizedPresetData(pm, targetPresetName, presetData);
       if (shouldReorder && nextOrderedFieldKeys.length > 1) {
@@ -12882,7 +13101,39 @@ jQuery(async () => {
   }
 
   function getPresetDataForDetail(pm, name) {
-    return getPresetDataForRename(pm, name);
+    const data = getPresetDataForRename(pm, name);
+    if (!data) return data;
+
+    // 如果查看的是当前正在使用的预设，则从 serviceSettings（活跃设置）
+    // 获取最新的 prompt_order，以反映在酒馆原生 UI 中的 remove/reorder 等操作。
+    // 因为 detachPrompt 只修改 serviceSettings.prompt_order（即 oai_settings），
+    // 而 getCompletionPresetByName 返回的是 presets 数组中的独立对象，
+    // 其 prompt_order 未被同步更新。
+    try {
+      if (
+        isCurrentAppliedPreset(name) &&
+        typeof pm.getPresetList === "function"
+      ) {
+        const { settings } = pm.getPresetList();
+        if (settings) {
+          // 同步 prompt_order：detachPrompt/appendPrompt 等操作只修改 serviceSettings
+          if (Array.isArray(settings.prompt_order)) {
+            data.prompt_order = structuredClone(settings.prompt_order);
+          }
+          // 同步 prompts：deletePrompt 等操作也只修改 serviceSettings.prompts
+          if (Array.isArray(settings.prompts)) {
+            data.prompts = structuredClone(settings.prompts);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(
+        "[Folder-Manager] getPresetDataForDetail: 获取活跃设置失败",
+        e,
+      );
+    }
+
+    return data;
   }
 
   const PRESET_PROMPT_ORDER_DUMMY_ID = 100001;
@@ -13229,19 +13480,6 @@ jQuery(async () => {
             : true;
 
       addPromptField(identifier, promptLabel, promptValue, promptEnabled);
-    }
-
-    for (const promptValue of promptMap.values()) {
-      const identifier = getPresetPromptIdentifier(promptValue);
-      if (!identifier) continue;
-      const promptEnabled =
-        typeof promptValue?.enabled === "boolean" ? promptValue.enabled : true;
-      addPromptField(
-        identifier,
-        getPresetPromptLabel(promptValue, identifier),
-        promptValue,
-        promptEnabled,
-      );
     }
 
     return fields;
@@ -16628,7 +16866,9 @@ jQuery(async () => {
       </div>
     `);
     detailToolbar
-      .find(".cfm-worldinfo-entry-sort-toggle, .cfm-worldinfo-entry-batch-toggle")
+      .find(
+        ".cfm-worldinfo-entry-sort-toggle, .cfm-worldinfo-entry-batch-toggle",
+      )
       .on("touchstart", (e) => recordTouchTapStart(e, "cfmWorldInfoEntryTap"));
     detailToolbar
       .find(".cfm-worldinfo-entry-sort-toggle")
@@ -16699,7 +16939,9 @@ jQuery(async () => {
         .find(
           ".cfm-worldinfo-entry-batch-selall, .cfm-worldinfo-entry-batch-range, .cfm-entry-transfer-btn, .cfm-worldinfo-entry-batch-activate, .cfm-worldinfo-entry-batch-deactivate",
         )
-        .on("touchstart", (e) => recordTouchTapStart(e, "cfmWorldInfoEntryTap"));
+        .on("touchstart", (e) =>
+          recordTouchTapStart(e, "cfmWorldInfoEntryTap"),
+        );
       batchToolbar
         .find(".cfm-worldinfo-entry-batch-selall")
         .on("click touchend", (e) => {
@@ -16893,7 +17135,9 @@ jQuery(async () => {
         .find(
           ".cfm-edit-checkbox, .cfm-worldinfo-entry-active-toggle, .cfm-worldinfo-entry-edit, .cfm-worldinfo-entry-duplicate, .cfm-worldinfo-entry-delete",
         )
-        .on("touchstart", (e) => recordTouchTapStart(e, "cfmWorldInfoEntryTap"));
+        .on("touchstart", (e) =>
+          recordTouchTapStart(e, "cfmWorldInfoEntryTap"),
+        );
 
       if (isBatchOwner) {
         row.on("click", (e) => {
@@ -17529,7 +17773,9 @@ jQuery(async () => {
     const presetData = getPresetDataForDetail(pm, preset.name);
     if (!presetData) return;
 
-    const fields = getPresetDetailFields(presetData);
+    const fields = getPresetDetailFields(presetData).filter(
+      (field) => !String(field?.sourceLabel || "").trim(),
+    );
     const isCurrentApplied = isCurrentAppliedPreset(preset.name);
     const isBatchOwner =
       cfmPresetDetailBatchMode && cfmPresetDetailBatchOwnerName === preset.name;
@@ -17783,7 +18029,9 @@ jQuery(async () => {
           .find(
             ".cfm-edit-checkbox, .cfm-preset-field-active-toggle, .cfm-preset-detail-move-up, .cfm-preset-detail-move-down, .cfm-preset-detail-copy, .cfm-preset-detail-delete, .cfm-preset-detail-edit",
           )
-          .on("touchstart", (e) => recordTouchTapStart(e, "cfmPresetDetailTap"));
+          .on("touchstart", (e) =>
+            recordTouchTapStart(e, "cfmPresetDetailTap"),
+          );
 
         if (isBatchOwner) {
           row.on("click", (e) => {
@@ -25193,11 +25441,11 @@ jQuery(async () => {
         if (!file.name.endsWith(".json")) continue;
         try {
           const text = await file.text();
-          const data = JSON.parse(text);
+          const rawData = JSON.parse(text);
           const fileName = file.name.replace(".json", "");
-          const name = data?.name ?? fileName;
-          data["name"] = name;
-          parsedFiles.push({ file, data, name });
+          const name = rawData?.name ?? fileName;
+          const data = normalizeImportedThemeData(rawData, name);
+          parsedFiles.push({ file, data, name: data.name });
         } catch (err) {
           console.error(`解析主题文件失败: ${file.name}`, err);
         }
@@ -25256,6 +25504,7 @@ jQuery(async () => {
           if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
           existingThemes.add(finalName);
+          rememberImportedThemeRuntime(finalName, data);
 
           // 更新 #themes 下拉列表
           const themeSelect = $("#themes");
@@ -25276,6 +25525,10 @@ jQuery(async () => {
           console.error(`导入主题失败: ${file.name}`, error);
           failCount++;
         }
+      }
+
+      if (successCount > 0) {
+        await refreshThemeRuntimeAfterImport(true);
       }
 
       // 刷新视图
@@ -32147,24 +32400,24 @@ jQuery(async () => {
               detailSubList.slideUp(150, function () {
                 $(this).remove();
               });
-            row
-              .find(".cfm-preset-detail-toggle i")
-              .removeClass("fa-caret-down")
-              .addClass("fa-caret-right");
-          } else {
-            cfmPresetDetailExpandedNames.add(name);
-            row
-              .find(".cfm-preset-detail-toggle i")
-              .removeClass("fa-caret-right")
-              .addClass("fa-caret-down");
-            renderPresetDetailSubList(row, p);
-            row
-              .nextAll(".cfm-preset-detail-sublist")
-              .first()
-              .hide()
-              .slideDown(150);
-          }
-        });
+              row
+                .find(".cfm-preset-detail-toggle i")
+                .removeClass("fa-caret-down")
+                .addClass("fa-caret-right");
+            } else {
+              cfmPresetDetailExpandedNames.add(name);
+              row
+                .find(".cfm-preset-detail-toggle i")
+                .removeClass("fa-caret-right")
+                .addClass("fa-caret-down");
+              renderPresetDetailSubList(row, p);
+              row
+                .nextAll(".cfm-preset-detail-sublist")
+                .first()
+                .hide()
+                .slideDown(150);
+            }
+          });
         row.on("click", (e) => {
           if (
             $(e.target).closest(
@@ -38293,7 +38546,11 @@ jQuery(async () => {
       overlay.on("click", (e) => {
         const clickedOverlay = $(e.target).hasClass("cfm-edit-popup-overlay");
         const elapsed = Date.now() - openedAt;
-        if (clickedOverlay && overlayPressStarted && elapsed >= overlayCloseGuardMs)
+        if (
+          clickedOverlay &&
+          overlayPressStarted &&
+          elapsed >= overlayCloseGuardMs
+        )
           close(null);
         overlayPressStarted = false;
       });
