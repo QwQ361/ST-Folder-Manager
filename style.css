@@ -3416,6 +3416,211 @@
   resize: vertical;
 }
 
+/* ========== 条目互通弹窗 ========== */
+.cfm-entry-transfer-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9998;
+  border-radius: inherit;
+  animation: cfm-fade-in 0.15s ease;
+}
+.cfm-entry-transfer-dialog {
+  background: var(--SmartThemeBlurTintColor, #1e1e2e);
+  border: 1px solid var(--SmartThemeBorderColor, #45475a);
+  border-radius: 12px;
+  width: min(500px, 92vw);
+  max-height: min(600px, 85vh);
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  animation: cfm-transfer-dialog-in 0.2s ease-out;
+}
+@keyframes cfm-transfer-dialog-in {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.cfm-entry-transfer-dialog .cfm-edit-popup-header {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--SmartThemeBorderColor, #45475a);
+  font-size: 15px;
+  font-weight: 600;
+  color: #89b4fa;
+}
+.cfm-entry-transfer-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 16px;
+  gap: 10px;
+  overflow: hidden;
+}
+.cfm-entry-transfer-type-row {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+.cfm-entry-transfer-type-row label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--SmartThemeBodyColor, #cdd6f4);
+}
+.cfm-entry-transfer-type-row input[type="radio"] {
+  accent-color: #89b4fa;
+}
+.cfm-entry-transfer-search {
+  flex-shrink: 0;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.cfm-entry-transfer-expand-all,
+.cfm-entry-transfer-collapse-all {
+  background: none;
+  border: 1px solid var(--SmartThemeBorderColor, #45475a);
+  color: var(--SmartThemeBodyColor, #cdd6f4);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  opacity: 0.6;
+  transition:
+    opacity 0.15s,
+    background 0.15s;
+  flex-shrink: 0;
+}
+.cfm-entry-transfer-expand-all:hover,
+.cfm-entry-transfer-collapse-all:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.08);
+}
+.cfm-entry-transfer-search-input {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 13px;
+  border: 1px solid var(--SmartThemeBorderColor, #45475a);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  outline: none;
+  box-sizing: border-box;
+}
+.cfm-entry-transfer-search-input:focus {
+  border-color: #89b4fa;
+  background: rgba(255, 255, 255, 0.06);
+}
+.cfm-entry-transfer-tree-container {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.12);
+}
+/* 文件夹节点 */
+.cfm-transfer-folder {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--SmartThemeBodyColor, #cdd6f4);
+  transition: background 0.12s;
+}
+.cfm-transfer-folder:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.cfm-transfer-folder-arrow {
+  width: 14px;
+  text-align: center;
+  opacity: 0.5;
+  font-size: 11px;
+}
+.cfm-transfer-folder-icon {
+  color: #f9e2af;
+  font-size: 13px;
+}
+.cfm-transfer-folder-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cfm-transfer-folder-count {
+  font-size: 11px;
+  opacity: 0.4;
+  flex-shrink: 0;
+}
+/* 项目节点 */
+.cfm-transfer-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.7);
+  transition: background 0.12s;
+  border-radius: 4px;
+  margin: 1px 4px;
+}
+.cfm-transfer-item:hover {
+  background: rgba(137, 180, 250, 0.08);
+  color: rgba(255, 255, 255, 0.9);
+}
+.cfm-transfer-item-selected {
+  background: rgba(137, 180, 250, 0.18) !important;
+  color: #89b4fa !important;
+  font-weight: 600;
+}
+.cfm-transfer-item-icon {
+  opacity: 0.5;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.cfm-transfer-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cfm-entry-transfer-selected-hint {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+  flex-shrink: 0;
+  padding: 4px 0;
+}
+.cfm-entry-transfer-selected-hint strong {
+  color: #89b4fa;
+}
+.cfm-entry-transfer-dialog .cfm-edit-popup-footer {
+  display: flex;
+  gap: 10px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--SmartThemeBorderColor, #45475a);
+  justify-content: flex-end;
+}
+.cfm-entry-transfer-confirm:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* 重命名弹窗 - 自动检测区域 */
 .cfm-rename-auto-detect {
   margin-top: 4px;
@@ -4504,37 +4709,77 @@ select.cfm-wi-ctrl {
     flex: 1 1 auto;
     min-width: 60px;
   }
-  /* 行内控件组换到新行，占满宽度 */
+  /* 行内控件组改为两行栅格，顺序对齐原生：状态 → 插入位置 → 深度 → 顺序 → 触发% */
   .cfm-wi-entry-controls {
+    display: grid;
+    grid-template-columns:
+      minmax(38px, auto)
+      minmax(0, 1fr)
+      minmax(46px, auto)
+      minmax(46px, auto)
+      minmax(46px, auto);
+    grid-template-areas:
+      "state position position position position"
+      "depth order prob . .";
+    align-items: center;
+    justify-items: stretch;
     flex: 1 0 100%;
-    flex-wrap: wrap;
     order: 10;
     margin-left: 0;
     margin-top: 4px;
-    gap: 3px;
+    gap: 4px;
   }
-  /* 行内控件更紧凑 */
-  .cfm-wi-ctrl {
-    font-size: 0.72em;
-    height: 20px;
-    line-height: 18px;
-    padding: 1px 3px;
-  }
-  select.cfm-wi-ctrl {
-    height: 20px;
-    line-height: 18px;
-    padding: 1px 3px;
+  .cfm-wi-ctrl-state {
+    grid-area: state;
+    min-width: 38px;
+    max-width: none;
   }
   .cfm-wi-ctrl-position {
-    min-width: 50px;
-    max-width: 120px;
+    grid-area: position;
+    min-width: 0;
+    max-width: none;
+    width: 100%;
+    text-align: center;
+    text-align-last: center;
   }
-  .cfm-wi-ctrl-depth,
+  .cfm-wi-ctrl-depth {
+    grid-area: depth;
+    width: 100%;
+    min-width: 46px;
+  }
   .cfm-wi-ctrl-order {
-    width: 44px;
+    grid-area: order;
+    width: 100%;
+    min-width: 46px;
+  }
+  .cfm-wi-ctrl-prob-wrap {
+    grid-area: prob;
+    width: 100%;
+    min-height: 44px;
+    justify-content: flex-start;
   }
   .cfm-wi-ctrl-prob {
-    width: 38px;
+    width: 42px;
+  }
+  .cfm-wi-ctrl-prob-suffix {
+    font-size: 1.02em;
+  }
+  /* 行内控件改为更高的触控尺寸（约为原先两倍），并同步继续放大文字 */
+  .cfm-wi-ctrl {
+    font-size: 1.06em;
+    min-height: 44px;
+    height: 44px;
+    line-height: 42px;
+    padding: 2px 6px;
+  }
+  select.cfm-wi-ctrl {
+    min-height: 44px;
+    height: 44px;
+    line-height: 42px;
+    padding: 2px 6px;
+  }
+  select.cfm-wi-ctrl option {
+    text-align: center;
   }
   /* 操作按钮保持在名称同一行 */
   .cfm-preset-detail-label .cfm-chat-actions {
@@ -4573,19 +4818,33 @@ select.cfm-wi-ctrl {
 /* 超小屏幕（手机竖屏）进一步压缩 */
 @media (max-width: 480px) {
   .cfm-wi-entry-controls {
-    gap: 2px;
+    grid-template-columns:
+      minmax(36px, auto)
+      minmax(0, 1fr)
+      minmax(40px, auto)
+      minmax(40px, auto)
+      minmax(40px, auto);
+    gap: 3px;
+  }
+  .cfm-wi-ctrl {
+    font-size: 1.06em;
+    padding: 2px 6px;
+  }
+  .cfm-wi-ctrl-state {
+    min-width: 36px;
   }
   .cfm-wi-ctrl-position {
-    min-width: 40px;
-    max-width: 100px;
-    font-size: 0.68em;
+    min-width: 0;
+    font-size: 1.06em;
+    text-align: center;
+    text-align-last: center;
   }
   .cfm-wi-ctrl-depth,
   .cfm-wi-ctrl-order {
-    width: 38px;
+    min-width: 40px;
   }
   .cfm-wi-ctrl-prob {
-    width: 34px;
+    width: 36px;
   }
   .cfm-wi-de-field {
     min-width: 60px;
