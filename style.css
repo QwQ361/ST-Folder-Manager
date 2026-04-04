@@ -176,6 +176,15 @@
   opacity: 1;
   background-color: rgba(255, 255, 255, 0.1);
 }
+/* 快速新建文件夹按钮 */
+.cfm-quick-add-folder-btn {
+  color: var(--SmartThemeQuoteColor, #89b4fa) !important;
+  opacity: 0.75 !important;
+}
+.cfm-quick-add-folder-btn:hover {
+  opacity: 1 !important;
+  background-color: rgba(137, 180, 250, 0.12) !important;
+}
 .cfm-left-tree {
   flex: 1;
   overflow-y: auto;

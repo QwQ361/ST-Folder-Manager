@@ -5063,6 +5063,179 @@ jQuery(async () => {
     cfmExportLastClicked = id;
   }
 
+  // ── 快速新建文件夹弹窗 ──
+  function showQuickAddFolderPopup(tab) {
+    // 确定当前选中的父文件夹
+    let parentId = null;
+    if (tab === "chars") {
+      if (selectedTreeNode && selectedTreeNode !== "__uncategorized__" && selectedTreeNode !== "__favorites__") {
+        parentId = selectedTreeNode;
+      }
+    } else if (tab === "presets") {
+      if (selectedPresetFolder && selectedPresetFolder !== "__ungrouped__" && selectedPresetFolder !== "__favorites__") {
+        parentId = selectedPresetFolder;
+      }
+    } else if (tab === "worldinfo") {
+      if (selectedWorldInfoFolder && selectedWorldInfoFolder !== "__ungrouped__" && selectedWorldInfoFolder !== "__favorites__") {
+        parentId = selectedWorldInfoFolder;
+      }
+    } else if (tab === "themes") {
+      if (selectedThemeFolder && selectedThemeFolder !== "__ungrouped__" && selectedThemeFolder !== "__favorites__") {
+        parentId = selectedThemeFolder;
+      }
+    } else if (tab === "backgrounds") {
+      if (selectedBgFolder && selectedBgFolder !== "__ungrouped__" && selectedBgFolder !== "__favorites__") {
+        parentId = selectedBgFolder;
+      }
+    } else if (tab === "personas") {
+      if (selectedPersonaFolder && selectedPersonaFolder !== "__ungrouped__" && selectedPersonaFolder !== "__favorites__") {
+        parentId = selectedPersonaFolder;
+      }
+    } else if (tab === "regex") {
+      if (selectedRegexNode && selectedRegexNode !== "__ungrouped__" && selectedRegexNode !== "__favorites__") {
+        parentId = selectedRegexNode;
+      }
+    } else if (tab === "quickreply") {
+      if (selectedQrFolder && selectedQrFolder !== "__ungrouped__" && selectedQrFolder !== "__favorites__") {
+        parentId = selectedQrFolder;
+      }
+    }
+
+    // 获取父文件夹显示名
+    let parentHint = "顶级";
+    if (parentId) {
+      if (tab === "chars") {
+        parentHint = `「${getTagName(parentId)}」下`;
+      } else if (tab === "regex") {
+        const ft = extension_settings[extensionName].regexFolderTree;
+        parentHint = `「${ft?.[parentId]?.displayName || parentId}」下`;
+      } else {
+        parentHint = `「${getResFolderDisplayName(tab, parentId)}」下`;
+      }
+    }
+
+    // 创建弹窗
+    const overlay = $('<div class="cfm-fullscreen-confirm-overlay"></div>');
+    const dialog = $(`
+      <div class="cfm-fullscreen-confirm-dialog" style="text-align:left;">
+        <div class="cfm-fullscreen-confirm-icon"><i class="fa-solid fa-folder-plus"></i></div>
+        <div class="cfm-fullscreen-confirm-title">新建文件夹</div>
+        <div class="cfm-fullscreen-confirm-desc" style="margin-bottom:12px;">在 <strong>${parentHint}</strong> 创建新文件夹</div>
+        <input type="text" class="cfm-quick-add-input" placeholder="输入文件夹名称" style="width:100%;padding:10px 12px;font-size:14px;border:1px solid var(--SmartThemeBorderColor, #45475a);border-radius:8px;background:rgba(255,255,255,0.06);color:inherit;outline:none;box-sizing:border-box;margin-bottom:16px;" />
+        <div class="cfm-fullscreen-confirm-actions">
+          <button class="cfm-btn cfm-fullscreen-cancel">取消</button>
+          <button class="cfm-btn cfm-fullscreen-ok"><i class="fa-solid fa-check"></i> 创建</button>
+        </div>
+      </div>
+    `);
+
+    const input = dialog.find(".cfm-quick-add-input");
+    const okBtn = dialog.find(".cfm-fullscreen-ok");
+    const cancelBtn = dialog.find(".cfm-fullscreen-cancel");
+
+    const close = () => { overlay.remove(); dialog.remove(); };
+
+    const doCreate = () => {
+      const name = input.val().trim();
+      if (!name) {
+        cfmToastr.warning("文件夹名称不能为空");
+        input.focus();
+        return;
+      }
+
+      let success = false;
+      let newFolderId = null;
+
+      if (tab === "chars") {
+        // 角色标签用 findOrCreateTag + config
+        const { tag, displayName } = findOrCreateTag(name, parentId || null);
+        if (!config.folders[tag.id]) {
+          config.folders[tag.id] = { parentId: parentId || null };
+          if (displayName) config.folders[tag.id].displayName = displayName;
+          const _ex = extension_settings[extensionName].excludedTagIds;
+          const _exi = _ex.indexOf(tag.id);
+          if (_exi >= 0) _ex.splice(_exi, 1);
+          saveConfig(config);
+          getContext().saveSettingsDebounced();
+          success = true;
+          newFolderId = tag.id;
+        } else {
+          cfmToastr.warning(`文件夹「${name}」已存在`);
+          return;
+        }
+      } else if (tab === "regex") {
+        // 正则用 regexFolderTree
+        const folderTree = extension_settings[extensionName].regexFolderTree;
+        let folderName = name;
+        if (parentId) folderName = parentId + "-" + name;
+        if (folderTree[folderName]) {
+          cfmToastr.warning(`文件夹「${name}」已存在`);
+          return;
+        }
+        const siblings = Object.keys(folderTree).filter(k => (folderTree[k]?.parentId || null) === (parentId || null));
+        const maxOrder = siblings.reduce((m, id) => Math.max(m, folderTree[id]?.sortOrder ?? 0), 0);
+        const entry = { parentId: parentId || null, sortOrder: maxOrder + 1 };
+        if (parentId) entry.displayName = name;
+        folderTree[folderName] = entry;
+        getContext().saveSettingsDebounced();
+        success = true;
+        newFolderId = folderName;
+      } else {
+        // 其他资源类型用 addResFolder
+        let folderName = name;
+        let displayName = null;
+        if (parentId) {
+          folderName = parentId + "-" + name;
+          displayName = name;
+        }
+        if (addResFolder(tab, folderName, parentId, displayName)) {
+          success = true;
+          newFolderId = folderName;
+        } else {
+          cfmToastr.warning(`文件夹「${name}」已存在`);
+          return;
+        }
+      }
+
+      if (success) {
+        cfmToastr.success(`已创建文件夹「${name}」`);
+        close();
+        // 刷新当前视图
+        if (tab === "chars") {
+          renderLeftTree();
+          renderRightPane();
+        } else if (tab === "presets") {
+          renderPresetsView();
+        } else if (tab === "worldinfo") {
+          renderWorldInfoView();
+        } else if (tab === "themes") {
+          renderThemesView();
+        } else if (tab === "backgrounds") {
+          renderBackgroundsView();
+        } else if (tab === "personas") {
+          renderPersonasView();
+        } else if (tab === "regex") {
+          renderRegexView();
+        } else if (tab === "quickreply") {
+          renderQRView();
+        }
+      }
+    };
+
+    okBtn.on("click touchend", (e) => { e.preventDefault(); doCreate(); });
+    cancelBtn.on("click touchend", (e) => { e.preventDefault(); close(); });
+    overlay.on("click touchend", (e) => { e.preventDefault(); close(); });
+    // 回车创建
+    input.on("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); doCreate(); }
+      if (e.key === "Escape") { e.preventDefault(); close(); }
+    });
+
+    $("#cfm-popup").append(overlay).append(dialog);
+    // 延迟聚焦，确保弹窗已渲染
+    setTimeout(() => input.focus(), 100);
+  }
+
   function rerenderCurrentView() {
     if (currentResourceType === "chars") renderRightPane();
     else if (currentResourceType === "presets") renderPresetsView();
@@ -20475,6 +20648,7 @@ jQuery(async () => {
                         <div class="cfm-left-header">
                             <span>文件夹</span>
                             <span class="cfm-left-header-actions">
+                                <button class="cfm-quick-add-folder-btn" data-tab="chars" title="新建文件夹"><i class="fa-solid fa-folder-plus"></i></button>
                                 <div class="cfm-sort-wrapper" id="cfm-left-sort-wrapper">
                                     <button class="cfm-sort-trigger" id="cfm-left-sort-btn" title="排序"><i class="fa-solid fa-arrow-down-short-wide"></i></button>
                                 </div>
@@ -20510,6 +20684,7 @@ jQuery(async () => {
                         <div class="cfm-left-header">
                             <span>文件夹</span>
                             <span class="cfm-left-header-actions">
+                                <button class="cfm-quick-add-folder-btn" data-tab="presets" title="新建文件夹"><i class="fa-solid fa-folder-plus"></i></button>
                                 <div class="cfm-sort-wrapper" id="cfm-preset-left-sort-wrapper">
                                     <button class="cfm-sort-trigger" id="cfm-preset-left-sort-btn" title="排序"><i class="fa-solid fa-arrow-down-short-wide"></i></button>
                                 </div>
@@ -20545,6 +20720,7 @@ jQuery(async () => {
                         <div class="cfm-left-header">
                             <span>文件夹</span>
                             <span class="cfm-left-header-actions">
+                                <button class="cfm-quick-add-folder-btn" data-tab="worldinfo" title="新建文件夹"><i class="fa-solid fa-folder-plus"></i></button>
                                 <div class="cfm-sort-wrapper" id="cfm-worldinfo-left-sort-wrapper">
                                     <button class="cfm-sort-trigger" id="cfm-worldinfo-left-sort-btn" title="排序"><i class="fa-solid fa-arrow-down-short-wide"></i></button>
                                 </div>
@@ -20581,6 +20757,7 @@ jQuery(async () => {
                         <div class="cfm-left-header">
                             <span>文件夹</span>
                             <span class="cfm-left-header-actions">
+                                <button class="cfm-quick-add-folder-btn" data-tab="themes" title="新建文件夹"><i class="fa-solid fa-folder-plus"></i></button>
                                 <div class="cfm-sort-wrapper" id="cfm-theme-left-sort-wrapper">
                                     <button class="cfm-sort-trigger" id="cfm-theme-left-sort-btn" title="排序"><i class="fa-solid fa-arrow-down-short-wide"></i></button>
                                 </div>
@@ -20615,6 +20792,7 @@ jQuery(async () => {
                         <div class="cfm-left-header">
                             <span>文件夹</span>
                             <span class="cfm-left-header-actions">
+                                <button class="cfm-quick-add-folder-btn" data-tab="backgrounds" title="新建文件夹"><i class="fa-solid fa-folder-plus"></i></button>
                                 <div class="cfm-sort-wrapper" id="cfm-bg-left-sort-wrapper">
                                     <button class="cfm-sort-trigger" id="cfm-bg-left-sort-btn" title="排序"><i class="fa-solid fa-arrow-down-short-wide"></i></button>
                                 </div>
@@ -20650,6 +20828,7 @@ jQuery(async () => {
                         <div class="cfm-left-header">
                             <span>文件夹</span>
                             <span class="cfm-left-header-actions">
+                                <button class="cfm-quick-add-folder-btn" data-tab="personas" title="新建文件夹"><i class="fa-solid fa-folder-plus"></i></button>
                                 <div class="cfm-sort-wrapper" id="cfm-persona-left-sort-wrapper">
                                     <button class="cfm-sort-trigger" id="cfm-persona-left-sort-btn" title="排序"><i class="fa-solid fa-arrow-down-short-wide"></i></button>
                                 </div>
@@ -20683,6 +20862,7 @@ jQuery(async () => {
                         <div class="cfm-left-header">
                             <span>正则分类</span>
                             <span class="cfm-left-header-actions">
+                                <button class="cfm-quick-add-folder-btn" data-tab="regex" title="新建文件夹"><i class="fa-solid fa-folder-plus"></i></button>
                                 <button id="cfm-regex-expand-all" title="展开全部"><i class="fa-solid fa-angles-down"></i></button>
                                 <button id="cfm-regex-collapse-all" title="收起全部"><i class="fa-solid fa-angles-up"></i></button>
                             </span>
@@ -20713,6 +20893,7 @@ jQuery(async () => {
                         <div class="cfm-left-header">
                             <span>快速回复分类</span>
                             <span class="cfm-left-header-actions">
+                                <button class="cfm-quick-add-folder-btn" data-tab="quickreply" title="新建文件夹"><i class="fa-solid fa-folder-plus"></i></button>
                                 <div class="cfm-sort-wrapper" id="cfm-qr-left-sort-wrapper">
                                     <button class="cfm-sort-trigger" id="cfm-qr-left-sort-btn" title="排序"><i class="fa-solid fa-arrow-down-short-wide"></i></button>
                                 </div>
@@ -21156,6 +21337,14 @@ jQuery(async () => {
       e.preventDefault();
       showImportExportPopup();
     });
+    // ── 快速新建文件夹按钮 ──
+    popup.find(".cfm-quick-add-folder-btn").on("click touchend", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      const tab = $(this).data("tab");
+      showQuickAddFolderPopup(tab);
+    });
+
     // 展开全部 / 收起全部
     popup.find("#cfm-expand-all").on("click touchend", (e) => {
       e.preventDefault();
