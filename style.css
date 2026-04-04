@@ -1786,6 +1786,21 @@
     -webkit-tap-highlight-color: transparent;
   }
 
+  /* 右栏头部按钮换行，防止溢出 */
+  .cfm-right-header {
+    flex-wrap: wrap;
+    gap: 4px 6px;
+  }
+  .cfm-right-header .cfm-rh-path {
+    min-width: 0;
+    flex-basis: 0;
+    flex-grow: 1;
+  }
+  .cfm-right-header button,
+  .cfm-right-header .cfm-sort-wrapper {
+    flex-shrink: 0;
+  }
+
   /* 增大触摸目标尺寸 */
   .cfm-tnode {
     padding: 10px 12px;
