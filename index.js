@@ -17178,7 +17178,6 @@ jQuery(async () => {
                 .map((s) => s.trim())
                 .filter(Boolean);
             }, "保存主触发词");
-            refreshWorldInfoPanelView();
           });
         });
 
@@ -17214,7 +17213,6 @@ jQuery(async () => {
             await saveField((t) => {
               t.comment = val;
             }, "保存条目备注");
-            refreshWorldInfoPanelView();
           });
         });
 
