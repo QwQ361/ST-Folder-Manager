@@ -3221,6 +3221,17 @@ jQuery(async () => {
   // ==================== 顶栏图标美化适配 ====================
 
   /**
+   * 判断一个 computed background-image 是否是真正的图片图标
+   * 只接受 url(...) / image-set(...)，排除 linear-gradient(...) 等渐变文本背景
+   * @param {string} bgImage
+   * @returns {boolean}
+   */
+  function isImageIconBackground(bgImage) {
+    if (!bgImage || bgImage === "none" || bgImage === "") return false;
+    return /\b(?:url|image-set)\(/i.test(bgImage);
+  }
+
+  /**
    * 检测邻居按钮（用户设定管理）的实际图标样式
    * 通过 getComputedStyle 直接读取，不依赖 CSS 规则解析
    * @returns {{ cssUrl: string, target: string, styles: Object }|null}
@@ -3245,7 +3256,7 @@ jQuery(async () => {
       // 先检测元素本身的 background-image
       const computed = window.getComputedStyle(neighborIcon);
       const bgImage = computed.backgroundImage;
-      if (bgImage && bgImage !== "none" && bgImage !== "") {
+      if (isImageIconBackground(bgImage)) {
         const extraStyles = {};
         if (cls === ".drawer-toggle") {
           const w = computed.width;
@@ -3269,7 +3280,7 @@ jQuery(async () => {
       // 某些美化主题通过 .drawer-icon::before 设置图标
       const beforeComputed = window.getComputedStyle(neighborIcon, "::before");
       const beforeBgImage = beforeComputed.backgroundImage;
-      if (beforeBgImage && beforeBgImage !== "none" && beforeBgImage !== "") {
+      if (isImageIconBackground(beforeBgImage)) {
         const extraStyles = {};
         const w = beforeComputed.width;
         const h = beforeComputed.height;
@@ -3310,12 +3321,7 @@ jQuery(async () => {
           continue;
         for (const rule of sheet.cssRules) {
           if (!rule.selectorText || !rule.style) continue;
-          if (
-            !rule.style.backgroundImage ||
-            rule.style.backgroundImage === "none" ||
-            rule.style.backgroundImage === ""
-          )
-            continue;
+          if (!isImageIconBackground(rule.style.backgroundImage)) continue;
           // 放宽匹配：任何包含 #xxx 和 .drawer-icon 或 .drawer-toggle 的选择器
           // 同时支持 ::before 伪元素（某些美化主题通过 ::before 设置图标）
           // 支持逗号分隔的多选择器（matchAll 全局匹配）
@@ -3351,14 +3357,14 @@ jQuery(async () => {
         // 先检测元素本身
         const computed = window.getComputedStyle(iconEl);
         const bgImage = computed.backgroundImage;
-        if (bgImage && bgImage !== "none" && bgImage !== "") {
+        if (isImageIconBackground(bgImage)) {
           iconMap[btnId] = bgImage;
           break;
         }
         // 再检测 ::before 伪元素
         const beforeComputed = window.getComputedStyle(iconEl, "::before");
         const beforeBgImage = beforeComputed.backgroundImage;
-        if (beforeBgImage && beforeBgImage !== "none" && beforeBgImage !== "") {
+        if (isImageIconBackground(beforeBgImage)) {
           iconMap[btnId] = beforeBgImage;
           break;
         }
@@ -38635,6 +38641,13 @@ jQuery(async () => {
     }, 300);
   }
 
+  function getCharacterDetailFieldValue(char, field) {
+    const dataValue = char?.data?.[field];
+    return dataValue !== undefined && dataValue !== null
+      ? dataValue
+      : char?.[field];
+  }
+
   async function showCharacterDetailFieldPopup(char, field) {
     const map = {
       description: {
@@ -38722,16 +38735,16 @@ jQuery(async () => {
     };
 
     const currentAlternateGreetings = normalizeGreetingItems(
-      char?.data?.alternate_greetings,
+      getCharacterDetailFieldValue(char, "alternate_greetings"),
     );
     let currentValue;
     if (field === "first_mes") {
-      currentValue = String(char?.data?.first_mes || "");
+      currentValue = String(getCharacterDetailFieldValue(char, "first_mes") || "");
     } else if (field === "alt_greetings") {
       const altIndex = Math.max(char?.__cfmEditingGreetingIndex || 0, 0);
       currentValue = String(currentAlternateGreetings[altIndex] || "");
     } else {
-      currentValue = String(char?.data?.[field] || "");
+      currentValue = String(getCharacterDetailFieldValue(char, field) || "");
     }
     const canAppendGreeting = field === "alt_greetings";
     const deleteButtonText = field === "alt_greetings" ? "删除" : "清空";
@@ -38856,7 +38869,7 @@ jQuery(async () => {
     } else if (field === "alt_greetings") {
       // 其它开场：新增、删除、替换
       const existingGreetings = normalizeGreetingItems(
-        char.data.alternate_greetings,
+        getCharacterDetailFieldValue(char, "alternate_greetings"),
       );
       const currentAltIndex = Math.max(
         charRow.data("cfmAltGreetingIndex") || 0,
@@ -39173,12 +39186,16 @@ jQuery(async () => {
       return results;
     };
 
-    const data = char?.data || {};
+    const descriptionRaw = getCharacterDetailFieldValue(char, "description");
+    const firstMesRaw = getCharacterDetailFieldValue(char, "first_mes");
+    const alternateGreetingsRaw = getCharacterDetailFieldValue(
+      char,
+      "alternate_greetings",
+    );
     const description =
-      typeof data.description === "string" ? data.description.trim() : "";
-    const firstMes =
-      typeof data.first_mes === "string" ? data.first_mes.trim() : "";
-    const alternateGreetings = normalizeGreetingItems(data.alternate_greetings);
+      typeof descriptionRaw === "string" ? descriptionRaw.trim() : "";
+    const firstMes = typeof firstMesRaw === "string" ? firstMesRaw.trim() : "";
+    const alternateGreetings = normalizeGreetingItems(alternateGreetingsRaw);
 
     const sectionHtml = (label, value, extraClass = "", field = "") => `
       <div class="cfm-persona-detail-section cfm-char-detail-section ${extraClass}">

@@ -29,12 +29,24 @@
   display: flex;
   align-items: center;
 }
+/* 保持主题原有顶栏图标占位，只避免自定义背景图被压到过小 */
+#cfm-topbar-button .drawer-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
 /* 自定义图标模式：使用背景图替换FA图标 */
 #cfm-topbar-button .drawer-icon.cfm-custom-icon {
+  min-width: 1.25em !important;
+  min-height: 1.25em !important;
+  display: inline-block !important;
   background-size: contain;
   background-repeat: no-repeat;
   background-position: center center;
-  font-size: 0px !important;
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  line-height: 1 !important;
+  overflow: visible !important;
 }
 /* 元素本身模式：隐藏 ::before 伪元素（避免美化主题的 ::before 遮挡） */
 #cfm-topbar-button
@@ -44,12 +56,14 @@
 }
 /* ::before 伪元素模式：隐藏FA图标文字，通过 ::before 显示自定义图标 */
 #cfm-topbar-button .drawer-icon.cfm-custom-icon.cfm-custom-icon-before {
-  font-size: 0px !important;
+  position: relative;
+  min-width: 1.25em !important;
+  min-height: 1.25em !important;
   color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
   background-image: none !important;
   overflow: visible !important;
-  min-width: 40px !important;
-  min-height: 40px !important;
+  line-height: 1 !important;
 }
 /* 当主题对 .drawer-toggle 设置了自定义图标时，确保可点击 */
 #cfm-topbar-button .drawer-toggle.cfm-custom-toggle-icon {
@@ -2205,28 +2219,36 @@
   background-color: rgba(237, 66, 69, 0.12);
 }
 
-.cfm-global-search-input {
+.cfm-global-search-bar .cfm-global-search-input,
+.cfm-search-input-wrapper .cfm-global-search-input,
+input.cfm-global-search-input {
   flex: 1;
   width: 100%;
   padding: 4px 28px 4px 8px;
   border-radius: 4px;
-  border: 1px solid var(--SmartThemeBorderColor, #45475a);
-  background-color: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  background: var(--cfm-detail-bg, rgba(255, 255, 255, 0.03)) !important;
+  background-color: var(--cfm-detail-bg, rgba(255, 255, 255, 0.03)) !important;
   color: var(--SmartThemeBodyColor, #f2f3f5);
   font-size: 13px;
   min-width: 0;
   box-sizing: border-box;
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  box-shadow: none !important;
 }
 .cfm-global-search-input:focus {
   outline: none;
   border-color: #89b4fa;
 }
-.cfm-search-select {
+.cfm-global-search-bar .cfm-search-select,
+select.cfm-search-select {
   padding: 4px 6px;
   border-radius: 4px;
-  border: 1px solid var(--SmartThemeBorderColor, #45475a);
-  background-color: rgba(0, 0, 0, 0.2);
-  color: var(--SmartThemeBodyColor, #f2f3f5);
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  background: var(--cfm-detail-bg, rgba(255, 255, 255, 0.03)) !important;
+  background-color: var(--cfm-detail-bg, rgba(255, 255, 255, 0.03)) !important;
+  color: var(--cfm-detail-text, rgba(255, 255, 255, 0.88)) !important;
   font-size: 12px;
   cursor: pointer;
   flex-shrink: 0;
@@ -2234,6 +2256,7 @@
   -moz-appearance: none !important;
   appearance: none !important;
   background-image: none !important;
+  box-shadow: none !important;
   text-align: center;
 }
 .cfm-search-select:focus {
@@ -2323,14 +2346,20 @@
   flex-shrink: 0;
   align-items: center;
 }
-.cfm-rv-search {
+.cfm-right-search-bar .cfm-rv-search,
+.cfm-rv-toolbar .cfm-rv-search,
+input.cfm-rv-search {
   flex: 1;
   padding: 6px 10px;
   border-radius: 4px;
-  border: 1px solid var(--SmartThemeBorderColor, #45475a);
-  background-color: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  background: var(--cfm-detail-bg, rgba(255, 255, 255, 0.03)) !important;
+  background-color: var(--cfm-detail-bg, rgba(255, 255, 255, 0.03)) !important;
   color: var(--SmartThemeBodyColor, #f2f3f5);
   font-size: 13px;
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  box-shadow: none !important;
 }
 .cfm-rv-search:focus {
   outline: none;
@@ -3332,17 +3361,24 @@
   color: #a6adc8;
   margin-bottom: 4px;
 }
-.cfm-edit-input {
+.cfm-edit-popup .cfm-edit-input,
+.cfm-edit-popup-field .cfm-edit-input,
+input.cfm-edit-input,
+textarea.cfm-edit-input {
   width: 100%;
   padding: 7px 10px;
   font-size: 13px;
   color: var(--SmartThemeBodyColor, #cdd6f4);
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--SmartThemeBorderColor, #45475a);
+  background: var(--cfm-detail-bg, rgba(255, 255, 255, 0.03)) !important;
+  background-color: var(--cfm-detail-bg, rgba(255, 255, 255, 0.03)) !important;
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
   border-radius: 6px;
   outline: none;
   transition: border-color 0.15s;
   box-sizing: border-box;
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  box-shadow: none !important;
 }
 .cfm-edit-input:focus {
   border-color: #89b4fa;
