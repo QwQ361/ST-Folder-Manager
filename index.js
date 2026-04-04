@@ -28464,8 +28464,20 @@ jQuery(async () => {
   }
 
   // ==================== 资源删除确认弹窗（与角色卡风格一致） ====================
+  function getResTypeLabel(type) {
+    const labels = {
+      presets: "预设",
+      worldinfo: "世界书",
+      themes: "主题",
+      backgrounds: "背景",
+      personas: "User",
+      quickreply: "快速回复集",
+    };
+    return labels[type] || type;
+  }
+
   function showResDeleteConfirmDialog(type, folderIds, onConfirm) {
-    const typeLabel = type === "presets" ? "预设" : "世界书";
+    const typeLabel = getResTypeLabel(type);
     const names = folderIds.map((id) => getResFolderDisplayName(type, id));
     const namesPreview =
       names.length > 5
@@ -28510,7 +28522,7 @@ jQuery(async () => {
   function executeResourceMultiDelete(type) {
     if (resConfigDeleteSelected.size === 0) return;
     const toDelete = Array.from(resConfigDeleteSelected);
-    const typeLabel = type === "presets" ? "预设" : "世界书";
+    const typeLabel = getResTypeLabel(type);
 
     showResDeleteConfirmDialog(type, toDelete, () => {
       const tree = getResFolderTree(type);
@@ -28534,7 +28546,7 @@ jQuery(async () => {
   // 预设/世界书批量创建弹窗（支持缩进嵌套，与角色卡批量创建一致）
   function showResourceBatchCreatePopup(type) {
     if ($("#cfm-res-batch-overlay").length > 0) return;
-    const typeLabel = type === "presets" ? "预设" : "世界书";
+    const typeLabel = getResTypeLabel(type);
     let smartIndentChildMode = false;
     const overlay = $(
       '<div id="cfm-res-batch-overlay" class="cfm-batch-overlay"></div>',
