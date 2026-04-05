@@ -767,7 +767,9 @@ jQuery(async () => {
 
   function normalizeImportedThemeData(themeData, fallbackName = "") {
     const normalizedData =
-      themeData && typeof themeData === "object" ? structuredClone(themeData) : {};
+      themeData && typeof themeData === "object"
+        ? structuredClone(themeData)
+        : {};
 
     const normalizedName = String(
       normalizedData.name ?? fallbackName ?? "",
@@ -842,7 +844,8 @@ jQuery(async () => {
         }
 
         const themesSelect = document.getElementById("themes");
-        const movingUIPresetsSelect = document.getElementById("movingUIPresets");
+        const movingUIPresetsSelect =
+          document.getElementById("movingUIPresets");
         if (themesSelect) {
           themesSelect.replaceChildren();
         }
@@ -1394,9 +1397,16 @@ jQuery(async () => {
     // 当前已应用的世界书分组索引集合（用于自动应用/关闭追踪）
     if (!extension_settings[extensionName]._wiAppliedPresetIndices)
       extension_settings[extensionName]._wiAppliedPresetIndices = [];
-    // 正则激活分组预设：[{name, scripts}]  scripts 为脚本ID数组
+    // 正则激活分组预设：[{name, scripts, scope, bindChars, bindPresets, bindChats}]
     if (!extension_settings[extensionName].regexActivePresets)
       extension_settings[extensionName].regexActivePresets = [];
+    for (const p of extension_settings[extensionName].regexActivePresets) {
+      if (!p.scope) p.scope = "global";
+      if (p.scope === "char" || p.scope === "preset") p.scope = "bound";
+      if (!Array.isArray(p.bindChars)) p.bindChars = [];
+      if (!Array.isArray(p.bindPresets)) p.bindPresets = [];
+      if (!Array.isArray(p.bindChats)) p.bindChats = [];
+    }
     // 当前已应用的正则分组索引集合（用于应用/取消追踪）
     if (!extension_settings[extensionName]._regexAppliedPresetIndices)
       extension_settings[extensionName]._regexAppliedPresetIndices = [];
@@ -2217,6 +2227,224 @@ jQuery(async () => {
     );
   }
 
+  function bindTouchSafeTap(target, handler, options = {}) {
+    const $target = target instanceof jQuery ? target : $(target);
+    if (!$target.length || typeof handler !== "function") return $target;
+
+    const tapOptions = {
+      prefix: options.prefix || "cfmTouchTap",
+      moveThreshold: options.moveThreshold ?? 10,
+      clickSuppressMs: options.clickSuppressMs ?? 500,
+    };
+
+    $target.on("touchstart", function (e) {
+      recordTouchTapStart(e, tapOptions.prefix);
+    });
+
+    $target.on("click touchend", function (e) {
+      if (shouldIgnoreTouchTapAfterMove(e, tapOptions)) return;
+      if (options.preventDefault !== false) e.preventDefault();
+      if (options.stopPropagation !== false) e.stopPropagation();
+      return handler.call(this, e);
+    });
+
+    return $target;
+  }
+
+  const mobileTouchTapGuardState = new WeakMap();
+
+  function setupMobileTouchTapGuard() {
+    if (!isTouchDevice || setupMobileTouchTapGuard._initialized) return;
+    setupMobileTouchTapGuard._initialized = true;
+
+    const protectedSelector = [
+      ".cfm-row-star",
+      ".cfm-row-edit-btn",
+      ".cfm-row-note-btn",
+      ".cfm-row-rename-btn",
+      ".cfm-row-copy-btn",
+      ".cfm-regex-edit-btn",
+      ".cfm-row-bglink-btn",
+      ".cfm-row-target-btn",
+      ".cfm-wi-toggle",
+      ".cfm-tnode-rename",
+      ".cfm-tnode-arrow",
+      ".cfm-qr-expand-arrow",
+      ".cfm-chat-toggle",
+      ".cfm-regex-toggle",
+      ".cfm-char-detail-toggle",
+      ".cfm-preset-detail-toggle",
+      ".cfm-persona-toggle",
+      ".cfm-persona-bind-btn",
+      ".cfm-chat-action-btn",
+      ".cfm-wi-preset-bind",
+      ".cfm-wi-preset-bind-toggle",
+      ".cfm-wi-bind-remove",
+      ".cfm-user-preset-action-btn",
+    ].join(", ");
+    const moveThreshold = 6;
+    const clickSuppressMs = 500;
+    let activeTouch = null;
+
+    const getGuardTarget = (target) => {
+      if (!(target instanceof Element)) return null;
+      return target.closest(protectedSelector);
+    };
+
+    const getTouchPoint = (ev) =>
+      ev.changedTouches?.[0] || ev.touches?.[0] || null;
+
+    const getScrollableAncestor = (el) => {
+      let node = el instanceof Element ? el.parentElement : null;
+      while (
+        node &&
+        node !== document.body &&
+        node !== document.documentElement
+      ) {
+        const style = window.getComputedStyle(node);
+        const overflowY = style?.overflowY || "";
+        const overflowX = style?.overflowX || "";
+        const canScrollY =
+          /(auto|scroll|overlay)/.test(overflowY) &&
+          node.scrollHeight > node.clientHeight + 1;
+        const canScrollX =
+          /(auto|scroll|overlay)/.test(overflowX) &&
+          node.scrollWidth > node.clientWidth + 1;
+        if (canScrollY || canScrollX) return node;
+        node = node.parentElement;
+      }
+      return (
+        document.scrollingElement || document.documentElement || document.body
+      );
+    };
+
+    const stopEvent = (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (typeof ev.stopImmediatePropagation === "function") {
+        ev.stopImmediatePropagation();
+      }
+    };
+
+    const markSuppressed = (el) => {
+      if (!el) return;
+      mobileTouchTapGuardState.set(el, { lastTouchAt: Date.now() });
+    };
+
+    document.addEventListener(
+      "touchstart",
+      (ev) => {
+        const el = getGuardTarget(ev.target);
+        if (!el) {
+          activeTouch = null;
+          return;
+        }
+        const touch = getTouchPoint(ev);
+        if (!touch) return;
+        const scrollEl = getScrollableAncestor(el);
+        activeTouch = {
+          el,
+          startX: touch.clientX,
+          startY: touch.clientY,
+          moved: false,
+          identifier: touch.identifier,
+          scrollEl,
+          startScrollTop: scrollEl?.scrollTop || 0,
+          startScrollLeft: scrollEl?.scrollLeft || 0,
+        };
+      },
+      { capture: true, passive: true },
+    );
+
+    document.addEventListener(
+      "touchmove",
+      (ev) => {
+        if (!activeTouch) return;
+        const touchList = Array.from(ev.touches || []);
+        const touch =
+          touchList.find(
+            (item) => item.identifier === activeTouch.identifier,
+          ) || getTouchPoint(ev);
+        if (!touch) return;
+        const deltaX = Math.abs(touch.clientX - activeTouch.startX);
+        const deltaY = Math.abs(touch.clientY - activeTouch.startY);
+        const scrollDeltaY = Math.abs(
+          (activeTouch.scrollEl?.scrollTop || 0) - activeTouch.startScrollTop,
+        );
+        const scrollDeltaX = Math.abs(
+          (activeTouch.scrollEl?.scrollLeft || 0) - activeTouch.startScrollLeft,
+        );
+        if (
+          deltaX > moveThreshold ||
+          deltaY > moveThreshold ||
+          scrollDeltaX > 0 ||
+          scrollDeltaY > 0
+        ) {
+          activeTouch.moved = true;
+        }
+      },
+      { capture: true, passive: true },
+    );
+
+    document.addEventListener(
+      "touchend",
+      (ev) => {
+        const touch = activeTouch ? getTouchPoint(ev) : null;
+        if (activeTouch) {
+          const deltaX = touch
+            ? Math.abs(touch.clientX - activeTouch.startX)
+            : 0;
+          const deltaY = touch
+            ? Math.abs(touch.clientY - activeTouch.startY)
+            : 0;
+          const scrollDeltaY = Math.abs(
+            (activeTouch.scrollEl?.scrollTop || 0) - activeTouch.startScrollTop,
+          );
+          const scrollDeltaX = Math.abs(
+            (activeTouch.scrollEl?.scrollLeft || 0) -
+              activeTouch.startScrollLeft,
+          );
+          if (
+            deltaX > moveThreshold ||
+            deltaY > moveThreshold ||
+            scrollDeltaX > 0 ||
+            scrollDeltaY > 0
+          ) {
+            activeTouch.moved = true;
+          }
+        }
+
+        if (activeTouch?.moved) {
+          markSuppressed(activeTouch.el);
+          stopEvent(ev);
+        }
+        activeTouch = null;
+      },
+      { capture: true, passive: false },
+    );
+
+    document.addEventListener(
+      "touchcancel",
+      () => {
+        activeTouch = null;
+      },
+      { capture: true, passive: true },
+    );
+
+    document.addEventListener(
+      "click",
+      (ev) => {
+        const el = getGuardTarget(ev.target);
+        if (!el) return;
+        const state = mobileTouchTapGuardState.get(el);
+        if (!state?.lastTouchAt) return;
+        if (Date.now() - state.lastTouchAt >= clickSuppressMs) return;
+        stopEvent(ev);
+      },
+      true,
+    );
+  }
+
   // ==================== 移动端触摸拖拽管理器 ====================
   const touchDragMgr = {
     active: false,
@@ -2270,7 +2498,9 @@ jQuery(async () => {
               g.textContent = `📦 共 ${data.count} 项`;
             } else {
               g.textContent =
-                (data.type === "folder" || data.type === "res-folder"
+                (data.type === "folder" ||
+                data.type === "res-folder" ||
+                data.type === "regex-folder"
                   ? "📁 "
                   : data.type === "preset"
                     ? "📄 "
@@ -2282,7 +2512,9 @@ jQuery(async () => {
                           ? "🖼️ "
                           : data.type === "quickreply"
                             ? "💬 "
-                            : "👤 ") + (data.name || "");
+                            : data.type === "regex-script"
+                              ? "</> "
+                              : "👤 ") + (data.name || data.scriptName || "");
             }
             g.style.left = sx + "px";
             g.style.top = sy - 50 + "px";
@@ -2366,7 +2598,9 @@ jQuery(async () => {
       if (!el) return;
 
       const tnode = el.closest(".cfm-tnode[data-id]");
-      const row = el.closest(".cfm-row[data-folder-id]");
+      const row = el.closest(
+        ".cfm-row[data-folder-id], .cfm-row[data-target-folder]",
+      );
       const uncatNode = el.closest(".cfm-tnode-uncategorized");
       const rightList = el.closest(".cfm-right-list");
 
@@ -2376,7 +2610,10 @@ jQuery(async () => {
       }
       if (!target) return;
 
-      const targetId = target.dataset?.id || target.dataset?.folderId;
+      const targetId =
+        target.dataset?.id ||
+        target.dataset?.folderId ||
+        target.dataset?.targetFolder;
 
       // 三区域判定
       let zone = "into";
@@ -2432,12 +2669,17 @@ jQuery(async () => {
       if (!el || !this.data) return;
 
       const tnode = el.closest(".cfm-tnode[data-id]");
-      const row = el.closest(".cfm-row[data-folder-id]");
+      const row = el.closest(
+        ".cfm-row[data-folder-id], .cfm-row[data-target-folder]",
+      );
       const uncatNode = el.closest(".cfm-tnode-uncategorized");
       const rightList = el.closest(".cfm-right-list");
 
       let target = tnode || row || uncatNode;
-      let targetId = target?.dataset?.id || target?.dataset?.folderId;
+      let targetId =
+        target?.dataset?.id ||
+        target?.dataset?.folderId ||
+        target?.dataset?.targetFolder;
 
       let zone = "into";
       if ((tnode || row) && !uncatNode && target) {
@@ -2854,6 +3096,60 @@ jQuery(async () => {
           );
           if (d.multiSelect) clearMultiSelect();
           renderQRView();
+        }
+      } else if (d.type === "regex-script") {
+        const regexGroups =
+          extension_settings[extensionName].regexGlobalGroups || {};
+        const regexFolderTree =
+          extension_settings[extensionName].regexFolderTree || {};
+        const scriptIds =
+          d.multiSelect && d.selectedIds ? d.selectedIds : [d.scriptId];
+        const scriptCount = scriptIds.length;
+        const targetRegexFolderId =
+          targetId && regexFolderTree[targetId] ? targetId : null;
+        const currentSelectedRegexFolder =
+          selectedRegexNode &&
+          selectedRegexNode !== "__ungrouped__" &&
+          selectedRegexNode !== "__favorites__" &&
+          regexFolderTree[selectedRegexNode]
+            ? selectedRegexNode
+            : null;
+        if (uncatNode) {
+          scriptIds.forEach((sid) => {
+            delete regexGroups[sid];
+          });
+          getContext().saveSettingsDebounced();
+          cfmToastr.success(
+            scriptCount > 1
+              ? `已将 ${scriptCount} 个脚本移出文件夹`
+              : `已将「${d.scriptName}」移出文件夹`,
+          );
+          if (d.multiSelect) clearMultiSelect();
+          renderRegexView();
+        } else if (targetRegexFolderId) {
+          scriptIds.forEach((sid) => {
+            regexGroups[sid] = targetRegexFolderId;
+          });
+          getContext().saveSettingsDebounced();
+          cfmToastr.success(
+            scriptCount > 1
+              ? `已将 ${scriptCount} 个脚本移入「${regexFolderTree[targetRegexFolderId]?.displayName || targetRegexFolderId}」`
+              : `已将「${d.scriptName}」移入「${regexFolderTree[targetRegexFolderId]?.displayName || targetRegexFolderId}」`,
+          );
+          if (d.multiSelect) clearMultiSelect();
+          renderRegexView();
+        } else if (!target && rightList && currentSelectedRegexFolder) {
+          scriptIds.forEach((sid) => {
+            regexGroups[sid] = currentSelectedRegexFolder;
+          });
+          getContext().saveSettingsDebounced();
+          cfmToastr.success(
+            scriptCount > 1
+              ? `已将 ${scriptCount} 个脚本移入「${regexFolderTree[currentSelectedRegexFolder]?.displayName || currentSelectedRegexFolder}」`
+              : `已将「${d.scriptName}」移入「${regexFolderTree[currentSelectedRegexFolder]?.displayName || currentSelectedRegexFolder}」`,
+          );
+          if (d.multiSelect) clearMultiSelect();
+          renderRegexView();
         }
       }
     },
@@ -11004,9 +11300,22 @@ jQuery(async () => {
     overlay.find("#cfm-wi-preset-name-input").focus();
 
     // 关闭
-    overlay.find(".cfm-edit-popup-cancel").on("click", () => overlay.remove());
-    overlay.on("click", (e) => {
-      if ($(e.target).is(overlay)) overlay.remove();
+    overlay
+      .find(".cfm-edit-popup")
+      .on("click mousedown mouseup touchstart touchend", (e) => {
+        e.stopPropagation();
+      });
+    overlay.find(".cfm-edit-popup-cancel").on("click touchend", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      overlay.remove();
+    });
+    overlay.on("click touchend", (e) => {
+      if ($(e.target).is(overlay)) {
+        e.preventDefault();
+        e.stopPropagation();
+        overlay.remove();
+      }
     });
 
     // 保存当前分组
@@ -16644,16 +16953,19 @@ jQuery(async () => {
             </div>
           </div>
         </div>
-        <!-- 区域2: 条目备注 -->
+        <!-- 区域2: 条目名称 -->
         <div class="cfm-wi-de-section">
-          <label class="cfm-wi-de-label">条目备注 (Comment)</label>
+          <label class="cfm-wi-de-label">条目名称 (Comment)</label>
           <textarea class="cfm-wi-de-input" name="cfm_wi_comment" rows="2" placeholder="条目的备注/标签">${escapeHtml(entry.comment)}</textarea>
         </div>
         <!-- 区域3: 内容 -->
         <div class="cfm-wi-de-section">
           <div class="cfm-wi-de-row cfm-wi-de-content-header">
             <label class="cfm-wi-de-label">内容 (Content)</label>
-            <span class="cfm-wi-de-meta">UID: ${escapeHtml(entry.uid)} | Tokens: <span class="cfm-wi-de-token-count">计算中...</span></span>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
+              <button type="button" class="cfm-btn cfm-btn-sm cfm-worldinfo-entry-collapse-btn" data-entry-uid="${escapeHtml(entry.uid)}" title="收起当前条目并定位回该条目"><i class="fa-solid fa-chevron-up"></i> 收起并定位</button>
+              <span class="cfm-wi-de-meta">UID: ${escapeHtml(entry.uid)} | Tokens: <span class="cfm-wi-de-token-count">计算中...</span></span>
+            </div>
           </div>
           <textarea class="cfm-wi-de-input cfm-wi-de-content" name="cfm_wi_content" rows="6" placeholder="发送给 AI 的文本内容">${escapeHtml(entry.content)}</textarea>
         </div>
@@ -16816,11 +17128,82 @@ jQuery(async () => {
     const sortMode = getWorldInfoEntryDetailSortMode();
     let worldInfoData = null;
     let entries = cachedEntries ? Array.from(cachedEntries) : [];
+    const syncLocalEntrySnapshot = (
+      entryUid,
+      nextEntry,
+      activeEntry = null,
+    ) => {
+      const safeUid = String(entryUid || "");
+      if (!safeUid || !nextEntry) return;
+      const clonedEntry = JSON.parse(JSON.stringify(nextEntry));
+      const primaryKeys = Array.isArray(clonedEntry.key)
+        ? clonedEntry.key.map((item) => String(item || "")).filter(Boolean)
+        : [];
+      const secondaryKeys = Array.isArray(clonedEntry.keysecondary)
+        ? clonedEntry.keysecondary
+            .map((item) => String(item || ""))
+            .filter(Boolean)
+        : [];
+      const syncedEntry = {
+        bookName: normalizedName,
+        uid: safeUid,
+        label: String(
+          clonedEntry.comment ||
+            primaryKeys[0] ||
+            `条目 ${safeUid || "未命名"}`,
+        ),
+        comment: String(clonedEntry.comment || ""),
+        content: String(clonedEntry.content || ""),
+        primaryKeys,
+        secondaryKeys,
+        order: Number(clonedEntry.order ?? 0),
+        displayIndex: Number(
+          clonedEntry.displayIndex ?? Number.MAX_SAFE_INTEGER,
+        ),
+        depth: Number(clonedEntry.depth ?? 0),
+        constant: !!clonedEntry.constant,
+        enabled: !clonedEntry.disable,
+        raw: clonedEntry,
+      };
+      const applySnapshot = (targetEntry) => {
+        if (!targetEntry || String(targetEntry.uid || "") !== safeUid) return;
+        Object.keys(targetEntry).forEach((key) => {
+          if (!(key in syncedEntry)) delete targetEntry[key];
+        });
+        Object.assign(targetEntry, syncedEntry);
+      };
+      applySnapshot(activeEntry);
+      const listEntry = entries.find(
+        (item) => String(item?.uid || "") === safeUid,
+      );
+      if (listEntry && listEntry !== activeEntry) {
+        applySnapshot(listEntry);
+      }
+    };
     const rerenderCurrentSubList = () => {
       cfmWorldInfoEntryLastFocusedName = normalizedName;
       renderWorldInfoEntrySubList(bookRow, normalizedName, refreshFn, {
         cachedEntries: entries,
       });
+    };
+    const scrollToEntryRow = (entryUid) => {
+      const safeUid = String(entryUid || "");
+      if (!safeUid) return;
+      setTimeout(() => {
+        const targetSubList = bookRow.next(".cfm-worldinfo-entry-sublist");
+        const targetRow = targetSubList
+          .find(".cfm-preset-detail-row")
+          .filter(function () {
+            return $(this).attr("data-entry-uid") === safeUid;
+          })
+          .first();
+        if (targetRow.length) {
+          targetRow[0].scrollIntoView({
+            block: "center",
+            behavior: "smooth",
+          });
+        }
+      }, 0);
     };
     try {
       if (!cachedEntries) {
@@ -17411,6 +17794,7 @@ jQuery(async () => {
             const target = wiData?.entries?.[entry.uid];
             if (!target) return;
             fieldSetter(target, wiData);
+            syncLocalEntrySnapshot(entry.uid, target, entry);
             await saveWorldInfoDetailData(normalizedName, wiData);
           } catch (err) {
             console.error(`[CFM] ${errorLabel}失败:`, err);
@@ -17456,13 +17840,24 @@ jQuery(async () => {
             });
           });
 
-        // --- 4. 条目备注 ---
+        bindTouchSafeTap(
+          detailPanel.find(".cfm-worldinfo-entry-collapse-btn"),
+          () => {
+            cfmWorldInfoEntryLastFocusedName = normalizedName;
+            toggleWorldInfoEntryDetail(normalizedName, entry.uid);
+            setWorldInfoEntryBookExpanded(normalizedName, true);
+            rerenderCurrentSubList();
+            scrollToEntryRow(entry.uid);
+          },
+        );
+
+        // --- 4. 条目名称 ---
         detailPanel.find('[name="cfm_wi_comment"]').on("input", function () {
           const val = $(this).val();
           debouncedSave(async () => {
             await saveField((t) => {
               t.comment = val;
-            }, "保存条目备注");
+            }, "保存条目名称");
           });
         });
 
@@ -19067,8 +19462,8 @@ jQuery(async () => {
       .removeClass("fa-comments")
       .addClass("fa-comments");
     $("#cfm-chat-mode-btn").attr("title", "关闭聊天记录");
-    // 立即渲染：三角箭头通过乐观渲染策略立即显示（缓存 undefined → 默认显示）
-    rerenderCurrentView();
+    // 立即渲染并同步当前角色目标：如果已有当前角色，则自动跳转到该角色并展开聊天记录
+    refreshChatModeTargetFromCurrent();
     // 非阻塞后台预加载：加载完成后精确刷新三角（移除无聊天记录的角色的三角）
     const characters = getCharacters();
     Promise.all(characters.map((c) => getCharChats(c.avatar)))
@@ -28454,9 +28849,7 @@ jQuery(async () => {
             </div>
         `);
     // 点击星标切换收藏
-    row.find(".cfm-row-star").on("click touchend", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
+    bindTouchSafeTap(row.find(".cfm-row-star"), () => {
       const nowFav = toggleFavorite(char.avatar);
       const starEl = row.find(".cfm-row-star");
       starEl.toggleClass("cfm-star-active", nowFav);
@@ -28477,15 +28870,11 @@ jQuery(async () => {
       suppressRowClickUntil = Date.now() + 450;
     };
     // 单个铅笔按钮点击事件
-    row.find(".cfm-row-edit-btn").on("click touchend", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
+    bindTouchSafeTap(row.find(".cfm-row-edit-btn"), () => {
       executeCharEdit([char.avatar]);
     });
     // 聊天模式下小三角点击：展开/折叠聊天记录
-    row.find(".cfm-chat-toggle").on("click touchend", async (e) => {
-      e.preventDefault();
-      e.stopPropagation();
+    bindTouchSafeTap(row.find(".cfm-chat-toggle"), async () => {
       suppressNextRowClick();
       const avatar = char.avatar;
       if (cfmChatExpandedAvatars.has(avatar)) {
@@ -28514,9 +28903,7 @@ jQuery(async () => {
       }
     });
     // 正则模式下小三角点击：展开/折叠正则脚本
-    row.find(".cfm-regex-toggle").on("click touchend", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
+    bindTouchSafeTap(row.find(".cfm-regex-toggle"), () => {
       suppressNextRowClick();
       const avatar = char.avatar;
       if (cfmCharRegexExpandedAvatars.has(avatar)) {
@@ -32319,9 +32706,7 @@ jQuery(async () => {
             <div class="cfm-row-star ${fav ? "cfm-star-active" : ""}" title="${fav ? "取消收藏" : "添加收藏"}"><i class="fa-${fav ? "solid" : "regular"} fa-star"></i></div>
           </div>
         `);
-        row.find(".cfm-row-star").on("click touchend", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
+        bindTouchSafeTap(row.find(".cfm-row-star"), () => {
           const nowFav = toggleResFavorite("presets", p.name);
           const starEl = row.find(".cfm-row-star");
           starEl.toggleClass("cfm-star-active", nowFav);
@@ -32342,21 +32727,15 @@ jQuery(async () => {
           if (selectedPresetFolder === "__favorites__") renderPresetsView();
         });
         // 单个备注编辑按钮
-        row.find(".cfm-row-note-btn").on("click touchend", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
+        bindTouchSafeTap(row.find(".cfm-row-note-btn"), () => {
           executePresetNoteEdit([p.name]);
         });
         // 单个重命名按钮
-        row.find(".cfm-row-rename-btn").on("click touchend", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
+        bindTouchSafeTap(row.find(".cfm-row-rename-btn"), () => {
           executePresetRename([p.name]);
         });
         // 正则模式下小三角点击：展开/折叠正则脚本
-        row.find(".cfm-regex-toggle").on("click touchend", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
+        bindTouchSafeTap(row.find(".cfm-regex-toggle"), () => {
           const name = p.name;
           if (cfmPresetRegexExpandedNames.has(name)) {
             // 折叠
@@ -33182,9 +33561,7 @@ jQuery(async () => {
             <div class="cfm-row-star ${fav ? "cfm-star-active" : ""}" title="${fav ? "取消收藏" : "添加收藏"}"><i class="fa-${fav ? "solid" : "regular"} fa-star"></i></div>
           </div>
         `);
-        row.find(".cfm-row-star").on("click touchend", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
+        bindTouchSafeTap(row.find(".cfm-row-star"), () => {
           const nowFav = toggleResFavorite("themes", name);
           const starEl = row.find(".cfm-row-star");
           starEl.toggleClass("cfm-star-active", nowFav);
@@ -33204,21 +33581,15 @@ jQuery(async () => {
           if (selectedThemeFolder === "__favorites__") renderThemesView();
         });
         // 单个备注编辑按钮
-        row.find(".cfm-row-note-btn").on("click touchend", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
+        bindTouchSafeTap(row.find(".cfm-row-note-btn"), () => {
           executeThemeNoteEdit([name]);
         });
         // 单个重命名按钮
-        row.find(".cfm-row-rename-btn").on("click touchend", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
+        bindTouchSafeTap(row.find(".cfm-row-rename-btn"), () => {
           executeThemeRename([name]);
         });
         // 绑定背景按钮
-        row.find(".cfm-row-bglink-btn").on("click touchend", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
+        bindTouchSafeTap(row.find(".cfm-row-bglink-btn"), () => {
           handleThemeBgLink(name);
         });
         row.on("click", (e) => {
@@ -33915,9 +34286,7 @@ jQuery(async () => {
         const row = $(
           `<div class="cfm-row cfm-row-char cfm-row-bg ${isActive ? "cfm-rv-item-active" : ""} ${isDelSel ? "cfm-res-delete-row-selected" : ""} ${isExpSel ? "cfm-export-row-selected" : ""} ${isNoteSel ? "cfm-edit-row-selected" : ""} ${isRenameSel ? "cfm-edit-row-selected" : ""} ${isMSel ? "cfm-multisel-row-selected" : ""}" data-res-id="${escapeHtml(name)}" draggable="true">${msCheckHtml}<div class="cfm-row-icon cfm-bg-thumb" style="background-image:url('${thumbUrl}');background-size:cover;background-position:center;"></div><div class="cfm-row-name"><span class="cfm-theme-name-text">${escapeHtml(getBackgroundDisplayName(name))}</span>${orientHtml}${noteHtml}</div>${singleRenameBtn}${singleNoteBtn}<div class="cfm-row-star ${fav ? "cfm-star-active" : ""}" title="${fav ? "取消收藏" : "添加收藏"}"><i class="fa-${fav ? "solid" : "regular"} fa-star"></i></div></div>`,
         );
-        row.find(".cfm-row-star").on("click touchend", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
+        bindTouchSafeTap(row.find(".cfm-row-star"), () => {
           const nowFav = toggleResFavorite("backgrounds", name);
           const starEl = row.find(".cfm-row-star");
           starEl.toggleClass("cfm-star-active", nowFav);
@@ -33937,15 +34306,11 @@ jQuery(async () => {
           }
           if (selectedBgFolder === "__favorites__") renderBackgroundsView();
         });
-        row.find(".cfm-row-note-btn").on("click touchend", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
+        bindTouchSafeTap(row.find(".cfm-row-note-btn"), () => {
           executeBgNoteEdit([name]);
         });
         // 单个重命名按钮
-        row.find(".cfm-row-rename-btn").on("click touchend", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
+        bindTouchSafeTap(row.find(".cfm-row-rename-btn"), () => {
           executeBgRename([name]);
         });
         row.on("click", (e) => {
@@ -35126,9 +35491,7 @@ jQuery(async () => {
             el.attr("title", newState ? "点击取消激活" : "点击激活");
           });
         });
-        row.find(".cfm-row-star").on("click touchend", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
+        bindTouchSafeTap(row.find(".cfm-row-star"), () => {
           const nowFav = toggleResFavorite("worldinfo", n);
           const starEl = row.find(".cfm-row-star");
           starEl.toggleClass("cfm-star-active", nowFav);
@@ -35149,15 +35512,11 @@ jQuery(async () => {
             refreshWorldInfoPanelView();
         });
         // 单个备注编辑按钮
-        row.find(".cfm-row-note-btn").on("click touchend", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
+        bindTouchSafeTap(row.find(".cfm-row-note-btn"), () => {
           executeWorldInfoNoteEdit([n]);
         });
         // 单个重命名按钮
-        row.find(".cfm-row-rename-btn").on("click touchend", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
+        bindTouchSafeTap(row.find(".cfm-row-rename-btn"), () => {
           executeWorldInfoRename([n]);
         });
         row.on("click", (e) => {
@@ -35789,9 +36148,7 @@ jQuery(async () => {
           el.attr("title", newState ? "点击取消激活" : "点击激活");
         });
       });
-      row.find(".cfm-row-star").on("click touchend", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
+      bindTouchSafeTap(row.find(".cfm-row-star"), () => {
         toggleResFavorite("quickreply", n);
         executeQrSearch();
       });
@@ -36488,9 +36845,7 @@ jQuery(async () => {
         `);
 
         // 展开三角事件
-        row.find(".cfm-qr-expand-arrow").on("click touchend", function (e) {
-          e.preventDefault();
-          e.stopPropagation();
+        bindTouchSafeTap(row.find(".cfm-qr-expand-arrow"), () => {
           cfmQrLastFocusedSetName = n;
           if (qrItemExpandedSets.has(n)) {
             qrItemExpandedSets.delete(n);
@@ -36501,9 +36856,7 @@ jQuery(async () => {
         });
 
         // 激活开关事件
-        row.find(".cfm-wi-toggle").on("click touchend", function (e) {
-          e.preventDefault();
-          e.stopPropagation();
+        bindTouchSafeTap(row.find(".cfm-wi-toggle"), function () {
           const newState = !qrActiveSet.has(n);
           toggleQrSetActivation(n, newState).then(() => {
             if (newState) qrActiveSet.add(n);
@@ -36520,9 +36873,7 @@ jQuery(async () => {
         });
 
         // 星标事件
-        row.find(".cfm-row-star").on("click touchend", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
+        bindTouchSafeTap(row.find(".cfm-row-star"), () => {
           const nowFav = toggleResFavorite("quickreply", n);
           const starEl = row.find(".cfm-row-star");
           starEl.toggleClass("cfm-star-active", nowFav);
@@ -36543,9 +36894,7 @@ jQuery(async () => {
         });
 
         // 备注编辑按钮
-        row.find(".cfm-row-note-btn").on("click touchend", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
+        bindTouchSafeTap(row.find(".cfm-row-note-btn"), () => {
           const currentNote = getQrNote(n);
           const newNote = prompt("请输入备注:", currentNote);
           if (newNote !== null) {
@@ -36556,9 +36905,7 @@ jQuery(async () => {
 
         // 行点击事件
         // 重命名按钮事件
-        row.find(".cfm-row-rename-btn").on("click touchend", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
+        bindTouchSafeTap(row.find(".cfm-row-rename-btn"), () => {
           executeQrRename([n]);
         });
 
@@ -38496,13 +38843,23 @@ jQuery(async () => {
         ? `<textarea class="cfm-edit-input" id="cfm-persona-detail-input" rows="${meta.rows}" placeholder="${escapeHtml(meta.placeholder)}">${escapeHtml(currentValue)}</textarea>`
         : `<input type="text" class="cfm-edit-input" id="cfm-persona-detail-input" value="${escapeHtml(currentValue)}" placeholder="${escapeHtml(meta.placeholder)}">`;
 
+    const canMaximize = meta.rows > 1;
     const overlay = $(`
       <div class="cfm-edit-popup-overlay">
-        <div class="cfm-edit-popup">
+        <div class="cfm-edit-popup ${canMaximize ? "cfm-edit-popup-expandable" : ""}">
           <div class="cfm-edit-popup-title">${meta.title}</div>
           <div class="cfm-edit-popup-names"><div class="cfm-edit-name-item">${escapeHtml(persona.name || persona.avatarId)}</div></div>
           <div class="cfm-edit-popup-field">
-            <label>${meta.label}</label>
+            ${
+              canMaximize
+                ? `<div class="cfm-edit-popup-field-header">
+            <label for="cfm-persona-detail-input">${meta.label}</label>
+            <button type="button" class="cfm-edit-popup-maximize" title="最大化编辑窗口" aria-pressed="false">
+              <i class="fa-solid fa-expand"></i>
+            </button>
+          </div>`
+                : `<label for="cfm-persona-detail-input">${meta.label}</label>`
+            }
             ${inputHtml}
           </div>
           <div class="cfm-edit-popup-actions">
@@ -38514,11 +38871,169 @@ jQuery(async () => {
       </div>
     `);
     $("body").append(overlay);
+    const popup = overlay.find(".cfm-edit-popup");
     const input = overlay.find("#cfm-persona-detail-input");
+    const maximizeBtn = overlay.find(".cfm-edit-popup-maximize");
+    const mobileMaximizedLock = {
+      cleanup: null,
+      rect: null,
+    };
+    const clearMobileMaximizedLock = () => {
+      if (typeof mobileMaximizedLock.cleanup === "function") {
+        mobileMaximizedLock.cleanup();
+      }
+      mobileMaximizedLock.cleanup = null;
+      mobileMaximizedLock.rect = null;
+      popup.css({
+        position: "",
+        top: "",
+        left: "",
+        right: "",
+        bottom: "",
+        width: "",
+        height: "",
+        minHeight: "",
+        maxHeight: "",
+        transform: "",
+        margin: "",
+        zIndex: "",
+      });
+    };
+    const updateMaximizeButton = () => {
+      if (!maximizeBtn.length) return;
+      const isMaximized = popup.hasClass("cfm-edit-popup-maximized");
+      maximizeBtn.attr(
+        "title",
+        isMaximized ? "还原编辑窗口" : "最大化编辑窗口",
+      );
+      maximizeBtn.attr("aria-pressed", isMaximized ? "true" : "false");
+      maximizeBtn
+        .find("i")
+        .toggleClass("fa-expand", !isMaximized)
+        .toggleClass("fa-compress", isMaximized);
+    };
+    const isMobileViewport = () =>
+      window.matchMedia?.("(max-width: 768px)")?.matches ||
+      window.innerWidth <= 768;
+    const settleMobileViewport = (callback) => {
+      const visualViewport = window.visualViewport;
+      let settled = false;
+      let settleTimer = null;
+      let fallbackTimer = null;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        if (settleTimer) clearTimeout(settleTimer);
+        if (fallbackTimer) clearTimeout(fallbackTimer);
+        visualViewport?.removeEventListener("resize", handleViewportChange);
+        visualViewport?.removeEventListener("scroll", handleViewportChange);
+        callback();
+      };
+      const scheduleFinish = () => {
+        if (settleTimer) clearTimeout(settleTimer);
+        settleTimer = setTimeout(finish, 120);
+      };
+      const handleViewportChange = () => {
+        scheduleFinish();
+      };
+      scheduleFinish();
+      fallbackTimer = setTimeout(finish, 420);
+      visualViewport?.addEventListener("resize", handleViewportChange);
+      visualViewport?.addEventListener("scroll", handleViewportChange);
+    };
+    const syncMobileMaximizedLock = () => {
+      clearMobileMaximizedLock();
+      if (!canMaximize || !isMobileViewport()) return;
+      const popupNode = popup[0];
+      if (!popupNode) return;
+      const visualViewport = window.visualViewport;
+      const applyLockedRect = () => {
+        if (!popupNode.isConnected || !isMobileViewport()) {
+          return;
+        }
+        const nextRect = popupNode.getBoundingClientRect();
+        const isMaximized = popup.hasClass("cfm-edit-popup-maximized");
+        const viewportWidth = Math.max(
+          document.documentElement?.clientWidth || 0,
+          window.innerWidth || 0,
+          visualViewport?.width || 0,
+          nextRect.width,
+        );
+        const physicalViewportHeight = Math.round(
+          (window.screen?.availHeight || window.screen?.height || 0) /
+            Math.max(window.devicePixelRatio || 1, 1),
+        );
+        const viewportHeight = Math.max(
+          document.documentElement?.clientHeight || 0,
+          window.innerHeight || 0,
+          physicalViewportHeight || 0,
+          visualViewport?.height || 0,
+          nextRect.height,
+        );
+        const safeWidth = Math.min(
+          Math.max(nextRect.width, 280),
+          Math.max(0, viewportWidth - 24),
+        );
+        const safeHeight = isMaximized
+          ? Math.max(
+              mobileMaximizedLock.rect?.height || 0,
+              nextRect.height,
+              Math.max(0, viewportHeight - 80),
+            )
+          : Math.max(mobileMaximizedLock.rect?.height || 0, nextRect.height);
+        mobileMaximizedLock.rect = {
+          top: Math.max(12, mobileMaximizedLock.rect?.top ?? nextRect.top),
+          width: safeWidth,
+          height: safeHeight,
+        };
+        popup.css({
+          position: "fixed",
+          top: `${mobileMaximizedLock.rect.top}px`,
+          left: "50%",
+          right: "auto",
+          bottom: "auto",
+          width: `${mobileMaximizedLock.rect.width}px`,
+          height: `${mobileMaximizedLock.rect.height}px`,
+          minHeight: `${mobileMaximizedLock.rect.height}px`,
+          maxHeight: `${mobileMaximizedLock.rect.height}px`,
+          transform: "translateX(-50%)",
+          margin: "0",
+          zIndex: "100001",
+        });
+      };
+      applyLockedRect();
+      requestAnimationFrame(applyLockedRect);
+      const handleViewportChange = () => {
+        requestAnimationFrame(applyLockedRect);
+      };
+      const handleOrientationChange = () => {
+        mobileMaximizedLock.rect = null;
+        clearMobileMaximizedLock();
+        requestAnimationFrame(() => {
+          if (!popupNode.isConnected) return;
+          syncMobileMaximizedLock();
+        });
+      };
+      visualViewport?.addEventListener("resize", handleViewportChange);
+      visualViewport?.addEventListener("scroll", handleViewportChange);
+      window.addEventListener("orientationchange", handleOrientationChange);
+      mobileMaximizedLock.cleanup = () => {
+        visualViewport?.removeEventListener("resize", handleViewportChange);
+        visualViewport?.removeEventListener("scroll", handleViewportChange);
+        window.removeEventListener(
+          "orientationchange",
+          handleOrientationChange,
+        );
+      };
+    };
     const caretIndex = Number.isFinite(options?.caretIndex)
       ? Math.max(0, Math.trunc(options.caretIndex))
       : null;
     const node = input[0];
+    updateMaximizeButton();
+    if (canMaximize) {
+      syncMobileMaximizedLock();
+    }
     input.trigger("focus");
     if (node && typeof node.selectionStart === "number") {
       const nextCaret = Math.min(
@@ -38540,14 +39055,85 @@ jQuery(async () => {
       const openedAt = Date.now();
       const overlayCloseGuardMs = 650;
       const close = (result) => {
+        clearMobileMaximizedLock();
         overlay.remove();
         resolve(result);
       };
+      maximizeBtn.on("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const willMaximize = !popup.hasClass("cfm-edit-popup-maximized");
+        const shouldResetKeyboardViewport =
+          willMaximize &&
+          isMobileViewport() &&
+          document.activeElement === node &&
+          !!window.visualViewport &&
+          window.visualViewport.height < window.innerHeight - 80;
+        const restoreCaret = (deferForMobileLock = false) => {
+          const runRestore = () => {
+            if (!overlay[0]?.isConnected) return;
+            input.trigger("focus");
+            if (
+              node &&
+              input.is("textarea") &&
+              typeof node.selectionStart === "number"
+            ) {
+              const nextCaret = node.selectionStart;
+              setTimeout(() => {
+                if (!node.isConnected) return;
+                revealTextareaCaret(node, nextCaret);
+              }, 0);
+            }
+          };
+          if (!deferForMobileLock) {
+            runRestore();
+            return;
+          }
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              runRestore();
+            });
+          });
+        };
+        const applyToggle = () => {
+          popup.toggleClass("cfm-edit-popup-maximized");
+          updateMaximizeButton();
+          const shouldDeferFocusRestore =
+            popup.hasClass("cfm-edit-popup-maximized") &&
+            canMaximize &&
+            isMobileViewport();
+          if (canMaximize && isMobileViewport()) {
+            requestAnimationFrame(() => syncMobileMaximizedLock());
+          } else {
+            clearMobileMaximizedLock();
+          }
+          restoreCaret(shouldDeferFocusRestore);
+        };
+        if (!shouldResetKeyboardViewport) {
+          applyToggle();
+          return;
+        }
+        if (node && typeof node.selectionStart === "number") {
+          try {
+            node.setSelectionRange(node.selectionStart, node.selectionEnd);
+          } catch {}
+        }
+        input.trigger("blur");
+        settleMobileViewport(() => {
+          if (!overlay[0]?.isConnected) return;
+          applyToggle();
+        });
+      });
       overlay.find(".cfm-edit-popup-cancel").on("click", () => close(null));
       overlay.on("mousedown touchstart", (e) => {
         const isOverlayTarget = $(e.target).hasClass("cfm-edit-popup-overlay");
         const elapsed = Date.now() - openedAt;
-        overlayPressStarted = isOverlayTarget && elapsed >= overlayCloseGuardMs;
+        const isPrimaryPress =
+          e.type === "touchstart" ||
+          typeof e.button !== "number" ||
+          e.button === 0;
+        overlayPressStarted =
+          isOverlayTarget && elapsed >= overlayCloseGuardMs && isPrimaryPress;
       });
       overlay.on("click", (e) => {
         const clickedOverlay = $(e.target).hasClass("cfm-edit-popup-overlay");
@@ -38643,12 +39229,37 @@ jQuery(async () => {
 
   function getCharacterDetailFieldValue(char, field) {
     const dataValue = char?.data?.[field];
-    return dataValue !== undefined && dataValue !== null
-      ? dataValue
-      : char?.[field];
+    if (dataValue !== undefined && dataValue !== null) return dataValue;
+
+    const topLevelValue = char?.[field];
+    if (topLevelValue !== undefined && topLevelValue !== null) {
+      return topLevelValue;
+    }
+
+    if (!char?.json_data) return undefined;
+
+    try {
+      const jsonData =
+        typeof char.json_data === "string"
+          ? JSON.parse(char.json_data)
+          : char.json_data;
+      const jsonDataValue = jsonData?.data?.[field];
+      if (jsonDataValue !== undefined && jsonDataValue !== null) {
+        return jsonDataValue;
+      }
+
+      const jsonTopLevelValue = jsonData?.[field];
+      if (jsonTopLevelValue !== undefined && jsonTopLevelValue !== null) {
+        return jsonTopLevelValue;
+      }
+    } catch (parseErr) {
+      console.debug("[CFM] 读取角色详情 json_data 失败:", parseErr);
+    }
+
+    return undefined;
   }
 
-  async function showCharacterDetailFieldPopup(char, field) {
+  async function showCharacterDetailFieldPopup(char, field, options = {}) {
     const map = {
       description: {
         title: "编辑角色描述",
@@ -38739,7 +39350,9 @@ jQuery(async () => {
     );
     let currentValue;
     if (field === "first_mes") {
-      currentValue = String(getCharacterDetailFieldValue(char, "first_mes") || "");
+      currentValue = String(
+        getCharacterDetailFieldValue(char, "first_mes") || "",
+      );
     } else if (field === "alt_greetings") {
       const altIndex = Math.max(char?.__cfmEditingGreetingIndex || 0, 0);
       currentValue = String(currentAlternateGreetings[altIndex] || "");
@@ -38753,13 +39366,23 @@ jQuery(async () => {
         ? `<textarea class="cfm-edit-input" id="cfm-char-detail-input" rows="${meta.rows}" placeholder="${escapeHtml(meta.placeholder)}">${escapeHtml(currentValue)}</textarea>`
         : `<input type="text" class="cfm-edit-input" id="cfm-char-detail-input" value="${escapeHtml(currentValue)}" placeholder="${escapeHtml(meta.placeholder)}">`;
 
+    const canMaximize = meta.rows > 1;
     const overlay = $(`
       <div class="cfm-edit-popup-overlay">
-        <div class="cfm-edit-popup">
+        <div class="cfm-edit-popup ${canMaximize ? "cfm-edit-popup-expandable" : ""}">
           <div class="cfm-edit-popup-title">${meta.title}</div>
           <div class="cfm-edit-popup-names"><div class="cfm-edit-name-item">${escapeHtml(char.name || char.avatar || "未知角色")}</div></div>
           <div class="cfm-edit-popup-field">
-            <label>${meta.label}</label>
+            ${
+              canMaximize
+                ? `<div class="cfm-edit-popup-field-header">
+            <label for="cfm-char-detail-input">${meta.label}</label>
+            <button type="button" class="cfm-edit-popup-maximize" title="最大化编辑窗口" aria-pressed="false">
+              <i class="fa-solid fa-expand"></i>
+            </button>
+          </div>`
+                : `<label for="cfm-char-detail-input">${meta.label}</label>`
+            }
             ${inputHtml}
           </div>
           <div class="cfm-edit-popup-actions">
@@ -38772,23 +39395,280 @@ jQuery(async () => {
       </div>
     `);
     $("body").append(overlay);
+    const popup = overlay.find(".cfm-edit-popup");
     const input = overlay.find("#cfm-char-detail-input");
+    const maximizeBtn = overlay.find(".cfm-edit-popup-maximize");
+    const mobileMaximizedLock = {
+      cleanup: null,
+      rect: null,
+    };
+    const clearMobileMaximizedLock = () => {
+      if (typeof mobileMaximizedLock.cleanup === "function") {
+        mobileMaximizedLock.cleanup();
+      }
+      mobileMaximizedLock.cleanup = null;
+      mobileMaximizedLock.rect = null;
+      popup.css({
+        position: "",
+        top: "",
+        left: "",
+        right: "",
+        bottom: "",
+        width: "",
+        height: "",
+        minHeight: "",
+        maxHeight: "",
+        transform: "",
+        margin: "",
+        zIndex: "",
+      });
+    };
+    const updateMaximizeButton = () => {
+      if (!maximizeBtn.length) return;
+      const isMaximized = popup.hasClass("cfm-edit-popup-maximized");
+      maximizeBtn.attr(
+        "title",
+        isMaximized ? "还原编辑窗口" : "最大化编辑窗口",
+      );
+      maximizeBtn.attr("aria-pressed", isMaximized ? "true" : "false");
+      maximizeBtn
+        .find("i")
+        .toggleClass("fa-expand", !isMaximized)
+        .toggleClass("fa-compress", isMaximized);
+    };
+    const isMobileViewport = () =>
+      window.matchMedia?.("(max-width: 768px)")?.matches ||
+      window.innerWidth <= 768;
+    const settleMobileViewport = (callback) => {
+      const visualViewport = window.visualViewport;
+      let settled = false;
+      let settleTimer = null;
+      let fallbackTimer = null;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        if (settleTimer) clearTimeout(settleTimer);
+        if (fallbackTimer) clearTimeout(fallbackTimer);
+        visualViewport?.removeEventListener("resize", handleViewportChange);
+        visualViewport?.removeEventListener("scroll", handleViewportChange);
+        callback();
+      };
+      const scheduleFinish = () => {
+        if (settleTimer) clearTimeout(settleTimer);
+        settleTimer = setTimeout(finish, 120);
+      };
+      const handleViewportChange = () => {
+        scheduleFinish();
+      };
+      scheduleFinish();
+      fallbackTimer = setTimeout(finish, 420);
+      visualViewport?.addEventListener("resize", handleViewportChange);
+      visualViewport?.addEventListener("scroll", handleViewportChange);
+    };
+    const syncMobileMaximizedLock = () => {
+      clearMobileMaximizedLock();
+      if (!canMaximize || !isMobileViewport()) return;
+      const popupNode = popup[0];
+      if (!popupNode) return;
+      const visualViewport = window.visualViewport;
+      const applyLockedRect = () => {
+        if (!popupNode.isConnected || !isMobileViewport()) {
+          return;
+        }
+        const nextRect = popupNode.getBoundingClientRect();
+        const isMaximized = popup.hasClass("cfm-edit-popup-maximized");
+        const viewportWidth = Math.max(
+          document.documentElement?.clientWidth || 0,
+          window.innerWidth || 0,
+          visualViewport?.width || 0,
+          nextRect.width,
+        );
+        const physicalViewportHeight = Math.round(
+          (window.screen?.availHeight || window.screen?.height || 0) /
+            Math.max(window.devicePixelRatio || 1, 1),
+        );
+        const viewportHeight = Math.max(
+          document.documentElement?.clientHeight || 0,
+          window.innerHeight || 0,
+          physicalViewportHeight || 0,
+          visualViewport?.height || 0,
+          nextRect.height,
+        );
+        const safeWidth = Math.min(
+          Math.max(nextRect.width, 280),
+          Math.max(0, viewportWidth - 24),
+        );
+        const safeHeight = isMaximized
+          ? Math.max(
+              mobileMaximizedLock.rect?.height || 0,
+              nextRect.height,
+              Math.max(0, viewportHeight - 80),
+            )
+          : Math.max(mobileMaximizedLock.rect?.height || 0, nextRect.height);
+        mobileMaximizedLock.rect = {
+          top: Math.max(12, mobileMaximizedLock.rect?.top ?? nextRect.top),
+          width: safeWidth,
+          height: safeHeight,
+        };
+        popup.css({
+          position: "fixed",
+          top: `${mobileMaximizedLock.rect.top}px`,
+          left: "50%",
+          right: "auto",
+          bottom: "auto",
+          width: `${mobileMaximizedLock.rect.width}px`,
+          height: `${mobileMaximizedLock.rect.height}px`,
+          minHeight: `${mobileMaximizedLock.rect.height}px`,
+          maxHeight: `${mobileMaximizedLock.rect.height}px`,
+          transform: "translateX(-50%)",
+          margin: "0",
+          zIndex: "100001",
+        });
+      };
+      applyLockedRect();
+      requestAnimationFrame(applyLockedRect);
+      const handleViewportChange = () => {
+        requestAnimationFrame(applyLockedRect);
+      };
+      const handleOrientationChange = () => {
+        mobileMaximizedLock.rect = null;
+        clearMobileMaximizedLock();
+        requestAnimationFrame(() => {
+          if (!popupNode.isConnected) return;
+          syncMobileMaximizedLock();
+        });
+      };
+      visualViewport?.addEventListener("resize", handleViewportChange);
+      visualViewport?.addEventListener("scroll", handleViewportChange);
+      window.addEventListener("orientationchange", handleOrientationChange);
+      mobileMaximizedLock.cleanup = () => {
+        visualViewport?.removeEventListener("resize", handleViewportChange);
+        visualViewport?.removeEventListener("scroll", handleViewportChange);
+        window.removeEventListener(
+          "orientationchange",
+          handleOrientationChange,
+        );
+      };
+    };
+    const caretIndex = Number.isFinite(options?.caretIndex)
+      ? Math.max(0, Math.trunc(options.caretIndex))
+      : null;
+    const node = input[0];
+    updateMaximizeButton();
+    if (canMaximize) {
+      syncMobileMaximizedLock();
+    }
     input.trigger("focus");
-    if (input.is("textarea")) {
-      const node = input[0];
-      if (node && typeof node.selectionStart === "number") {
-        node.selectionStart = node.selectionEnd = node.value.length;
+    if (node && typeof node.selectionStart === "number") {
+      const nextCaret = Math.min(
+        caretIndex === null ? node.value.length : caretIndex,
+        node.value.length,
+      );
+      node.selectionStart = node.selectionEnd = nextCaret;
+      if (input.is("textarea") && caretIndex !== null) {
+        setTimeout(() => {
+          if (!node.isConnected) return;
+          revealTextareaCaret(node, nextCaret);
+          flashTextareaCaretSelection(node, nextCaret);
+        }, 0);
       }
     }
 
     return new Promise((resolve) => {
+      let overlayPressStarted = false;
+      const openedAt = Date.now();
+      const overlayCloseGuardMs = 650;
       const close = (result) => {
+        clearMobileMaximizedLock();
         overlay.remove();
         resolve(result);
       };
+      maximizeBtn.on("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const willMaximize = !popup.hasClass("cfm-edit-popup-maximized");
+        const shouldResetKeyboardViewport =
+          willMaximize &&
+          isMobileViewport() &&
+          document.activeElement === node &&
+          !!window.visualViewport &&
+          window.visualViewport.height < window.innerHeight - 80;
+        const restoreCaret = (deferForMobileLock = false) => {
+          const runRestore = () => {
+            if (!overlay[0]?.isConnected) return;
+            input.trigger("focus");
+            if (
+              node &&
+              input.is("textarea") &&
+              typeof node.selectionStart === "number"
+            ) {
+              const nextCaret = node.selectionStart;
+              setTimeout(() => {
+                if (!node.isConnected) return;
+                revealTextareaCaret(node, nextCaret);
+              }, 0);
+            }
+          };
+          if (!deferForMobileLock) {
+            runRestore();
+            return;
+          }
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              runRestore();
+            });
+          });
+        };
+        const applyToggle = () => {
+          popup.toggleClass("cfm-edit-popup-maximized");
+          updateMaximizeButton();
+          const shouldDeferFocusRestore =
+            popup.hasClass("cfm-edit-popup-maximized") &&
+            canMaximize &&
+            isMobileViewport();
+          if (canMaximize && isMobileViewport()) {
+            requestAnimationFrame(() => syncMobileMaximizedLock());
+          } else {
+            clearMobileMaximizedLock();
+          }
+          restoreCaret(shouldDeferFocusRestore);
+        };
+        if (!shouldResetKeyboardViewport) {
+          applyToggle();
+          return;
+        }
+        if (node && typeof node.selectionStart === "number") {
+          try {
+            node.setSelectionRange(node.selectionStart, node.selectionEnd);
+          } catch {}
+        }
+        input.trigger("blur");
+        settleMobileViewport(() => {
+          if (!overlay[0]?.isConnected) return;
+          applyToggle();
+        });
+      });
       overlay.find(".cfm-edit-popup-cancel").on("click", () => close(null));
+      overlay.on("mousedown touchstart", (e) => {
+        const isOverlayTarget = $(e.target).hasClass("cfm-edit-popup-overlay");
+        const elapsed = Date.now() - openedAt;
+        const isPrimaryPress =
+          e.type === "touchstart" ||
+          typeof e.button !== "number" ||
+          e.button === 0;
+        overlayPressStarted =
+          isOverlayTarget && elapsed >= overlayCloseGuardMs && isPrimaryPress;
+      });
       overlay.on("click", (e) => {
-        if ($(e.target).hasClass("cfm-edit-popup-overlay")) close(null);
+        const clickedOverlay = $(e.target).hasClass("cfm-edit-popup-overlay");
+        const elapsed = Date.now() - openedAt;
+        if (
+          clickedOverlay &&
+          overlayPressStarted &&
+          elapsed >= overlayCloseGuardMs
+        )
+          close(null);
+        overlayPressStarted = false;
       });
       overlay.find(".cfm-edit-popup-clear").on("click", () => {
         const confirmMessage =
@@ -38820,8 +39700,8 @@ jQuery(async () => {
     });
   }
 
-  async function editCharacterDetailField(charRow, char, field) {
-    const result = await showCharacterDetailFieldPopup(char, field);
+  async function editCharacterDetailField(charRow, char, field, options = {}) {
+    const result = await showCharacterDetailFieldPopup(char, field, options);
     if (result === null || !char?.avatar) return;
     if (!char.data) char.data = {};
 
@@ -39207,7 +40087,7 @@ jQuery(async () => {
           </div>`
             : ""
         }</div>
-        <div class="cfm-persona-detail-value cfm-char-detail-value ${extraClass}">${value ? escapeHtml(value).replace(/\n/g, "<br>") : '<span class="cfm-persona-detail-empty">无</span>'}</div>
+        <div class="cfm-persona-detail-value cfm-char-detail-value ${extraClass}"${field ? ` data-field="${field}"` : ""}>${value ? escapeHtml(value).replace(/\n/g, "<br>") : '<span class="cfm-persona-detail-empty">无</span>'}</div>
       </div>
     `;
 
@@ -39242,7 +40122,7 @@ jQuery(async () => {
               <div class="cfm-chat-action-btn cfm-char-greeting-nav" data-dir="next" title="下一条开场白"><i class="fa-solid fa-caret-right"></i></div>
             </div>
           </div>
-          <div class="cfm-persona-detail-value cfm-char-detail-value cfm-char-detail-block">${currentAltGreeting ? escapeHtml(currentAltGreeting).replace(/\n/g, "<br>") : '<span class="cfm-persona-detail-empty">无</span>'}</div>
+          <div class="cfm-persona-detail-value cfm-char-detail-value cfm-char-detail-block" data-field="alt_greetings">${currentAltGreeting ? escapeHtml(currentAltGreeting).replace(/\n/g, "<br>") : '<span class="cfm-persona-detail-empty">无</span>'}</div>
         </div>
       `);
     } else {
@@ -39275,11 +40155,43 @@ jQuery(async () => {
       charRow.next(".cfm-char-detail-sublist").show();
     });
 
-    // 编辑按钮事件
-    subList.find(".cfm-char-detail-edit").on("click touchend", async (e) => {
+    // 阻止详情子面板点击冒泡到外层统一点击逻辑
+    subList.on("click touchend", (e) => {
+      e.stopPropagation();
+    });
+
+    // 编辑按钮事件（委托 + 移动端防误触）
+    subList.on("touchstart", ".cfm-char-detail-edit", function (e) {
+      const touch = e.originalEvent?.touches?.[0];
+      if (touch) {
+        $(this).data("cfmTouchStartX", touch.clientX);
+        $(this).data("cfmTouchStartY", touch.clientY);
+      }
+    });
+    subList.on("click touchend", ".cfm-char-detail-edit", async function (e) {
       e.preventDefault();
       e.stopPropagation();
-      const field = $(e.currentTarget).data("field");
+      const target = $(this);
+      const now = Date.now();
+      const lastTouchAt = Number(target.data("cfmCharDetailEditTouchAt") || 0);
+      if (e.type === "touchend") {
+        target.data("cfmCharDetailEditTouchAt", now);
+        const touch = e.originalEvent?.changedTouches?.[0];
+        if (touch) {
+          const startX = Number(target.data("cfmTouchStartX") || 0);
+          const startY = Number(target.data("cfmTouchStartY") || 0);
+          const deltaX = Math.abs(touch.clientX - startX);
+          const deltaY = Math.abs(touch.clientY - startY);
+          if (deltaX > 10 || deltaY > 10) {
+            return;
+          }
+        }
+      } else if (lastTouchAt && now - lastTouchAt < 500) {
+        return;
+      }
+
+      const field = String(target.data("field") || "");
+      if (!field) return;
       if (field === "alt_greetings") {
         char.__cfmEditingGreetingIndex = Math.max(
           charRow.data("cfmAltGreetingIndex") || 0,
@@ -39291,6 +40203,86 @@ jQuery(async () => {
       await editCharacterDetailField(charRow, char, field);
       delete char.__cfmEditingGreetingIndex;
     });
+
+    const charDetailConfirmMap = {
+      description: "确认编辑角色描述吗？",
+      first_mes: "确认编辑第一条消息吗？",
+      alt_greetings: "确认编辑其它开场吗？",
+    };
+
+    subList.on(
+      "touchstart",
+      ".cfm-char-detail-value[data-field]",
+      function (e) {
+        const touch = e.originalEvent?.touches?.[0];
+        if (touch) {
+          $(this).data("cfmTouchStartX", touch.clientX);
+          $(this).data("cfmTouchStartY", touch.clientY);
+        }
+      },
+    );
+    subList.on(
+      "click touchend",
+      ".cfm-char-detail-value[data-field]",
+      async function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const target = $(this);
+        const now = Date.now();
+        const lastTouchAt = Number(target.data("cfmCharDetailTouchAt") || 0);
+        if (e.type === "touchend") {
+          target.data("cfmCharDetailTouchAt", now);
+          const touch = e.originalEvent?.changedTouches?.[0];
+          if (touch) {
+            const startX = Number(target.data("cfmTouchStartX") || 0);
+            const startY = Number(target.data("cfmTouchStartY") || 0);
+            const deltaX = Math.abs(touch.clientX - startX);
+            const deltaY = Math.abs(touch.clientY - startY);
+            if (deltaX > 10 || deltaY > 10) {
+              return;
+            }
+          }
+        } else if (lastTouchAt && now - lastTouchAt < 500) {
+          return;
+        }
+
+        const field = String(target.data("field") || "");
+        if (!field) return;
+        if (
+          !cfmConfirm(charDetailConfirmMap[field] || "确认编辑角色设定吗？")
+        ) {
+          return;
+        }
+
+        let fieldText = "";
+        if (field === "description") {
+          fieldText = String(
+            getCharacterDetailFieldValue(char, "description") || "",
+          );
+        } else if (field === "first_mes") {
+          fieldText = String(
+            getCharacterDetailFieldValue(char, "first_mes") || "",
+          );
+        } else if (field === "alt_greetings") {
+          const currentAltIndex = Math.max(
+            charRow.data("cfmAltGreetingIndex") || 0,
+            0,
+          );
+          fieldText = String(alternateGreetings[currentAltIndex] || "");
+          char.__cfmEditingGreetingIndex = currentAltIndex;
+        } else {
+          return;
+        }
+
+        const clickedOffset = getTextOffsetFromPoint(this, e);
+        await editCharacterDetailField(charRow, char, field, {
+          caretIndex: Number.isFinite(clickedOffset)
+            ? Math.max(0, Math.min(clickedOffset, fieldText.length))
+            : fieldText.length,
+        });
+        delete char.__cfmEditingGreetingIndex;
+      },
+    );
   }
 
   function renderPersonaDetailSubList(personaRow, persona) {
@@ -40113,9 +41105,7 @@ jQuery(async () => {
             <div class="cfm-row-star ${fav ? "cfm-star-active" : ""}" title="${fav ? "取消收藏" : "添加收藏"}"><i class="fa-${fav ? "solid" : "regular"} fa-star"></i></div>
           </div>
         `);
-        row.find(".cfm-row-star").on("click touchend", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
+        bindTouchSafeTap(row.find(".cfm-row-star"), () => {
           const nowFav = toggleResFavorite("personas", p.avatarId);
           const starEl = row.find(".cfm-row-star");
           starEl.toggleClass("cfm-star-active", nowFav);
@@ -40136,20 +41126,14 @@ jQuery(async () => {
           if (selectedPersonaFolder === "__favorites__") renderPersonasView();
         });
         // 单个复制按钮
-        row.find(".cfm-row-copy-btn").on("click touchend", async (e) => {
-          e.preventDefault();
-          e.stopPropagation();
+        bindTouchSafeTap(row.find(".cfm-row-copy-btn"), async () => {
           await duplicatePersona(p);
         });
         // 单个备注编辑按钮
-        row.find(".cfm-row-note-btn").on("click touchend", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
+        bindTouchSafeTap(row.find(".cfm-row-note-btn"), () => {
           executePersonaNoteEdit([p.avatarId]);
         });
-        row.find(".cfm-persona-toggle").on("click touchend", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
+        bindTouchSafeTap(row.find(".cfm-persona-toggle"), () => {
           if (personaItemExpandedIds.has(p.avatarId)) {
             personaItemExpandedIds.delete(p.avatarId);
             row.next(".cfm-chat-sublist").slideUp(150, function () {
@@ -40495,20 +41479,14 @@ jQuery(async () => {
             <div class="cfm-row-star ${fav ? "cfm-star-active" : ""}" title="${fav ? "取消收藏" : "添加收藏"}"><i class="fa-${fav ? "solid" : "regular"} fa-star"></i></div>
           </div>
         `);
-        row.find(".cfm-row-copy-btn").on("click touchend", async (e) => {
-          e.preventDefault();
-          e.stopPropagation();
+        bindTouchSafeTap(row.find(".cfm-row-copy-btn"), async () => {
           await duplicatePersona(p);
         });
-        row.find(".cfm-row-star").on("click touchend", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
+        bindTouchSafeTap(row.find(".cfm-row-star"), () => {
           toggleResFavorite("personas", p.avatarId);
           executePersonaSearch();
         });
-        row.find(".cfm-persona-toggle").on("click touchend", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
+        bindTouchSafeTap(row.find(".cfm-persona-toggle"), () => {
           if (personaItemExpandedIds.has(p.avatarId)) {
             personaItemExpandedIds.delete(p.avatarId);
             row.next(".cfm-chat-sublist").slideUp(150, function () {
@@ -41967,6 +42945,26 @@ jQuery(async () => {
     let presetChanged = false;
     for (const preset of presets) {
       if (!preset || typeof preset !== "object") continue;
+      if (!preset.scope) {
+        preset.scope = "global";
+        presetChanged = true;
+      }
+      if (preset.scope === "char" || preset.scope === "preset") {
+        preset.scope = "bound";
+        presetChanged = true;
+      }
+      if (!Array.isArray(preset.bindChars)) {
+        preset.bindChars = [];
+        presetChanged = true;
+      }
+      if (!Array.isArray(preset.bindPresets)) {
+        preset.bindPresets = [];
+        presetChanged = true;
+      }
+      if (!Array.isArray(preset.bindChats)) {
+        preset.bindChats = [];
+        presetChanged = true;
+      }
       const prevScripts = Array.isArray(preset.scripts) ? preset.scripts : [];
       const nextScripts = filterExistingRegexScriptIds(
         prevScripts,
@@ -42016,9 +43014,20 @@ jQuery(async () => {
     const presets = getRegexActivePresets();
     const existing = presets.find((p) => p.name === name);
     if (existing) {
-      existing.scripts = scriptIds;
+      existing.scripts = [...scriptIds];
+      if (!existing.scope) existing.scope = "global";
+      if (!Array.isArray(existing.bindChars)) existing.bindChars = [];
+      if (!Array.isArray(existing.bindPresets)) existing.bindPresets = [];
+      if (!Array.isArray(existing.bindChats)) existing.bindChats = [];
     } else {
-      presets.push({ name, scripts: scriptIds });
+      presets.push({
+        name,
+        scripts: [...scriptIds],
+        scope: "global",
+        bindChars: [],
+        bindPresets: [],
+        bindChats: [],
+      });
     }
     extension_settings[extensionName].regexActivePresets = presets;
     getContext().saveSettingsDebounced();
@@ -42071,17 +43080,269 @@ jQuery(async () => {
     return false;
   }
 
+  function setRegexPresetScope(presetIdx, scope) {
+    const presets = getRegexActivePresets();
+    if (presets[presetIdx]) {
+      presets[presetIdx].scope = scope;
+      if (scope === "global") {
+        presets[presetIdx].bindChars = [];
+        presets[presetIdx].bindPresets = [];
+        presets[presetIdx].bindChats = [];
+      }
+      getContext().saveSettingsDebounced();
+    }
+  }
+
+  function bindRegexPresetToChar(presetIdx, charAvatar) {
+    const presets = getRegexActivePresets();
+    const p = presets[presetIdx];
+    if (!p) return;
+    if (!Array.isArray(p.bindChars)) p.bindChars = [];
+    if (!p.bindChars.includes(charAvatar)) {
+      p.bindChars.push(charAvatar);
+      getContext().saveSettingsDebounced();
+    }
+  }
+
+  function bindRegexPresetToChat(presetIdx, charAvatar, chatFileName) {
+    const presets = getRegexActivePresets();
+    const p = presets[presetIdx];
+    const bindKey = makeChatBindKey(charAvatar, chatFileName);
+    if (!p || !bindKey) return;
+    if (!Array.isArray(p.bindChats)) p.bindChats = [];
+    if (!p.bindChats.includes(bindKey)) {
+      p.bindChats.push(bindKey);
+      getContext().saveSettingsDebounced();
+    }
+  }
+
+  function bindRegexPresetToPreset(presetIdx, presetName) {
+    const presets = getRegexActivePresets();
+    const p = presets[presetIdx];
+    if (!p) return;
+    if (!Array.isArray(p.bindPresets)) p.bindPresets = [];
+    if (!p.bindPresets.includes(presetName)) {
+      p.bindPresets.push(presetName);
+      getContext().saveSettingsDebounced();
+    }
+  }
+
+  function unbindRegexPresetFromChar(presetIdx, charAvatar) {
+    const presets = getRegexActivePresets();
+    const p = presets[presetIdx];
+    if (!p || !Array.isArray(p.bindChars)) return;
+    const idx = p.bindChars.indexOf(charAvatar);
+    if (idx !== -1) {
+      p.bindChars.splice(idx, 1);
+      getContext().saveSettingsDebounced();
+    }
+  }
+
+  function unbindRegexPresetFromChat(presetIdx, bindKey) {
+    const presets = getRegexActivePresets();
+    const p = presets[presetIdx];
+    if (!p || !Array.isArray(p.bindChats)) return;
+    const idx = p.bindChats.indexOf(bindKey);
+    if (idx !== -1) {
+      p.bindChats.splice(idx, 1);
+      getContext().saveSettingsDebounced();
+    }
+  }
+
+  function unbindRegexPresetFromPreset(presetIdx, presetName) {
+    const presets = getRegexActivePresets();
+    const p = presets[presetIdx];
+    if (!p || !Array.isArray(p.bindPresets)) return;
+    const idx = p.bindPresets.indexOf(presetName);
+    if (idx !== -1) {
+      p.bindPresets.splice(idx, 1);
+      getContext().saveSettingsDebounced();
+    }
+  }
+
+  function getRegexAutoApplyPresetIndices() {
+    const presets = getRegexActivePresets();
+    const currentChar = getCurrentCharAvatar();
+    const currentPreset = getCurrentPresetName();
+    const currentChatKey = getCurrentChatBindKey();
+    const indices = [];
+    const details = {};
+    for (let i = 0; i < presets.length; i++) {
+      const p = presets[i];
+      if (!p || !Array.isArray(p.scripts) || p.scripts.length === 0) continue;
+      if (p.scope === "global") continue;
+      const hasBindings =
+        (p.bindChars && p.bindChars.length > 0) ||
+        (p.bindPresets && p.bindPresets.length > 0) ||
+        (p.bindChats && p.bindChats.length > 0);
+      if (!hasBindings) continue;
+      const chatMatch = !!(
+        currentChatKey &&
+        p.bindChats &&
+        p.bindChats.includes(currentChatKey)
+      );
+      const charMatch = !!(
+        !chatMatch &&
+        currentChar &&
+        p.bindChars &&
+        p.bindChars.includes(currentChar)
+      );
+      const presetMatch = !!(
+        currentPreset &&
+        p.bindPresets &&
+        p.bindPresets.includes(currentPreset)
+      );
+      if (chatMatch || charMatch || presetMatch) {
+        indices.push(i);
+        details[i] = { chatMatch, charMatch, presetMatch };
+      }
+    }
+    return { indices, details };
+  }
+
+  async function unapplyRegexPresetIndex(presetIdx) {
+    const allPresets = getRegexActivePresets();
+    const preset = allPresets[presetIdx];
+    if (!preset) return 0;
+    const applied =
+      extension_settings[extensionName]._regexAppliedPresetIndices || [];
+    const otherApplied = applied.filter(
+      (i) => i !== presetIdx && allPresets[i],
+    );
+    const otherScripts = new Set();
+    for (const oi of otherApplied) {
+      for (const sid of allPresets[oi].scripts) otherScripts.add(sid);
+    }
+    let removedCount = 0;
+    let changed = false;
+    for (const sid of preset.scripts) {
+      if (!otherScripts.has(sid) && toggleRegexScriptActivation(sid, false)) {
+        removedCount++;
+        changed = true;
+      }
+    }
+    extension_settings[extensionName]._regexAppliedPresetIndices = otherApplied;
+    getContext().saveSettingsDebounced();
+    if (changed) await syncNativeRegexState();
+    return removedCount;
+  }
+
+  async function autoApplyRegexPresets(silent = false) {
+    try {
+      const presets = getRegexActivePresets();
+      const { indices: shouldApply, details } =
+        getRegexAutoApplyPresetIndices();
+      const prevApplied =
+        extension_settings[extensionName]._regexAppliedPresetIndices || [];
+      const currentCharName = getCurrentCharName();
+      const currentPresetName = getCurrentPresetName();
+      const currentChatName = getCurrentChatFileName();
+      const toDeactivate = prevApplied.filter((i) => !shouldApply.includes(i));
+      const toActivate = shouldApply.filter((i) => !prevApplied.includes(i));
+      const stillApplied = shouldApply.filter((i) => prevApplied.includes(i));
+      if (
+        toDeactivate.length === 0 &&
+        toActivate.length === 0 &&
+        stillApplied.length === 0
+      )
+        return;
+
+      const scriptsToDeactivate = new Set();
+      for (const idx of toDeactivate) {
+        if (presets[idx]) {
+          for (const sid of presets[idx].scripts) scriptsToDeactivate.add(sid);
+        }
+      }
+      const scriptsToActivate = new Set();
+      for (const idx of shouldApply) {
+        if (presets[idx]) {
+          for (const sid of presets[idx].scripts) scriptsToActivate.add(sid);
+        }
+      }
+      for (const sid of scriptsToActivate) scriptsToDeactivate.delete(sid);
+
+      let changed = false;
+      for (const sid of scriptsToDeactivate) {
+        changed = toggleRegexScriptActivation(sid, false) || changed;
+      }
+      for (const sid of scriptsToActivate) {
+        changed = toggleRegexScriptActivation(sid, true) || changed;
+      }
+
+      extension_settings[extensionName]._regexAppliedPresetIndices = [
+        ...shouldApply,
+      ];
+      getContext().saveSettingsDebounced();
+      if (changed) {
+        await syncNativeRegexState();
+      }
+
+      function describeMatchReason(idx) {
+        const d = details[idx];
+        if (!d) return "";
+        const reasons = [];
+        if (d.chatMatch && currentChatName)
+          reasons.push(`聊天「${currentChatName}」`);
+        if (d.charMatch && currentCharName)
+          reasons.push(`角色「${currentCharName}」`);
+        if (d.presetMatch && currentPresetName)
+          reasons.push(`预设「${currentPresetName}」`);
+        return reasons.length > 0 ? `（匹配${reasons.join("和")}）` : "";
+      }
+
+      const msgParts = [];
+      for (const idx of toActivate) {
+        const name = presets[idx]?.name;
+        if (name)
+          msgParts.push(`✅ 已开启「${name}」${describeMatchReason(idx)}`);
+      }
+      for (const idx of toDeactivate) {
+        const name = presets[idx]?.name;
+        if (name) {
+          const p = presets[idx];
+          const reasons = [];
+          if (p.bindChats && p.bindChats.length > 0) reasons.push("聊天不匹配");
+          if (p.bindChars && p.bindChars.length > 0) reasons.push("角色不匹配");
+          if (p.bindPresets && p.bindPresets.length > 0)
+            reasons.push("预设不匹配");
+          msgParts.push(`❌ 已关闭「${name}」（${reasons.join("且")}）`);
+        }
+      }
+      if (
+        (toActivate.length > 0 || toDeactivate.length > 0) &&
+        stillApplied.length > 0
+      ) {
+        for (const idx of stillApplied) {
+          const name = presets[idx]?.name;
+          if (name)
+            msgParts.push(`🔄 「${name}」保持开启${describeMatchReason(idx)}`);
+        }
+      }
+      if (!silent && msgParts.length > 0) {
+        cfmToastr.info(msgParts.join("<br>"), "正则分组", {
+          timeOut: 4000,
+          escapeHtml: false,
+        });
+      }
+    } catch (e) {
+      console.error("[CFM] 自动应用正则分组失败", e);
+    }
+  }
+
   /**
    * 显示正则激活分组面板（保存 + 已有分组列表）
    */
   async function showRegexPresetPanel() {
     if ($("#cfm-regex-preset-panel-overlay").length > 0) return;
-    const globalScripts = extension_settings.regex ?? [];
     const enabledIds = getEnabledRegexScriptIds();
-    const presets = getRegexActivePresets();
-
-    // 检测当前启用组合是否与某个已有分组完全相同
     const enabledSet = new Set(enabledIds);
+    const presets = getRegexActivePresets();
+    const currentChar = getCurrentCharAvatar();
+    const currentCharName = getCurrentCharName();
+    const currentPresetName = getCurrentPresetName();
+    const scopeLabels = { global: "全局", bound: "已绑定" };
+    const scopeColors = { global: "#a6e3a1", bound: "#cba6f7" };
+
     let matchedPresetName = null;
     for (const p of presets) {
       if (
@@ -42093,24 +43354,39 @@ jQuery(async () => {
       }
     }
 
-    // 构建已有分组列表
+    const appliedPresetIndices = new Set(
+      extension_settings[extensionName]._regexAppliedPresetIndices || [],
+    );
     const presetsHtml =
       presets.length === 0
         ? `<div class="cfm-wi-preset-empty">暂无已保存的分组</div>`
         : presets
             .map((p, idx) => {
+              const scope = p.scope || "global";
+              const hasBindings =
+                (p.bindChars && p.bindChars.length > 0) ||
+                (p.bindPresets && p.bindPresets.length > 0) ||
+                (p.bindChats && p.bindChats.length > 0);
+              const isApplied =
+                appliedPresetIndices.has(idx) ||
+                (p.scripts.length > 0 &&
+                  p.scripts.every((id) => enabledSet.has(id)));
               return `
         <div class="cfm-wi-preset-item" data-preset-idx="${idx}">
           <div class="cfm-wi-preset-item-left">
             <span class="cfm-wi-preset-item-name"><i class="fa-solid fa-layer-group"></i> ${escapeHtml(p.name)}</span>
+            <span class="cfm-wi-preset-scope-tag" style="color:${scopeColors[scope]};border-color:${scopeColors[scope]}40;background:${scopeColors[scope]}15;">${scopeLabels[scope]}</span>
             <span class="cfm-wi-preset-item-count">${p.scripts.length} 个</span>
+            ${hasBindings ? '<span class="cfm-wi-preset-bind-toggle" title="查看绑定"><i class="fa-solid fa-caret-down"></i></span>' : ""}
           </div>
           <span class="cfm-wi-preset-item-actions">
-            <i class="fa-solid fa-play cfm-wi-preset-apply" title="应用分组"></i>
+            <i class="fa-solid fa-play cfm-wi-preset-apply ${isApplied ? "cfm-wi-preset-apply-active" : ""}" title="${isApplied ? "当前已激活" : "应用到全局"}" style="${isApplied ? "color:#a6e3a1;text-shadow:0 0 8px rgba(166,227,161,.55);" : ""}"></i>
             <i class="fa-solid fa-stop cfm-wi-preset-unapply" title="取消应用"></i>
+            <i class="fa-solid fa-link cfm-regex-preset-bind" title="绑定管理"></i>
             <i class="fa-solid fa-pen cfm-wi-preset-edit" title="编辑"></i>
             <i class="fa-solid fa-trash cfm-wi-preset-del" title="删除"></i>
           </span>
+          ${hasBindings ? '<div class="cfm-wi-preset-bind-dropdown" style="display:none;"></div>' : ""}
         </div>
       `;
             })
@@ -42142,13 +43418,11 @@ jQuery(async () => {
     $("body").append(overlay);
     overlay.find("#cfm-regex-preset-name-input").focus();
 
-    // 关闭
     overlay.find(".cfm-edit-popup-cancel").on("click", () => overlay.remove());
     overlay.on("click", (e) => {
       if ($(e.target).is(overlay)) overlay.remove();
     });
 
-    // 保存当前分组
     overlay.find("#cfm-regex-preset-name-input").on("keydown", (e) => {
       if (e.key === "Enter")
         overlay.find("#cfm-regex-preset-save-confirm").trigger("click");
@@ -42172,7 +43446,6 @@ jQuery(async () => {
       overlay.remove();
     });
 
-    // 应用分组
     overlay.find(".cfm-wi-preset-apply").on("click", async function (e) {
       e.stopPropagation();
       e.preventDefault();
@@ -42192,8 +43465,30 @@ jQuery(async () => {
         const otherApplied = applied.filter(
           (i) => i !== idx && currentPresets[i],
         );
+        const autoAppliedState = getRegexAutoApplyPresetIndices();
+        const autoDetail = autoAppliedState.details[idx] || {};
+        const currentEnabledSet = new Set(getEnabledRegexScriptIds());
+        const isActuallyApplied = preset.scripts.every((sid) =>
+          currentEnabledSet.has(sid),
+        );
+        if (
+          autoAppliedState.indices.includes(idx) &&
+          isActuallyApplied &&
+          (autoDetail.charMatch ||
+            autoDetail.presetMatch ||
+            autoDetail.chatMatch)
+        ) {
+          const reasons = [];
+          if (autoDetail.chatMatch) reasons.push("当前聊天");
+          if (autoDetail.charMatch) reasons.push("当前角色");
+          if (autoDetail.presetMatch) reasons.push("当前预设");
+          cfmToastr.info(
+            `分组「${preset.name}」已因${reasons.join("和")}绑定自动生效`,
+          );
+          return;
+        }
 
-        let mode = "stack"; // 默认叠加
+        let mode = "stack";
         if (otherApplied.length > 0) {
           const otherNames = otherApplied
             .map((i) => currentPresets[i].name)
@@ -42231,7 +43526,6 @@ jQuery(async () => {
         }
 
         if (mode === "replace") {
-          // 替换模式：先禁用其他已应用分组的独占脚本
           const keepScripts = new Set(preset.scripts);
           for (const oi of otherApplied) {
             if (currentPresets[oi]) {
@@ -42244,17 +43538,13 @@ jQuery(async () => {
           }
         }
 
-        // 启用当前分组的脚本
         for (const sid of preset.scripts) {
           toggleRegexScriptActivation(sid, true);
         }
 
-        // 保存设置
         getContext().saveSettingsDebounced();
-        // 同步原生正则引擎
         await syncNativeRegexState();
 
-        // 更新追踪
         const newApplied =
           mode === "replace"
             ? [idx]
@@ -42274,7 +43564,6 @@ jQuery(async () => {
       }
     });
 
-    // 取消应用分组
     overlay.find(".cfm-wi-preset-unapply").on("click", async function (e) {
       e.stopPropagation();
       e.preventDefault();
@@ -42295,7 +43584,24 @@ jQuery(async () => {
           cfmToastr.warning(`分组「${preset.name}」当前未处于应用状态`);
           return;
         }
-        // 计算其他已应用分组覆盖的脚本
+        const { indices: autoIndices, details: autoDetails } =
+          getRegexAutoApplyPresetIndices();
+        if (autoIndices.includes(idx)) {
+          const detail = autoDetails[idx] || {};
+          const reasons = [];
+          if (detail.chatMatch)
+            reasons.push(
+              `聊天「${escapeHtml(getCurrentChatFileName() || getCurrentChatBindKey())}」`,
+            );
+          if (detail.charMatch)
+            reasons.push(
+              `角色「${escapeHtml(getCurrentCharName() || getCurrentCharAvatar())}」`,
+            );
+          if (detail.presetMatch)
+            reasons.push(`预设「${escapeHtml(getCurrentPresetName())}」`);
+          const confirmMsg = `分组「${preset.name}」当前因${reasons.join(" 和 ")}自动应用，确认取消应用吗？`;
+          if (!cfmConfirm(confirmMsg)) return;
+        }
         const otherApplied = applied.filter(
           (i) => i !== idx && currentPresets[i],
         );
@@ -42303,7 +43609,6 @@ jQuery(async () => {
         for (const oi of otherApplied) {
           for (const sid of currentPresets[oi].scripts) otherScripts.add(sid);
         }
-        // 只禁用该分组独占的脚本
         let removedCount = 0;
         for (const sid of preset.scripts) {
           if (!otherScripts.has(sid)) {
@@ -42311,11 +43616,8 @@ jQuery(async () => {
             removedCount++;
           }
         }
-        // 保存设置
         getContext().saveSettingsDebounced();
-        // 同步原生正则引擎
         await syncNativeRegexState();
-        // 从追踪中移除
         extension_settings[extensionName]._regexAppliedPresetIndices =
           otherApplied;
         getContext().saveSettingsDebounced();
@@ -42331,7 +43633,269 @@ jQuery(async () => {
       }
     });
 
-    // 编辑分组
+    overlay.find(".cfm-regex-preset-bind").on("click", function (e) {
+      e.stopPropagation();
+      e.preventDefault();
+      const btn = $(this);
+      const item = btn.closest(".cfm-wi-preset-item");
+      const idx = parseInt(item.attr("data-preset-idx"), 10);
+      $(".cfm-wi-preset-bind-menu").remove();
+      const menu = $(`
+        <div class="cfm-wi-preset-bind-menu">
+          <div class="cfm-wi-preset-bind-menu-title">应用方式</div>
+          <div class="cfm-wi-preset-bind-menu-item" data-action="global"><i class="fa-solid fa-globe" style="color:#a6e3a1;"></i> 应用到全局</div>
+          <div class="cfm-wi-preset-bind-menu-item ${!currentPresetName ? "cfm-disabled" : ""}" data-action="preset"><i class="fa-solid fa-sliders" style="color:#89b4fa;"></i> 绑定到当前预设${currentPresetName ? "「" + escapeHtml(currentPresetName) + "」" : "（无预设）"}</div>
+          <div class="cfm-wi-preset-bind-menu-item ${!currentChar ? "cfm-disabled" : ""}" data-action="char">
+            <span style="display:flex;align-items:center;min-width:0;flex:1;"><i class="fa-solid fa-user" style="color:#f9e2af;"></i><span style="margin-left:6px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">绑定到当前角色${currentCharName ? "「" + escapeHtml(currentCharName) + "」" : "（无角色）"}</span></span>
+            <i class="fa-solid fa-caret-down cfm-wi-bind-chat-toggle" style="margin-left:auto;opacity:.7;"></i>
+          </div>
+          <div class="cfm-wi-preset-bind-menu-item cfm-wi-preset-bind-subitem ${!getCurrentChatBindKey() ? "cfm-disabled" : ""}" data-action="chat" style="display:none;"><i class="fa-solid fa-comments" style="color:#cba6f7;"></i> 绑定到当前聊天${getCurrentChatFileName() ? "「" + escapeHtml(getCurrentChatFileName()) + "」" : "（无聊天）"}</div>
+        </div>
+      `);
+      overlay.append(menu);
+      const btnRect = btn[0].getBoundingClientRect();
+      let menuTop = btnRect.bottom + 4;
+      let menuLeft = btnRect.right - 240;
+      if (menuLeft < 8) menuLeft = 8;
+      if (menuTop + 160 > window.innerHeight) menuTop = btnRect.top - 160;
+      menu.css({ top: menuTop + "px", left: menuLeft + "px" });
+
+      menu.find(".cfm-wi-bind-chat-toggle").on("click", function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const chatItem = menu.find('[data-action="chat"]');
+        if (!chatItem.length) return;
+        const willShow = !chatItem.is(":visible");
+        chatItem.stop(true, true).slideToggle(150);
+        $(this)
+          .toggleClass("fa-caret-down", !willShow)
+          .toggleClass("fa-caret-up", willShow);
+      });
+
+      menu
+        .find(".cfm-wi-preset-bind-menu-item")
+        .on("click", async function (ev) {
+          ev.stopPropagation();
+          if ($(ev.target).closest(".cfm-wi-bind-chat-toggle").length) return;
+          if ($(this).hasClass("cfm-disabled")) return;
+          const action = $(this).data("action");
+          const allPresets = getRegexActivePresets();
+          const preset = allPresets[idx];
+          if (!preset) return;
+
+          if (action === "global") {
+            setRegexPresetScope(idx, "global");
+            menu.remove();
+            overlay
+              .find(
+                `.cfm-wi-preset-item[data-preset-idx="${idx}"] .cfm-wi-preset-apply`,
+              )
+              .trigger("click");
+            return;
+          }
+
+          if (action === "preset") {
+            if (!currentPresetName) return;
+            const alreadyBound =
+              Array.isArray(preset.bindPresets) &&
+              preset.bindPresets.includes(currentPresetName);
+            const autoApplied = getRegexAutoApplyPresetIndices();
+            if (alreadyBound) {
+              if (
+                autoApplied.indices.includes(idx) &&
+                autoApplied.details[idx]?.presetMatch
+              ) {
+                cfmToastr.info(
+                  `分组「${preset.name}」已绑定当前预设，且已处于应用状态`,
+                );
+              } else {
+                cfmToastr.info(`当前预设已绑定分组「${preset.name}」`);
+              }
+            } else {
+              if (preset.scope === "global") setRegexPresetScope(idx, "bound");
+              bindRegexPresetToPreset(idx, currentPresetName);
+              await autoApplyRegexPresets(true);
+              cfmToastr.success(
+                `已将分组「${preset.name}」绑定到预设「${currentPresetName}」`,
+              );
+            }
+          } else if (action === "char") {
+            if (!currentChar) return;
+            const alreadyBound =
+              Array.isArray(preset.bindChars) &&
+              preset.bindChars.includes(currentChar);
+            const autoApplied = getRegexAutoApplyPresetIndices();
+            if (alreadyBound) {
+              if (
+                autoApplied.indices.includes(idx) &&
+                autoApplied.details[idx]?.charMatch
+              ) {
+                cfmToastr.info(
+                  `分组「${preset.name}」已绑定当前角色，且已处于应用状态`,
+                );
+              } else {
+                cfmToastr.info(`当前角色已绑定分组「${preset.name}」`);
+              }
+            } else {
+              if (preset.scope === "global") setRegexPresetScope(idx, "bound");
+              bindRegexPresetToChar(idx, currentChar);
+              await autoApplyRegexPresets(true);
+              cfmToastr.success(
+                `已将分组「${preset.name}」绑定到角色「${currentCharName}」`,
+              );
+            }
+          } else if (action === "chat") {
+            const currentChatKey = getCurrentChatBindKey();
+            const currentChatName = getCurrentChatFileName();
+            if (!currentChar || !currentChatKey || !currentChatName) return;
+            const alreadyBound =
+              Array.isArray(preset.bindChats) &&
+              preset.bindChats.includes(currentChatKey);
+            const autoApplied = getRegexAutoApplyPresetIndices();
+            if (alreadyBound) {
+              if (
+                autoApplied.indices.includes(idx) &&
+                autoApplied.details[idx]?.chatMatch
+              ) {
+                cfmToastr.info(
+                  `分组「${preset.name}」已绑定当前聊天，且已处于应用状态`,
+                );
+              } else {
+                cfmToastr.info(`当前聊天已绑定分组「${preset.name}」`);
+              }
+            } else {
+              if (preset.scope === "global") setRegexPresetScope(idx, "bound");
+              bindRegexPresetToChat(idx, currentChar, currentChatName);
+              await autoApplyRegexPresets(true);
+              cfmToastr.success(
+                `已将分组「${preset.name}」绑定到聊天「${currentChatName}」`,
+              );
+            }
+          }
+          menu.remove();
+          overlay.remove();
+          showRegexPresetPanel();
+        });
+
+      setTimeout(() => {
+        $(document).one("click", () => menu.remove());
+      }, 10);
+    });
+
+    overlay.find(".cfm-wi-preset-bind-toggle").on("click", function (e) {
+      e.stopPropagation();
+      const item = $(this).closest(".cfm-wi-preset-item");
+      const idx = parseInt(item.attr("data-preset-idx"), 10);
+      const dropdown = item.find(".cfm-wi-preset-bind-dropdown");
+      const icon = $(this).find("i");
+      if (dropdown.is(":visible")) {
+        dropdown.slideUp(150);
+        icon.removeClass("fa-caret-up").addClass("fa-caret-down");
+        return;
+      }
+      const allPresets = getRegexActivePresets();
+      const preset = allPresets[idx];
+      if (!preset) return;
+      let html = "";
+      if (preset.bindChars && preset.bindChars.length > 0) {
+        const chars = getCharacters();
+        html +=
+          '<div class="cfm-wi-bind-section-title"><i class="fa-solid fa-user" style="color:#f9e2af;"></i> 绑定的角色卡</div>';
+        for (const av of preset.bindChars) {
+          const ch = chars.find((c) => c.avatar === av);
+          const name = ch ? ch.name : av;
+          const isCurrentChar = !!currentChar && currentChar === av;
+          html += `<div class="cfm-wi-bind-entry ${isCurrentChar ? "cfm-wi-bind-entry-current" : ""}" data-bind-type="char" data-bind-id="${escapeHtml(av)}"><span class="cfm-wi-bind-entry-name">${escapeHtml(name)}</span><i class="fa-solid fa-xmark cfm-wi-bind-remove" title="取消绑定"></i></div>`;
+        }
+      }
+      if (preset.bindChats && preset.bindChats.length > 0) {
+        const chars = getCharacters();
+        html +=
+          '<div class="cfm-wi-bind-section-title"><i class="fa-solid fa-comments" style="color:#cba6f7;"></i> 绑定的聊天</div>';
+        for (const bindKey of preset.bindChats) {
+          const parsed = parseChatBindKey(bindKey);
+          const ch = chars.find((c) => c.avatar === parsed.avatar);
+          const charName = ch ? ch.name : parsed.avatar;
+          const name = `${charName}（${parsed.chatFileName || bindKey}）`;
+          const isCurrentChat = getCurrentChatBindKey() === bindKey;
+          html += `<div class="cfm-wi-bind-entry ${isCurrentChat ? "cfm-wi-bind-entry-current" : ""}" data-bind-type="chat" data-bind-id="${escapeHtml(bindKey)}"><span class="cfm-wi-bind-entry-name">${escapeHtml(name)}</span><i class="fa-solid fa-xmark cfm-wi-bind-remove" title="取消绑定"></i></div>`;
+        }
+      }
+      if (preset.bindPresets && preset.bindPresets.length > 0) {
+        html +=
+          '<div class="cfm-wi-bind-section-title"><i class="fa-solid fa-sliders" style="color:#89b4fa;"></i> 绑定的预设</div>';
+        for (const pn of preset.bindPresets) {
+          const isCurrentPreset =
+            !!currentPresetName && currentPresetName === pn;
+          html += `<div class="cfm-wi-bind-entry ${isCurrentPreset ? "cfm-wi-bind-entry-current" : ""}" data-bind-type="preset" data-bind-id="${escapeHtml(pn)}"><span class="cfm-wi-bind-entry-name">${escapeHtml(pn)}</span><i class="fa-solid fa-xmark cfm-wi-bind-remove" title="取消绑定"></i></div>`;
+        }
+      }
+      if (!html) html = '<div class="cfm-wi-bind-empty">无绑定</div>';
+      dropdown.html(html);
+      dropdown.slideDown(150);
+      icon.removeClass("fa-caret-down").addClass("fa-caret-up");
+
+      dropdown.find(".cfm-wi-bind-remove").on("click", async function (ev) {
+        ev.stopPropagation();
+        const entry = $(this).closest(".cfm-wi-bind-entry");
+        const bindType = entry.data("bind-type");
+        const bindId = entry.data("bind-id");
+        const displayName = entry.find(".cfm-wi-bind-entry-name").text();
+        if (
+          !cfmConfirm(
+            `确定取消分组「${preset.name}」与${bindType === "char" ? "角色" : bindType === "chat" ? "聊天" : "预设"}「${displayName}」的绑定？`,
+          )
+        )
+          return;
+        if (bindType === "char") unbindRegexPresetFromChar(idx, bindId);
+        else if (bindType === "chat") unbindRegexPresetFromChat(idx, bindId);
+        else unbindRegexPresetFromPreset(idx, bindId);
+
+        const applied =
+          extension_settings[extensionName]._regexAppliedPresetIndices || [];
+        if (applied.includes(idx)) {
+          const { indices: stillAutoIndices } =
+            getRegexAutoApplyPresetIndices();
+          if (!stillAutoIndices.includes(idx)) {
+            const removedCount = await unapplyRegexPresetIndex(idx);
+            cfmToastr.info(
+              `已取消绑定，分组「${preset.name}」不再匹配当前条件，已自动取消应用（禁用 ${removedCount} 个正则脚本）`,
+            );
+          } else {
+            cfmToastr.success(
+              "已取消绑定（分组仍因其他绑定条件匹配而保持应用）",
+            );
+          }
+        } else {
+          cfmToastr.success("已取消绑定");
+        }
+        const updated = getRegexActivePresets()[idx];
+        const stillHasBindings =
+          updated &&
+          ((updated.bindChars && updated.bindChars.length > 0) ||
+            (updated.bindPresets && updated.bindPresets.length > 0) ||
+            (updated.bindChats && updated.bindChats.length > 0));
+        if (!stillHasBindings) {
+          if (updated) setRegexPresetScope(idx, "global");
+          overlay.remove();
+          showRegexPresetPanel();
+        } else {
+          entry.remove();
+          item
+            .find(".cfm-wi-preset-scope-tag")
+            .text("已绑定")
+            .attr(
+              "style",
+              "color:#cba6f7;border-color:#cba6f740;background:#cba6f715;",
+            );
+          if (dropdown.find(".cfm-wi-bind-entry").length === 0) {
+            dropdown.slideUp(150);
+            icon.removeClass("fa-caret-up").addClass("fa-caret-down");
+          }
+        }
+      });
+    });
+
     overlay.find(".cfm-wi-preset-edit").on("click", async function (e) {
       e.stopPropagation();
       e.preventDefault();
@@ -42346,7 +43910,6 @@ jQuery(async () => {
       showRegexPresetEditPopup(preset);
     });
 
-    // 删除分组
     overlay.find(".cfm-wi-preset-del").on("click", function (e) {
       e.stopPropagation();
       e.preventDefault();
@@ -42358,7 +43921,6 @@ jQuery(async () => {
       const preset = currentPresets[idx];
       if (!preset) return;
       if (!cfmConfirm(`确定删除激活分组「${preset.name}」？`)) return;
-      // 如果该分组正在应用中，从追踪中移除
       const applied =
         extension_settings[extensionName]._regexAppliedPresetIndices || [];
       if (applied.includes(idx)) {
@@ -43549,9 +45111,7 @@ jQuery(async () => {
         if (isExportSel) scriptRow.addClass("cfm-export-row-selected");
         if (isMSel) scriptRow.addClass("cfm-multisel-row-selected");
         // 收藏星标点击事件
-        scriptRow.find(".cfm-row-star").on("click touchend", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
+        bindTouchSafeTap(scriptRow.find(".cfm-row-star"), () => {
           if (!s.id) return;
           const nowFav = toggleResFavorite("regex", s.id);
           const starEl = scriptRow.find(".cfm-row-star");
@@ -43809,11 +45369,25 @@ jQuery(async () => {
 
     // --- 绑定正则脚本编辑按钮点击事件 ---
     rightList
-      .off("click.rxedit")
+      .off(".rxedit")
       .on(
-        "click.rxedit",
+        "touchstart.rxedit",
         ".cfm-regex-script-row .cfm-regex-edit-btn",
         function (e) {
+          recordTouchTapStart(e, "cfmRegexEditTap");
+        },
+      )
+      .on(
+        "click.rxedit touchend.rxedit",
+        ".cfm-regex-script-row .cfm-regex-edit-btn",
+        function (e) {
+          if (
+            shouldIgnoreTouchTapAfterMove(e, {
+              prefix: "cfmRegexEditTap",
+            })
+          ) {
+            return;
+          }
           e.preventDefault();
           e.stopPropagation();
           const row = $(this).closest(".cfm-regex-script-row");
@@ -45731,11 +47305,23 @@ jQuery(async () => {
       const globalWIBtn = $(
         `<div class="cfm-nf-btn menu_button menu_button_icon fa-solid fa-folder-tree" data-nf-type="globalworldinfo" title="文件夹过滤" style="flex-shrink:0;"></div>`,
       );
+      const globalWIGroupBtn = $(
+        `<div class="cfm-native-global-wi-group-btn menu_button menu_button_icon fa-solid fa-layer-group" title="世界书激活分组" style="flex-shrink:0;"></div>`,
+      );
       const rangeBlock = $("#world_info").closest(".range-block-range");
       rangeBlock.css({ display: "flex", alignItems: "center", gap: "4px" });
       // 把 select2 容器设为 flex:1
       rangeBlock.find(".select2-container").css({ flex: "1", minWidth: "0" });
-      rangeBlock.append(globalWIBtn);
+      const toolColumn = $(
+        `<div class="cfm-native-global-wi-tool-column" style="display:flex;flex-direction:column;align-items:center;gap:4px;flex-shrink:0;"></div>`,
+      );
+      toolColumn.append(globalWIBtn, globalWIGroupBtn);
+      rangeBlock.append(toolColumn);
+      globalWIGroupBtn.on("click touchend", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        showWiPresetPanel();
+      });
       globalWIBtn.on("click touchend", function (e) {
         e.preventDefault();
         e.stopPropagation();
@@ -46220,6 +47806,7 @@ jQuery(async () => {
   injectNativeFilterButtons();
   setupNativePresetGroupButtonObserver();
   setupWorldInfoButtonAutoShowAll();
+  setupMobileTouchTapGuard();
   setupCharWorldPopupFilterObserver();
   setupPersonaSelectionPopupEnhancer();
   initPinnedChatHook(); // 初始化聊天置顶 welcome-screen hook
@@ -46294,9 +47881,11 @@ jQuery(async () => {
 
     let autoApplyWiTimer = null;
     let autoApplyQrTimer = null;
+    let autoApplyRegexTimer = null;
     const scheduleAutoApplyBoundGroups = () => {
       if (autoApplyWiTimer) clearTimeout(autoApplyWiTimer);
       if (autoApplyQrTimer) clearTimeout(autoApplyQrTimer);
+      if (autoApplyRegexTimer) clearTimeout(autoApplyRegexTimer);
       autoApplyWiTimer = setTimeout(() => {
         autoApplyWiTimer = null;
         autoApplyWiPresets();
@@ -46305,6 +47894,10 @@ jQuery(async () => {
         autoApplyQrTimer = null;
         autoApplyQrPresets();
       }, 350);
+      autoApplyRegexTimer = setTimeout(() => {
+        autoApplyRegexTimer = null;
+        autoApplyRegexPresets();
+      }, 400);
     };
 
     // 角色/聊天切换时自动应用/关闭世界书分组和快速回复分组

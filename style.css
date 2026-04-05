@@ -1849,6 +1849,22 @@
     margin-left: 4px;
   }
 
+  /* 移动端禁用收藏按钮 hover 视觉，避免滑动后残留悬停态 */
+  .cfm-row-star:hover {
+    color: rgba(255, 255, 255, 0.2);
+    transform: none;
+  }
+
+  .cfm-row-star.cfm-star-active:hover {
+    color: #f9e2af;
+    transform: none;
+  }
+
+  .cfm-char-detail-value,
+  .cfm-persona-detail-description {
+    max-height: 78px;
+  }
+
   /* 头部按钮增大 */
   .cfm-header-actions button {
     padding: 8px 12px;
@@ -3330,6 +3346,104 @@ input.cfm-rv-search {
   font-weight: 600;
   color: #89b4fa;
   margin-bottom: 12px;
+}
+.cfm-edit-popup-field-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.cfm-edit-popup-field-header label {
+  margin-bottom: 0;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+.cfm-edit-popup-maximize {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid rgba(137, 180, 250, 0.28);
+  background: rgba(137, 180, 250, 0.12);
+  color: #89b4fa;
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.15s ease;
+}
+.cfm-edit-popup-maximize:hover {
+  background: rgba(137, 180, 250, 0.22);
+  border-color: rgba(137, 180, 250, 0.45);
+}
+.cfm-edit-popup-maximize:active {
+  transform: scale(0.96);
+}
+.cfm-edit-popup-expandable {
+  width: min(760px, 92vw);
+  max-width: calc(100vw - 24px);
+  max-height: min(82vh, 900px);
+  display: flex;
+  flex-direction: column;
+  transition:
+    width 0.18s ease,
+    max-width 0.18s ease,
+    height 0.18s ease,
+    max-height 0.18s ease;
+}
+.cfm-edit-popup-expandable .cfm-edit-popup-field {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.cfm-edit-popup-expandable textarea.cfm-edit-input {
+  flex: 1 1 auto;
+  min-height: 220px;
+  max-height: none;
+}
+.cfm-edit-popup-expandable.cfm-edit-popup-maximized {
+  height: calc(100vh - 24px);
+  max-height: calc(100vh - 24px);
+}
+.cfm-edit-popup-expandable.cfm-edit-popup-maximized textarea.cfm-edit-input {
+  min-height: 0;
+}
+@media (max-width: 768px) {
+  .cfm-edit-popup-expandable.cfm-edit-popup-maximized {
+    position: fixed;
+    top: 12px;
+    left: 50%;
+    right: auto;
+    bottom: auto;
+    transform: translateX(-50%);
+    align-self: flex-start;
+    margin: 0;
+    height: calc(100vh - max(env(safe-area-inset-bottom, 0px), 56px) - 24px);
+    min-height: calc(
+      100vh - max(env(safe-area-inset-bottom, 0px), 56px) - 24px
+    );
+    max-height: calc(
+      100vh - max(env(safe-area-inset-bottom, 0px), 56px) - 24px
+    );
+    height: calc(100lvh - max(env(safe-area-inset-bottom, 0px), 56px) - 24px);
+    min-height: calc(
+      100lvh - max(env(safe-area-inset-bottom, 0px), 56px) - 24px
+    );
+    max-height: calc(
+      100lvh - max(env(safe-area-inset-bottom, 0px), 56px) - 24px
+    );
+    z-index: 100001;
+  }
+  .cfm-edit-popup-expandable.cfm-edit-popup-maximized .cfm-edit-popup-actions {
+    padding-bottom: max(env(safe-area-inset-bottom, 0px), 12px);
+  }
 }
 .cfm-edit-popup-names {
   max-height: 120px;
@@ -6112,17 +6226,31 @@ input[type="number"].cfm-wi-de-input::-webkit-outer-spin-button {
   font-size: 11px;
   line-height: 1.4;
 }
-.cfm-char-detail-section.cfm-char-detail-block .cfm-char-detail-value {
+.cfm-char-detail-value {
   padding: 8px 10px;
   background: rgba(0, 0, 0, 0.16);
   border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.05);
+  max-height: 90px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  line-height: 1.6;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 .cfm-persona-detail-description {
   padding: 8px 10px;
   background: rgba(0, 0, 0, 0.16);
   border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.05);
+  max-height: 90px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  line-height: 1.6;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 .cfm-persona-detail-tags {
   display: flex;
