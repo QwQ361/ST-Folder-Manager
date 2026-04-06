@@ -1230,6 +1230,28 @@ jQuery(async () => {
     );
   }
 
+  let Popup = null;
+  let POPUP_TYPE = null;
+  try {
+    const popupModule = await import("../../../popup.js");
+    Popup = popupModule.Popup;
+    POPUP_TYPE = popupModule.POPUP_TYPE;
+    console.log("[CFM] 成功获取 Popup 和 POPUP_TYPE");
+  } catch (e) {
+    console.warn("[CFM] 无法导入 popup.js 模块，头像裁剪弹窗不可用:", e);
+  }
+
+  let ensureImageFormatSupported = null;
+  let getBase64Async = null;
+  try {
+    const utilsModule = await import("../../../utils.js");
+    ensureImageFormatSupported = utilsModule.ensureImageFormatSupported;
+    getBase64Async = utilsModule.getBase64Async;
+    console.log("[CFM] 成功获取 ensureImageFormatSupported 和 getBase64Async");
+  } catch (e) {
+    console.warn("[CFM] 无法导入 utils.js 模块，头像裁剪预处理不可用:", e);
+  }
+
   function getTagList() {
     return getContext().tags || [];
   }
@@ -2254,6 +2276,11 @@ jQuery(async () => {
   const mobileTouchTapGuardState = new WeakMap();
 
   function setupMobileTouchTapGuard() {
+    const isTouchDevice =
+      typeof window !== "undefined" &&
+      ("ontouchstart" in window ||
+        Number(globalThis.navigator?.maxTouchPoints || 0) > 0 ||
+        Number(globalThis.navigator?.msMaxTouchPoints || 0) > 0);
     if (!isTouchDevice || setupMobileTouchTapGuard._initialized) return;
     setupMobileTouchTapGuard._initialized = true;
 
@@ -21565,6 +21592,28 @@ jQuery(async () => {
     }
   }
 
+  // 兼容旧调用名，避免历史残留逻辑调用 toggleChatPin 时失效
+  function toggleChatPin(avatar, chatFileName) {
+    return togglePinChat(avatar, chatFileName);
+  }
+
+  let welcomeRecentChatRefreshToken = 0;
+  let welcomeRecentChatRefreshFrameId = 0;
+  const cfmPendingMissingPinnedFetches = new Set();
+
+  function scheduleWelcomeRecentChatRefresh() {
+    const token = ++welcomeRecentChatRefreshToken;
+    if (welcomeRecentChatRefreshFrameId) {
+      cancelAnimationFrame(welcomeRecentChatRefreshFrameId);
+    }
+    welcomeRecentChatRefreshFrameId = requestAnimationFrame(() => {
+      welcomeRecentChatRefreshFrameId = 0;
+      if (token !== welcomeRecentChatRefreshToken) return;
+      applyPinnedChatsToWelcomeScreen();
+      requestAnimationFrame(() => enhanceRecentChatsWithNotes());
+    });
+  }
+
   /**
    * 将置顶聊天应用到酒馆的 welcome-screen "最近聊天" 列表
    * 通过操作 DOM 将置顶项移动/插入到列表最前面
@@ -21578,6 +21627,21 @@ jQuery(async () => {
     if (!recentList) return;
 
     const pinned = getPinnedChats();
+
+    // 先移除重复聊天项，避免多次补抓/重试导致同一聊天重复显示
+    const seenChatKeys = new Set();
+    recentList.querySelectorAll(".recentChat").forEach((el) => {
+      const key =
+        (el.getAttribute("data-avatar") || "") +
+        "::" +
+        (el.getAttribute("data-file") || "");
+      if (!key || key === "::") return;
+      if (seenChatKeys.has(key)) {
+        el.remove();
+        return;
+      }
+      seenChatKeys.add(key);
+    });
 
     // 先移除所有置顶标记
     recentList.querySelectorAll(".recentChat").forEach((el) => {
@@ -21639,7 +21703,7 @@ jQuery(async () => {
           pinIcon.addEventListener("click", (e) => {
             e.stopPropagation();
             e.preventDefault();
-            toggleChatPin(elAvatar, elFile);
+            togglePinChat(elAvatar, elFile);
           });
           nameEl.parentNode.insertBefore(pinIcon, nameEl.nextSibling);
         }
@@ -21676,9 +21740,12 @@ jQuery(async () => {
           (el.getAttribute("data-file") || ""),
       ),
     );
-    const missingPinned = pinned.filter(
-      (p) => !existingKeys.has(p.avatar + "::" + p.chatFileName),
-    );
+    const missingPinned = pinned.filter((p) => {
+      const key = p.avatar + "::" + p.chatFileName;
+      return (
+        !existingKeys.has(key) && !cfmPendingMissingPinnedFetches.has(key)
+      );
+    });
     if (missingPinned.length > 0) {
       fetchAndInsertMissingPinnedChats(recentList, missingPinned, insertBefore);
     }
@@ -21699,7 +21766,14 @@ jQuery(async () => {
     const headers = getContext().getRequestHeaders();
 
     for (const pin of missingPinned) {
+      const pinKey = pin.avatar + "::" + pin.chatFileName;
+      cfmPendingMissingPinnedFetches.add(pinKey);
       try {
+        const existingItem = recentList.querySelector(
+          `.recentChat[data-avatar="${CSS.escape(pin.avatar)}"][data-file="${CSS.escape(pin.chatFileName)}"]`,
+        );
+        if (existingItem) continue;
+
         const char = characters.find((c) => c.avatar === pin.avatar);
         if (!char) continue; // 角色不存在，跳过
 
@@ -21787,7 +21861,7 @@ jQuery(async () => {
           pinIndicator.addEventListener("click", (e) => {
             e.stopPropagation();
             e.preventDefault();
-            toggleChatPin(pin.avatar, pin.chatFileName);
+            togglePinChat(pin.avatar, pin.chatFileName);
           });
         }
 
@@ -21795,6 +21869,12 @@ jQuery(async () => {
         chatItem.addEventListener("click", () => {
           openChatFile(pin.avatar, pin.chatFileName);
         });
+
+        // 二次检查，避免异步请求返回期间该聊天已被其它重试或原生列表插入
+        const duplicateItem = recentList.querySelector(
+          `.recentChat[data-avatar="${CSS.escape(pin.avatar)}"][data-file="${CSS.escape(pin.chatFileName)}"]`,
+        );
+        if (duplicateItem) continue;
 
         // 在 insertBefore 之前插入（在其他置顶项之后）
         const existingPinned = recentList.querySelectorAll(".cfm-pinned-chat");
@@ -21806,6 +21886,8 @@ jQuery(async () => {
         }
       } catch (e) {
         console.warn("[CFM] 获取置顶聊天信息失败:", pin, e);
+      } finally {
+        cfmPendingMissingPinnedFetches.delete(pinKey);
       }
     }
     // 异步插入完成后应用备注显示
@@ -21817,29 +21899,62 @@ jQuery(async () => {
    * 使用 MutationObserver 监听 #chat 容器，当 welcomePanel 被插入时自动应用置顶
    */
   function initPinnedChatHook() {
-    const chatEl = document.getElementById("chat");
-    if (!chatEl) return;
+    const bindPinnedObserver = (chatEl) => {
+      if (!chatEl || chatEl.dataset.cfmPinnedHookBound === "1") return;
+      chatEl.dataset.cfmPinnedHookBound = "1";
 
-    const observer = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        for (const node of mutation.addedNodes) {
-          if (
-            node.nodeType === Node.ELEMENT_NODE &&
-            (node.classList?.contains("welcomePanel") ||
-              node.querySelector?.(".welcomePanel"))
-          ) {
-            // welcomePanel 被插入，延迟一帧应用置顶
-            requestAnimationFrame(() => applyPinnedChatsToWelcomeScreen());
-            return;
+      const observer = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+          for (const node of mutation.addedNodes) {
+            if (
+              node.nodeType === Node.ELEMENT_NODE &&
+              (node.classList?.contains("welcomePanel") ||
+                node.querySelector?.(".welcomePanel"))
+            ) {
+              // welcomePanel 被插入后，分阶段恢复置顶和备注
+              scheduleWelcomeRecentChatRefresh();
+              return;
+            }
           }
         }
+      });
+
+      observer.observe(chatEl, { childList: true, subtree: false });
+      // 如果当前已有 welcomePanel，立即开始分阶段恢复
+      if (chatEl.querySelector(".welcomePanel")) {
+        scheduleWelcomeRecentChatRefresh();
       }
+    };
+
+    const chatEl = document.getElementById("chat");
+    if (chatEl) {
+      bindPinnedObserver(chatEl);
+      return;
+    }
+
+    const bindWhenChatReady = () => {
+      const lateChatEl = document.getElementById("chat");
+      if (!lateChatEl) return false;
+      bindPinnedObserver(lateChatEl);
+      return true;
+    };
+
+    if (bindWhenChatReady()) return;
+
+    const rootObserver = new MutationObserver(() => {
+      if (!bindWhenChatReady()) return;
+      rootObserver.disconnect();
     });
 
-    observer.observe(chatEl, { childList: true, subtree: false });
-    // 如果当前已有 welcomePanel，立即应用
-    if (chatEl.querySelector(".welcomePanel")) {
-      applyPinnedChatsToWelcomeScreen();
+    const startObserve = () => {
+      if (!document.body) return;
+      rootObserver.observe(document.body, { childList: true, subtree: true });
+    };
+
+    if (document.body) {
+      startObserve();
+    } else {
+      document.addEventListener("DOMContentLoaded", startObserve, { once: true });
     }
   }
 
@@ -23158,6 +23273,7 @@ jQuery(async () => {
                     <div class="cfm-header-actions">
                         <button id="cfm-btn-copymode" class="cfm-copymode-btn ${cfmCopyMode ? "cfm-copymode-active" : ""}" title="${cfmCopyMode ? "当前：复制模式（拖拽角色会保留原位置）" : "当前：移动模式（拖拽角色会从原位置移除）"}"><i class="fa-solid fa-${cfmCopyMode ? "copy" : "arrows-turn-to-dots"}"></i> ${cfmCopyMode ? "复制" : "移动"}</button>
                         <button id="cfm-btn-theme" title="自定义外观"><i class="fa-solid fa-palette"></i></button>
+                        <button id="cfm-btn-char-scan" title="扫描角色卡数据"><i class="fa-solid fa-arrows-rotate"></i></button>
                         <button id="cfm-btn-config" title="标签管理"><i class="fa-solid fa-gear"></i></button>
                         <button id="cfm-btn-backup" title="导入/导出"><i class="fa-solid fa-arrow-right-arrow-left"></i></button>
                         <button class="cfm-btn-close" id="cfm-btn-close-main">&times;</button>
@@ -23981,9 +24097,75 @@ jQuery(async () => {
           closeMainPopup();
         });
     }
+    const showCharacterDataScanLoading = (
+      message = "正在扫描角色卡数据，请稍候...",
+    ) => {
+      const host = $("#cfm-popup");
+      host.find(".cfm-character-data-scan-loading").remove();
+      const loading = $(
+        `<div class="cfm-preset-detail-opening-loading cfm-character-data-scan-loading" aria-live="polite" aria-busy="true">
+          <div class="cfm-preset-detail-opening-loading-box">
+            <i class="fa-solid fa-spinner fa-spin"></i>
+            <span>${escapeHtml(message)}</span>
+          </div>
+        </div>`,
+      );
+      host.append(loading);
+      return () => loading.remove();
+    };
+
+    const setCharacterDataScanButtonState = (isLoading) => {
+      const button = popup.find("#cfm-btn-char-scan");
+      if (!button.length) return;
+      button.prop("disabled", isLoading);
+      button.attr(
+        "title",
+        isLoading ? "正在扫描角色卡数据..." : "扫描角色卡数据",
+      );
+      button.html(
+        isLoading
+          ? '<i class="fa-solid fa-spinner fa-spin"></i>'
+          : '<i class="fa-solid fa-arrows-rotate"></i>',
+      );
+    };
+
+    const scanCharacterCardData = async () => {
+      const refreshCharacters = getContext()?.getCharacters;
+      if (typeof refreshCharacters !== "function") {
+        cfmToastr.error("当前环境不支持扫描角色卡数据");
+        return;
+      }
+      const button = popup.find("#cfm-btn-char-scan");
+      if (button.prop("disabled")) return;
+
+      const hideLoading = showCharacterDataScanLoading();
+      setCharacterDataScanButtonState(true);
+      try {
+        await refreshCharacters();
+        rerenderCurrentView();
+        const charCount = getCharacters().length;
+        cfmToastr.success(
+          charCount > 0
+            ? `角色卡数据扫描完成，共刷新 ${charCount} 个角色`
+            : "角色卡数据扫描完成",
+        );
+      } catch (error) {
+        console.error("[CFM] 扫描角色卡数据失败:", error);
+        cfmToastr.error("扫描角色卡数据失败");
+      } finally {
+        hideLoading();
+        setCharacterDataScanButtonState(false);
+      }
+    };
+
     popup.find("#cfm-btn-theme").on("click touchend", (e) => {
       e.preventDefault();
       showThemeCustomizePopup();
+    });
+    popup.find("#cfm-btn-char-scan").on("click touchend", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      scanCharacterCardData();
     });
     popup.find("#cfm-btn-config").on("click touchend", (e) => {
       e.preventDefault();
@@ -28932,7 +29114,7 @@ jQuery(async () => {
       }
     });
     // 角色名旁小三角：展开/折叠角色卡具体设定
-    row.find(".cfm-char-detail-toggle").on("click touchend", (e) => {
+    row.find(".cfm-char-detail-toggle").on("click touchend", async (e) => {
       e.preventDefault();
       e.stopPropagation();
       if (e.type === "touchend") {
@@ -28967,6 +29149,14 @@ jQuery(async () => {
           .find(".cfm-char-detail-toggle i")
           .removeClass("fa-caret-right")
           .addClass("fa-caret-down");
+        const needsHydration = !hasCharacterDetailPayload(char);
+        if (needsHydration && typeof getContext().getCharacters === "function") {
+          try {
+            await getContext().getCharacters();
+          } catch (e) {
+            console.debug("[CFM] 展开角色详情时刷新角色列表失败:", e);
+          }
+        }
         renderCharacterDetailSubList(row, char);
         row.nextAll(".cfm-char-detail-sublist").first().hide().slideDown(150);
       }
@@ -39227,36 +39417,249 @@ jQuery(async () => {
     }, 300);
   }
 
-  function getCharacterDetailFieldValue(char, field) {
-    const dataValue = char?.data?.[field];
-    if (dataValue !== undefined && dataValue !== null) return dataValue;
+  function pickDetailAvatarFile() {
+    return new Promise((resolve) => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/*";
+      input.style.display = "none";
+      const cleanup = () => input.remove();
+      input.addEventListener(
+        "change",
+        () => {
+          const file = input.files?.[0] || null;
+          cleanup();
+          resolve(file);
+        },
+        { once: true },
+      );
+      input.addEventListener(
+        "cancel",
+        () => {
+          cleanup();
+          resolve(null);
+        },
+        { once: true },
+      );
+      document.body.appendChild(input);
+      input.click();
+    });
+  }
 
-    const topLevelValue = char?.[field];
-    if (topLevelValue !== undefined && topLevelValue !== null) {
-      return topLevelValue;
+  async function prepareDetailAvatarUpload(file) {
+    if (!(file instanceof File)) return null;
+
+    let uploadFile = file;
+    if (typeof ensureImageFormatSupported === "function") {
+      uploadFile = await ensureImageFormatSupported(file);
     }
 
-    if (!char?.json_data) return undefined;
+    const ctx = getContext();
+    const shouldCrop = !ctx?.powerUserSettings?.never_resize_avatars;
+    let cropData;
+
+    if (
+      shouldCrop &&
+      typeof Popup === "function" &&
+      POPUP_TYPE?.CROP !== undefined &&
+      typeof getBase64Async === "function"
+    ) {
+      const dataUrl = await getBase64Async(uploadFile);
+      const dlg = new Popup(
+        "Set the crop position of the avatar image",
+        POPUP_TYPE.CROP,
+        "",
+        { cropImage: dataUrl },
+      );
+      const croppedImage = await dlg.show();
+      if (!croppedImage) {
+        return null;
+      }
+      cropData = dlg.cropData;
+    }
+
+    return { file: uploadFile, cropData };
+  }
+
+  async function bustDetailThumbnailCache(type, file) {
+    if (!type || !file) return;
+    try {
+      await fetch(getThumbnailUrl(type, file), {
+        method: "GET",
+        cache: "no-cache",
+        headers: {
+          pragma: "no-cache",
+          "cache-control": "no-cache",
+        },
+      });
+    } catch (e) {
+      console.warn(`[CFM] 刷新 ${type} 缩略图缓存失败:`, e);
+    }
+  }
+
+  async function replaceCharacterDetailAvatar(charRow, char) {
+    char = resolveCharacterDetailChar(char);
+    if (!char?.avatar) {
+      cfmToastr.error("无法获取角色头像信息");
+      return;
+    }
+
+    const file = await pickDetailAvatarFile();
+    if (!file) return;
+
+    const prepared = await prepareDetailAvatarUpload(file);
+    if (!prepared?.file) return;
+
+    const ctx = getContext();
+    const formData = new FormData();
+    formData.append("avatar", prepared.file);
+    formData.append("avatar_url", char.avatar);
+
+    let url = "/api/characters/edit-avatar";
+    if (prepared.cropData !== undefined) {
+      url += `?crop=${encodeURIComponent(JSON.stringify(prepared.cropData))}`;
+    }
+
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: ctx.getRequestHeaders({ omitContentType: true }),
+        body: formData,
+        cache: "no-cache",
+      });
+      if (!response.ok) {
+        throw new Error((await response.text()) || `HTTP ${response.status}`);
+      }
+
+      await bustDetailThumbnailCache("avatar", char.avatar);
+      if (typeof ctx.getCharacters === "function") {
+        try {
+          await ctx.getCharacters();
+        } catch (e) {
+          console.warn("[CFM] 刷新角色列表数据失败", e);
+        }
+      }
+      cfmToastr.success("已更新角色头像");
+      rerenderCurrentView();
+    } catch (e) {
+      console.error("[CFM] 更新角色头像失败:", e);
+      cfmToastr.error("角色头像更新失败");
+      if (charRow?.length) {
+        renderCharacterDetailSubList(charRow, char);
+        charRow.next(".cfm-char-detail-sublist").show();
+      }
+    }
+  }
+
+  async function replacePersonaDetailAvatar(persona) {
+    if (!persona?.avatarId) {
+      cfmToastr.error("无法获取User头像信息");
+      return;
+    }
+
+    const file = await pickDetailAvatarFile();
+    if (!file) return;
+
+    const prepared = await prepareDetailAvatarUpload(file);
+    if (!prepared?.file) return;
+
+    const ctx = getContext();
+    const formData = new FormData();
+    formData.append("avatar", prepared.file);
+    formData.append("overwrite_name", persona.avatarId);
+
+    let url = "/api/avatars/upload";
+    if (prepared.cropData !== undefined) {
+      url += `?crop=${encodeURIComponent(JSON.stringify(prepared.cropData))}`;
+    }
+
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: ctx.getRequestHeaders({ omitContentType: true }),
+        body: formData,
+      });
+      if (!response.ok) {
+        throw new Error((await response.text()) || `HTTP ${response.status}`);
+      }
+
+      await bustDetailThumbnailCache("persona", persona.avatarId);
+      cfmToastr.success("已更新User头像");
+      refreshPersonaPanelView();
+      syncNativePersonaUI(persona.avatarId);
+    } catch (e) {
+      console.error("[CFM] 更新User头像失败:", e);
+      cfmToastr.error("User头像更新失败");
+    }
+  }
+
+  function resolveCharacterDetailChar(char) {
+    const avatar = char?.avatar;
+    if (!avatar) return char;
+    const liveChar = getCharacters().find((item) => item?.avatar === avatar);
+    if (!liveChar) return char;
+    if (
+      char &&
+      char !== liveChar &&
+      Object.prototype.hasOwnProperty.call(char, "__cfmEditingGreetingIndex")
+    ) {
+      liveChar.__cfmEditingGreetingIndex = char.__cfmEditingGreetingIndex;
+    }
+    return liveChar;
+  }
+
+  function getCharacterDetailFieldValue(char, field) {
+    const resolvedChar = resolveCharacterDetailChar(char);
+    const aliasFields =
+      field === "alternate_greetings"
+        ? ["alternate_greetings", "alt_greetings"]
+        : field === "alt_greetings"
+          ? ["alt_greetings", "alternate_greetings"]
+          : [field];
+
+    for (const key of aliasFields) {
+      const dataValue = resolvedChar?.data?.[key];
+      if (dataValue !== undefined && dataValue !== null) return dataValue;
+
+      const topLevelValue = resolvedChar?.[key];
+      if (topLevelValue !== undefined && topLevelValue !== null) {
+        return topLevelValue;
+      }
+    }
+
+    if (!resolvedChar?.json_data) return undefined;
 
     try {
       const jsonData =
-        typeof char.json_data === "string"
-          ? JSON.parse(char.json_data)
-          : char.json_data;
-      const jsonDataValue = jsonData?.data?.[field];
-      if (jsonDataValue !== undefined && jsonDataValue !== null) {
-        return jsonDataValue;
-      }
+        typeof resolvedChar.json_data === "string"
+          ? JSON.parse(resolvedChar.json_data)
+          : resolvedChar.json_data;
+      for (const key of aliasFields) {
+        const jsonDataValue = jsonData?.data?.[key];
+        if (jsonDataValue !== undefined && jsonDataValue !== null) {
+          return jsonDataValue;
+        }
 
-      const jsonTopLevelValue = jsonData?.[field];
-      if (jsonTopLevelValue !== undefined && jsonTopLevelValue !== null) {
-        return jsonTopLevelValue;
+        const jsonTopLevelValue = jsonData?.[key];
+        if (jsonTopLevelValue !== undefined && jsonTopLevelValue !== null) {
+          return jsonTopLevelValue;
+        }
       }
     } catch (parseErr) {
       console.debug("[CFM] 读取角色详情 json_data 失败:", parseErr);
     }
 
     return undefined;
+  }
+
+  function hasCharacterDetailPayload(char) {
+    const detailFields = ["description", "first_mes", "alternate_greetings"];
+    return detailFields.some((field) => {
+      const value = getCharacterDetailFieldValue(char, field);
+      if (Array.isArray(value)) return value.length > 0;
+      if (typeof value === "string") return value.trim().length > 0;
+      return value !== undefined && value !== null;
+    });
   }
 
   async function showCharacterDetailFieldPopup(char, field, options = {}) {
@@ -39316,6 +39719,7 @@ jQuery(async () => {
         rows: 8,
       },
     };
+    char = resolveCharacterDetailChar(char);
     const meta = map[field];
     if (!meta || !char) return null;
 
@@ -39701,6 +40105,7 @@ jQuery(async () => {
   }
 
   async function editCharacterDetailField(charRow, char, field, options = {}) {
+    char = resolveCharacterDetailChar(char);
     const result = await showCharacterDetailFieldPopup(char, field, options);
     if (result === null || !char?.avatar) return;
     if (!char.data) char.data = {};
@@ -40038,6 +40443,7 @@ jQuery(async () => {
   // 来自 @habc12138 老师的超级好用user人设生成器~做了小小联动
 
   function renderCharacterDetailSubList(charRow, char) {
+    char = resolveCharacterDetailChar(char);
     charRow.next(".cfm-char-detail-sublist").remove();
 
     const normalizeGreetingItems = (input) => {
@@ -40097,6 +40503,14 @@ jQuery(async () => {
     const detailCard = $(
       '<div class="cfm-chat-toolbar cfm-persona-detail-card cfm-char-detail-card"></div>',
     );
+
+    detailCard.append(`
+      <div class="cfm-detail-avatar-action" style="display:flex;justify-content:flex-start;padding:0 0 8px 0;">
+        <button type="button" class="cfm-btn cfm-char-detail-avatar-btn">
+          <i class="fa-solid fa-image"></i> 修改图像
+        </button>
+      </div>
+    `);
 
     detailCard.append(sectionHtml("描述", description, "", "description"));
 
@@ -40159,6 +40573,47 @@ jQuery(async () => {
     subList.on("click touchend", (e) => {
       e.stopPropagation();
     });
+
+    subList.on("touchstart", ".cfm-char-detail-avatar-btn", function (e) {
+      const touch = e.originalEvent?.touches?.[0];
+      if (touch) {
+        $(this).data("cfmTouchStartX", touch.clientX);
+        $(this).data("cfmTouchStartY", touch.clientY);
+      }
+    });
+    subList.on(
+      "click touchend",
+      ".cfm-char-detail-avatar-btn",
+      async function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const target = $(this);
+        const now = Date.now();
+        const lastTouchAt = Number(target.data("cfmCharAvatarTouchAt") || 0);
+        if (e.type === "touchend") {
+          target.data("cfmCharAvatarTouchAt", now);
+          const touch = e.originalEvent?.changedTouches?.[0];
+          if (touch) {
+            const startX = Number(target.data("cfmTouchStartX") || 0);
+            const startY = Number(target.data("cfmTouchStartY") || 0);
+            const deltaX = Math.abs(touch.clientX - startX);
+            const deltaY = Math.abs(touch.clientY - startY);
+            if (deltaX > 10 || deltaY > 10) {
+              return;
+            }
+          }
+        } else if (lastTouchAt && now - lastTouchAt < 500) {
+          return;
+        }
+        if (target.prop("disabled")) return;
+        target.prop("disabled", true);
+        try {
+          await replaceCharacterDetailAvatar(charRow, char);
+        } finally {
+          target.prop("disabled", false);
+        }
+      },
+    );
 
     // 编辑按钮事件（委托 + 移动端防误触）
     subList.on("touchstart", ".cfm-char-detail-edit", function (e) {
@@ -40311,6 +40766,14 @@ jQuery(async () => {
     );
 
     detailCard.append(`
+      <div class="cfm-detail-avatar-action" style="display:flex;justify-content:flex-start;padding:0 0 8px 0;">
+        <button type="button" class="cfm-btn cfm-persona-detail-avatar-btn">
+          <i class="fa-solid fa-image"></i> 修改图像
+        </button>
+      </div>
+    `);
+
+    detailCard.append(`
       <div class="cfm-persona-detail-section">
         <div class="cfm-persona-detail-label">名称
           <div class="cfm-chat-actions">
@@ -40370,6 +40833,47 @@ jQuery(async () => {
 
     subList.append(detailCard);
     personaRow.after(subList);
+
+    subList.on("touchstart", ".cfm-persona-detail-avatar-btn", function (e) {
+      const touch = e.originalEvent?.touches?.[0];
+      if (touch) {
+        $(this).data("cfmTouchStartX", touch.clientX);
+        $(this).data("cfmTouchStartY", touch.clientY);
+      }
+    });
+    subList.on(
+      "click touchend",
+      ".cfm-persona-detail-avatar-btn",
+      async function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const target = $(this);
+        const now = Date.now();
+        const lastTouchAt = Number(target.data("cfmPersonaAvatarTouchAt") || 0);
+        if (e.type === "touchend") {
+          target.data("cfmPersonaAvatarTouchAt", now);
+          const touch = e.originalEvent?.changedTouches?.[0];
+          if (touch) {
+            const startX = Number(target.data("cfmTouchStartX") || 0);
+            const startY = Number(target.data("cfmTouchStartY") || 0);
+            const deltaX = Math.abs(touch.clientX - startX);
+            const deltaY = Math.abs(touch.clientY - startY);
+            if (deltaX > 10 || deltaY > 10) {
+              return;
+            }
+          }
+        } else if (lastTouchAt && now - lastTouchAt < 500) {
+          return;
+        }
+        if (target.prop("disabled")) return;
+        target.prop("disabled", true);
+        try {
+          await replacePersonaDetailAvatar(persona);
+        } finally {
+          target.prop("disabled", false);
+        }
+      },
+    );
 
     subList.find(".cfm-persona-detail-edit").on("click touchend", async (e) => {
       e.preventDefault();
@@ -47905,6 +48409,7 @@ jQuery(async () => {
       eventSource.on(event_types.CHAT_CHANGED, () => {
         // 延迟执行，确保角色信息已更新
         scheduleAutoApplyBoundGroups();
+        scheduleWelcomeRecentChatRefresh();
       });
     }
     // 预设切换时自动应用/关闭世界书分组和快速回复分组
