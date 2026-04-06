@@ -6089,8 +6089,7 @@ input[type="number"].cfm-wi-de-input::-webkit-outer-spin-button {
   border-radius: 8px;
   margin: 6px 0 8px;
 }
-#cfm-overlay .cfm-preset-detail-opening-loading,
-#cfm-popup .cfm-character-data-scan-loading {
+#cfm-overlay .cfm-preset-detail-opening-loading {
   position: fixed;
   top: 0;
   left: 0;
@@ -6105,10 +6104,7 @@ input[type="number"].cfm-wi-de-input::-webkit-outer-spin-button {
   backdrop-filter: blur(1.5px);
   z-index: 10020;
 }
-#cfm-overlay .cfm-preset-detail-opening-loading-box,
-#cfm-popup
-  .cfm-character-data-scan-loading
-  .cfm-preset-detail-opening-loading-box {
+#cfm-overlay .cfm-preset-detail-opening-loading-box {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -6129,19 +6125,11 @@ input[type="number"].cfm-wi-de-input::-webkit-outer-spin-button {
   word-break: break-word;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.32);
 }
-#cfm-overlay .cfm-preset-detail-opening-loading-box span,
-#cfm-popup
-  .cfm-character-data-scan-loading
-  .cfm-preset-detail-opening-loading-box
-  span {
+#cfm-overlay .cfm-preset-detail-opening-loading-box span {
   color: inherit;
   opacity: 1;
 }
-#cfm-overlay .cfm-preset-detail-opening-loading-box i,
-#cfm-popup
-  .cfm-character-data-scan-loading
-  .cfm-preset-detail-opening-loading-box
-  i {
+#cfm-overlay .cfm-preset-detail-opening-loading-box i {
   color: #89b4fa;
   flex: 0 0 auto;
 }
@@ -7426,8 +7414,7 @@ input[type="number"].cfm-wi-de-input::-webkit-outer-spin-button {
 }
 
 /* 调色板按钮（顶栏） */
-#cfm-btn-theme,
-#cfm-btn-char-scan {
+#cfm-btn-theme {
   background: none;
   border: none;
   color: var(--SmartThemeBodyColor, #cdd6f4);
@@ -7435,16 +7422,8 @@ input[type="number"].cfm-wi-de-input::-webkit-outer-spin-button {
   font-size: 15px;
   padding: 4px 6px;
   opacity: 0.7;
-  transition:
-    opacity 0.15s,
-    transform 0.15s;
+  transition: opacity 0.15s;
 }
-#cfm-btn-theme:hover,
-#cfm-btn-char-scan:hover {
+#cfm-btn-theme:hover {
   opacity: 1;
-}
-#cfm-btn-char-scan:disabled {
-  cursor: wait;
-  opacity: 0.95;
-  transform: none;
 }

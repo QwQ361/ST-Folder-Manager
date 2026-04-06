@@ -23273,7 +23273,6 @@ jQuery(async () => {
                     <div class="cfm-header-actions">
                         <button id="cfm-btn-copymode" class="cfm-copymode-btn ${cfmCopyMode ? "cfm-copymode-active" : ""}" title="${cfmCopyMode ? "当前：复制模式（拖拽角色会保留原位置）" : "当前：移动模式（拖拽角色会从原位置移除）"}"><i class="fa-solid fa-${cfmCopyMode ? "copy" : "arrows-turn-to-dots"}"></i> ${cfmCopyMode ? "复制" : "移动"}</button>
                         <button id="cfm-btn-theme" title="自定义外观"><i class="fa-solid fa-palette"></i></button>
-                        <button id="cfm-btn-char-scan" title="扫描角色卡数据"><i class="fa-solid fa-arrows-rotate"></i></button>
                         <button id="cfm-btn-config" title="标签管理"><i class="fa-solid fa-gear"></i></button>
                         <button id="cfm-btn-backup" title="导入/导出"><i class="fa-solid fa-arrow-right-arrow-left"></i></button>
                         <button class="cfm-btn-close" id="cfm-btn-close-main">&times;</button>
@@ -24097,75 +24096,9 @@ jQuery(async () => {
           closeMainPopup();
         });
     }
-    const showCharacterDataScanLoading = (
-      message = "正在扫描角色卡数据，请稍候...",
-    ) => {
-      const host = $("#cfm-popup");
-      host.find(".cfm-character-data-scan-loading").remove();
-      const loading = $(
-        `<div class="cfm-preset-detail-opening-loading cfm-character-data-scan-loading" aria-live="polite" aria-busy="true">
-          <div class="cfm-preset-detail-opening-loading-box">
-            <i class="fa-solid fa-spinner fa-spin"></i>
-            <span>${escapeHtml(message)}</span>
-          </div>
-        </div>`,
-      );
-      host.append(loading);
-      return () => loading.remove();
-    };
-
-    const setCharacterDataScanButtonState = (isLoading) => {
-      const button = popup.find("#cfm-btn-char-scan");
-      if (!button.length) return;
-      button.prop("disabled", isLoading);
-      button.attr(
-        "title",
-        isLoading ? "正在扫描角色卡数据..." : "扫描角色卡数据",
-      );
-      button.html(
-        isLoading
-          ? '<i class="fa-solid fa-spinner fa-spin"></i>'
-          : '<i class="fa-solid fa-arrows-rotate"></i>',
-      );
-    };
-
-    const scanCharacterCardData = async () => {
-      const refreshCharacters = getContext()?.getCharacters;
-      if (typeof refreshCharacters !== "function") {
-        cfmToastr.error("当前环境不支持扫描角色卡数据");
-        return;
-      }
-      const button = popup.find("#cfm-btn-char-scan");
-      if (button.prop("disabled")) return;
-
-      const hideLoading = showCharacterDataScanLoading();
-      setCharacterDataScanButtonState(true);
-      try {
-        await refreshCharacters();
-        rerenderCurrentView();
-        const charCount = getCharacters().length;
-        cfmToastr.success(
-          charCount > 0
-            ? `角色卡数据扫描完成，共刷新 ${charCount} 个角色`
-            : "角色卡数据扫描完成",
-        );
-      } catch (error) {
-        console.error("[CFM] 扫描角色卡数据失败:", error);
-        cfmToastr.error("扫描角色卡数据失败");
-      } finally {
-        hideLoading();
-        setCharacterDataScanButtonState(false);
-      }
-    };
-
     popup.find("#cfm-btn-theme").on("click touchend", (e) => {
       e.preventDefault();
       showThemeCustomizePopup();
-    });
-    popup.find("#cfm-btn-char-scan").on("click touchend", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      scanCharacterCardData();
     });
     popup.find("#cfm-btn-config").on("click touchend", (e) => {
       e.preventDefault();
@@ -29114,7 +29047,7 @@ jQuery(async () => {
       }
     });
     // 角色名旁小三角：展开/折叠角色卡具体设定
-    row.find(".cfm-char-detail-toggle").on("click touchend", async (e) => {
+    row.find(".cfm-char-detail-toggle").on("click touchend", (e) => {
       e.preventDefault();
       e.stopPropagation();
       if (e.type === "touchend") {
@@ -29149,14 +29082,6 @@ jQuery(async () => {
           .find(".cfm-char-detail-toggle i")
           .removeClass("fa-caret-right")
           .addClass("fa-caret-down");
-        const needsHydration = !hasCharacterDetailPayload(char);
-        if (needsHydration && typeof getContext().getCharacters === "function") {
-          try {
-            await getContext().getCharacters();
-          } catch (e) {
-            console.debug("[CFM] 展开角色详情时刷新角色列表失败:", e);
-          }
-        }
         renderCharacterDetailSubList(row, char);
         row.nextAll(".cfm-char-detail-sublist").first().hide().slideDown(150);
       }
@@ -39498,7 +39423,6 @@ jQuery(async () => {
   }
 
   async function replaceCharacterDetailAvatar(charRow, char) {
-    char = resolveCharacterDetailChar(char);
     if (!char?.avatar) {
       cfmToastr.error("无法获取角色头像信息");
       return;
@@ -39593,73 +39517,36 @@ jQuery(async () => {
     }
   }
 
-  function resolveCharacterDetailChar(char) {
-    const avatar = char?.avatar;
-    if (!avatar) return char;
-    const liveChar = getCharacters().find((item) => item?.avatar === avatar);
-    if (!liveChar) return char;
-    if (
-      char &&
-      char !== liveChar &&
-      Object.prototype.hasOwnProperty.call(char, "__cfmEditingGreetingIndex")
-    ) {
-      liveChar.__cfmEditingGreetingIndex = char.__cfmEditingGreetingIndex;
-    }
-    return liveChar;
-  }
-
   function getCharacterDetailFieldValue(char, field) {
-    const resolvedChar = resolveCharacterDetailChar(char);
-    const aliasFields =
-      field === "alternate_greetings"
-        ? ["alternate_greetings", "alt_greetings"]
-        : field === "alt_greetings"
-          ? ["alt_greetings", "alternate_greetings"]
-          : [field];
+    const dataValue = char?.data?.[field];
+    if (dataValue !== undefined && dataValue !== null) return dataValue;
 
-    for (const key of aliasFields) {
-      const dataValue = resolvedChar?.data?.[key];
-      if (dataValue !== undefined && dataValue !== null) return dataValue;
-
-      const topLevelValue = resolvedChar?.[key];
-      if (topLevelValue !== undefined && topLevelValue !== null) {
-        return topLevelValue;
-      }
+    const topLevelValue = char?.[field];
+    if (topLevelValue !== undefined && topLevelValue !== null) {
+      return topLevelValue;
     }
 
-    if (!resolvedChar?.json_data) return undefined;
+    if (!char?.json_data) return undefined;
 
     try {
       const jsonData =
-        typeof resolvedChar.json_data === "string"
-          ? JSON.parse(resolvedChar.json_data)
-          : resolvedChar.json_data;
-      for (const key of aliasFields) {
-        const jsonDataValue = jsonData?.data?.[key];
-        if (jsonDataValue !== undefined && jsonDataValue !== null) {
-          return jsonDataValue;
-        }
+        typeof char.json_data === "string"
+          ? JSON.parse(char.json_data)
+          : char.json_data;
+      const jsonDataValue = jsonData?.data?.[field];
+      if (jsonDataValue !== undefined && jsonDataValue !== null) {
+        return jsonDataValue;
+      }
 
-        const jsonTopLevelValue = jsonData?.[key];
-        if (jsonTopLevelValue !== undefined && jsonTopLevelValue !== null) {
-          return jsonTopLevelValue;
-        }
+      const jsonTopLevelValue = jsonData?.[field];
+      if (jsonTopLevelValue !== undefined && jsonTopLevelValue !== null) {
+        return jsonTopLevelValue;
       }
     } catch (parseErr) {
       console.debug("[CFM] 读取角色详情 json_data 失败:", parseErr);
     }
 
     return undefined;
-  }
-
-  function hasCharacterDetailPayload(char) {
-    const detailFields = ["description", "first_mes", "alternate_greetings"];
-    return detailFields.some((field) => {
-      const value = getCharacterDetailFieldValue(char, field);
-      if (Array.isArray(value)) return value.length > 0;
-      if (typeof value === "string") return value.trim().length > 0;
-      return value !== undefined && value !== null;
-    });
   }
 
   async function showCharacterDetailFieldPopup(char, field, options = {}) {
@@ -39719,7 +39606,6 @@ jQuery(async () => {
         rows: 8,
       },
     };
-    char = resolveCharacterDetailChar(char);
     const meta = map[field];
     if (!meta || !char) return null;
 
@@ -40105,7 +39991,6 @@ jQuery(async () => {
   }
 
   async function editCharacterDetailField(charRow, char, field, options = {}) {
-    char = resolveCharacterDetailChar(char);
     const result = await showCharacterDetailFieldPopup(char, field, options);
     if (result === null || !char?.avatar) return;
     if (!char.data) char.data = {};
@@ -40443,7 +40328,6 @@ jQuery(async () => {
   // 来自 @habc12138 老师的超级好用user人设生成器~做了小小联动
 
   function renderCharacterDetailSubList(charRow, char) {
-    char = resolveCharacterDetailChar(char);
     charRow.next(".cfm-char-detail-sublist").remove();
 
     const normalizeGreetingItems = (input) => {
