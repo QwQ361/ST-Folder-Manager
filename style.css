@@ -1198,6 +1198,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.cfm-tpl-edit,
 .cfm-tpl-del {
   background: none;
   border: none;
@@ -1206,13 +1207,16 @@
   font-size: 11px;
   padding: 2px 4px;
   border-radius: 3px;
-  opacity: 0;
+  opacity: 0.78;
   transition:
     opacity 0.12s,
-    color 0.12s;
+    color 0.12s,
+    background 0.12s;
 }
-.cfm-tpl-item:hover .cfm-tpl-del {
-  opacity: 0.7;
+.cfm-tpl-edit:hover {
+  opacity: 1 !important;
+  color: #89b4fa !important;
+  background: rgba(137, 180, 250, 0.1);
 }
 .cfm-tpl-del:hover {
   opacity: 1 !important;

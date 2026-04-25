@@ -6,6 +6,1894 @@ jQuery(async () => {
   const extensionFolderPath = `scripts/extensions/third-party/${extensionName}`;
   const STORAGE_KEY_BTN_POS = "cfm-button-pos";
   const STORAGE_KEY = "cfm-folder-config"; // legacy
+  const BACKUP_BRIDGE_PROTOCOL_VERSION = 1;
+  const BACKUP_BRIDGE_VERSION = "0.3.0";
+
+  function safeCloneBridgeValue(value, depth = 0, maxDepth = 4) {
+    if (value == null) return value;
+    if (depth >= maxDepth) return "[MaxDepth]";
+    if (Array.isArray(value)) {
+      return value
+        .slice(0, 200)
+        .map((item) => safeCloneBridgeValue(item, depth + 1, maxDepth));
+    }
+    if (typeof value === "object") {
+      const out = {};
+      for (const [key, val] of Object.entries(value).slice(0, 500)) {
+        if (typeof val === "function") continue;
+        out[key] = safeCloneBridgeValue(val, depth + 1, maxDepth);
+      }
+      return out;
+    }
+    return value;
+  }
+
+  function getBridgeObjectKeyCount(obj) {
+    return obj && typeof obj === "object" ? Object.keys(obj).length : 0;
+  }
+
+  function getBackupBridgeSupportedResourceTypes() {
+    return [
+      "chars",
+      "worldinfo",
+      "presets",
+      "themes",
+      "backgrounds",
+      "personas",
+      "regex",
+      "qr",
+    ];
+  }
+
+  function getBackupBridgeSupportedWriteResourceTypes() {
+    return ["chars", "worldinfo", "presets", "themes", "backgrounds", "qr"];
+  }
+
+  function getBackupBridgeExportCapabilities() {
+    const supportedExportResourceTypes =
+      getBackupBridgeSupportedResourceTypes();
+    const supportedWriteResourceTypes =
+      getBackupBridgeSupportedWriteResourceTypes();
+    return {
+      resourceListAvailable: true,
+      resourceReadAvailable: true,
+      resourceWriteAvailable: supportedWriteResourceTypes.length > 0,
+      supportedExportResourceTypes,
+      supportedWriteResourceTypes,
+      stableIdModes: ["path-based"],
+      fingerprintModes: ["contenthash"],
+      contentModes: ["json", "base64"],
+      writeModes: ["json", "base64"],
+    };
+  }
+
+  function normalizeBackupBridgeTimestamp(value) {
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+      return Math.round(value);
+    }
+
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+
+      const numericValue = Number(trimmed);
+      if (Number.isFinite(numericValue) && numericValue > 0) {
+        return Math.round(numericValue);
+      }
+
+      const parsedValue = Date.parse(trimmed);
+      if (Number.isFinite(parsedValue)) {
+        return parsedValue;
+      }
+    }
+
+    return null;
+  }
+
+  function resolveBackupBridgeUpdatedAt(...sources) {
+    const candidateKeys = [
+      "updatedAt",
+      "updateAt",
+      "lastModified",
+      "modifiedAt",
+      "mtime",
+      "timestamp",
+      "create_date",
+      "date_last_chat",
+      "dateAdded",
+      "createdAt",
+    ];
+
+    for (const source of sources) {
+      const directValue = normalizeBackupBridgeTimestamp(source);
+      if (directValue != null) {
+        return directValue;
+      }
+
+      if (!source || typeof source !== "object" || Array.isArray(source)) {
+        continue;
+      }
+
+      for (const key of candidateKeys) {
+        const timestampValue = normalizeBackupBridgeTimestamp(source[key]);
+        if (timestampValue != null) {
+          return timestampValue;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  function getBackupBridgeStableString(value) {
+    if (value == null) return "null";
+
+    const valueType = typeof value;
+    if (valueType === "string") return JSON.stringify(value);
+    if (valueType === "number" || valueType === "boolean") {
+      return JSON.stringify(value);
+    }
+
+    if (Array.isArray(value)) {
+      return `[${value.map((item) => getBackupBridgeStableString(item)).join(",")}]`;
+    }
+
+    if (valueType === "object") {
+      const keys = Object.keys(value).sort();
+      return `{${keys
+        .map(
+          (key) =>
+            `${JSON.stringify(key)}:${getBackupBridgeStableString(value[key])}`,
+        )
+        .join(",")}}`;
+    }
+
+    return JSON.stringify(String(value));
+  }
+
+  function hashBackupBridgeString(value) {
+    const text = String(value || "");
+    let hash = 2166136261;
+
+    for (let index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+
+    return (hash >>> 0).toString(16).padStart(8, "0");
+  }
+
+  function createBackupBridgeFingerprint(value, mode = "json") {
+    const stableString = getBackupBridgeStableString(value);
+    return `fnv1a32:${mode}:${hashBackupBridgeString(stableString)}:${stableString.length}`;
+  }
+
+  function normalizeBackupBridgeResourceType(value) {
+    const normalized = String(value || "")
+      .trim()
+      .toLowerCase();
+    if (normalized === "quickreply") return "qr";
+    return getBackupBridgeSupportedResourceTypes().includes(normalized)
+      ? normalized
+      : null;
+  }
+
+  function getBackupBridgeRequestedResourceTypes(options) {
+    const requested = Array.isArray(options?.resourceTypes)
+      ? options.resourceTypes
+      : getBackupBridgeSupportedResourceTypes();
+    const seen = new Set();
+    const out = [];
+    for (const value of requested) {
+      const resourceType = normalizeBackupBridgeResourceType(value);
+      if (!resourceType || seen.has(resourceType)) continue;
+      seen.add(resourceType);
+      out.push(resourceType);
+    }
+    return out;
+  }
+
+  function getBackupBridgeRootLabel(resourceType) {
+    return resourceType === "chars"
+      ? "角色"
+      : resourceType === "worldinfo"
+        ? "世界书"
+        : resourceType === "presets"
+          ? "预设"
+          : resourceType === "themes"
+            ? "主题"
+            : resourceType === "backgrounds"
+              ? "背景"
+              : resourceType === "personas"
+                ? "User"
+                : resourceType === "regex"
+                  ? "正则"
+                  : "QR";
+  }
+
+  function getBackupBridgeFileExtension(value) {
+    const text = String(value || "").trim();
+    if (!text) return null;
+    const sanitized = text.split(/[?#]/)[0];
+    const baseName = sanitized.split("/").pop() || "";
+    const dotIndex = baseName.lastIndexOf(".");
+    if (dotIndex <= 0) return null;
+    return baseName.slice(dotIndex).toLowerCase();
+  }
+
+  function getBackupBridgeMimeType(extensionHint) {
+    const normalized = String(extensionHint || "")
+      .trim()
+      .toLowerCase();
+    return normalized === ".png"
+      ? "image/png"
+      : normalized === ".jpg" || normalized === ".jpeg"
+        ? "image/jpeg"
+        : normalized === ".webp"
+          ? "image/webp"
+          : normalized === ".gif"
+            ? "image/gif"
+            : normalized === ".bmp"
+              ? "image/bmp"
+              : normalized === ".svg"
+                ? "image/svg+xml"
+                : null;
+  }
+
+  function buildBackupBridgeTreeFolderPath(
+    tree,
+    folderId,
+    visited = new Set(),
+  ) {
+    const normalizedId = String(folderId || "").trim();
+    if (!normalizedId || !tree || typeof tree !== "object") return [];
+    if (visited.has(normalizedId)) return [];
+    const node = tree[normalizedId];
+    if (!node || typeof node !== "object") return [];
+    const nextVisited = new Set(visited);
+    nextVisited.add(normalizedId);
+    const label = String(node.displayName || node.name || normalizedId).trim();
+    const parentId = String(node.parentId || "").trim();
+    const parentPath = parentId
+      ? buildBackupBridgeTreeFolderPath(tree, parentId, nextVisited)
+      : [];
+    return label ? [...parentPath, label] : parentPath;
+  }
+
+  function buildBackupBridgeCharFolderPath(tagId, visited = new Set()) {
+    const normalizedId = String(tagId || "").trim();
+    if (!normalizedId) return [];
+    if (visited.has(normalizedId)) return [];
+    const folder = config?.folders?.[normalizedId];
+    if (!folder) return [];
+    const nextVisited = new Set(visited);
+    nextVisited.add(normalizedId);
+    const label = String(getTagName(normalizedId) || normalizedId).trim();
+    const parentId = String(folder.parentId || "").trim();
+    const parentPath = parentId
+      ? buildBackupBridgeCharFolderPath(parentId, nextVisited)
+      : [];
+    return label ? [...parentPath, label] : parentPath;
+  }
+
+  function buildBackupBridgeFolderDefinition(folderId, folderPath, node) {
+    const normalizedFolderId = String(folderId || "").trim();
+    const normalizedFolderPath = Array.isArray(folderPath)
+      ? folderPath
+          .map((segment) => String(segment || "").trim())
+          .filter(Boolean)
+      : [];
+    const normalizedParentId = String(node?.parentId || "").trim() || null;
+    const normalizedSortOrder = Number(node?.sortOrder);
+
+    if (!normalizedFolderId && normalizedFolderPath.length === 0) {
+      return null;
+    }
+
+    return {
+      folderId: normalizedFolderId || null,
+      displayName:
+        normalizedFolderPath.length > 0
+          ? normalizedFolderPath[normalizedFolderPath.length - 1]
+          : null,
+      folderPath: normalizedFolderPath,
+      parentId: normalizedParentId,
+      sortOrder: Number.isFinite(normalizedSortOrder)
+        ? normalizedSortOrder
+        : null,
+    };
+  }
+
+  function buildBackupBridgeTreeFolderDefinitions(tree) {
+    if (!tree || typeof tree !== "object") return [];
+
+    return Object.keys(tree)
+      .map((folderId) =>
+        buildBackupBridgeFolderDefinition(
+          folderId,
+          buildBackupBridgeTreeFolderPath(tree, folderId),
+          tree[folderId],
+        ),
+      )
+      .filter((entry) => entry && entry.folderPath.length > 0);
+  }
+
+  function buildBackupBridgeCharFolderDefinitions(charFolders) {
+    if (!charFolders || typeof charFolders !== "object") return [];
+
+    return Object.keys(charFolders)
+      .map((folderId) =>
+        buildBackupBridgeFolderDefinition(
+          folderId,
+          buildBackupBridgeCharFolderPath(folderId),
+          charFolders[folderId],
+        ),
+      )
+      .filter((entry) => entry && entry.folderPath.length > 0);
+  }
+
+  function buildBackupBridgeResourceFolderDefinitionsMap(resourceFolderTree) {
+    if (!resourceFolderTree || typeof resourceFolderTree !== "object") {
+      return {};
+    }
+
+    return Object.fromEntries(
+      Object.entries(resourceFolderTree).map(([resourceType, tree]) => {
+        return [resourceType, buildBackupBridgeTreeFolderDefinitions(tree)];
+      }),
+    );
+  }
+
+  function buildBackupBridgeResourceId(
+    resourceType,
+    identityPath,
+    sourcePath,
+    displayName,
+  ) {
+    const base = String(
+      identityPath || sourcePath || displayName || "unnamed",
+    ).trim();
+    return `${resourceType}:path:${base || "unnamed"}`;
+  }
+
+  function createBackupBridgeResourceItem({
+    resourceType,
+    displayName,
+    folderSegments,
+    logicalLeaf,
+    identityPath,
+    sourcePath,
+    updatedAt,
+    fingerprint,
+    contentLocator,
+    readModes,
+    extensionHint,
+    mimeType,
+    sourceOrigin,
+  }) {
+    const normalizedDisplayName =
+      displayName == null ? null : String(displayName).trim() || null;
+    const normalizedFolderSegments = Array.isArray(folderSegments)
+      ? folderSegments
+          .map((segment) => String(segment || "").trim())
+          .filter(Boolean)
+      : [];
+    const rootLabel = getBackupBridgeRootLabel(resourceType);
+    const folderPath = [rootLabel, ...normalizedFolderSegments];
+    const normalizedLogicalLeaf =
+      logicalLeaf == null
+        ? normalizedDisplayName
+        : String(logicalLeaf).trim() || null;
+    const logicalPath = normalizedLogicalLeaf
+      ? [...folderPath, normalizedLogicalLeaf].join("/")
+      : folderPath.join("/");
+    const normalizedSourcePath = sourcePath
+      ? String(sourcePath).trim() || null
+      : null;
+    const normalizedExtensionHint =
+      extensionHint || getBackupBridgeFileExtension(normalizedSourcePath);
+    const normalizedReadModes = Array.isArray(readModes)
+      ? readModes.map((mode) => String(mode || "").trim()).filter(Boolean)
+      : [];
+
+    return {
+      resourceId: buildBackupBridgeResourceId(
+        resourceType,
+        identityPath || logicalPath,
+        normalizedSourcePath,
+        normalizedDisplayName,
+      ),
+      resourceType,
+      displayName: normalizedDisplayName,
+      logicalPath,
+      folderPath,
+      sourcePath: normalizedSourcePath,
+      identityMode: "path-based",
+      updatedAt: resolveBackupBridgeUpdatedAt(updatedAt),
+      fingerprint: fingerprint ? String(fingerprint).trim() || null : null,
+      contentLocator: contentLocator || null,
+      readModes: normalizedReadModes,
+      extensionHint: normalizedExtensionHint || null,
+      mimeType:
+        mimeType || getBackupBridgeMimeType(normalizedExtensionHint) || null,
+      sourceOrigin: sourceOrigin || "sillytavern",
+    };
+  }
+
+  function getBackupBridgeReadResourceType(request = {}) {
+    const directType = normalizeBackupBridgeResourceType(request?.resourceType);
+    if (directType) return directType;
+    const resourceId = String(request?.resourceId || "").trim();
+    const typeFromId = resourceId.split(":")[0];
+    return normalizeBackupBridgeResourceType(typeFromId);
+  }
+
+  function getBackupBridgeJsonByteSize(data) {
+    try {
+      return new TextEncoder().encode(JSON.stringify(data)).length;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  async function convertBackupBridgeBlobToBase64(blob) {
+    const buffer = await blob.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    const chunkSize = 0x8000;
+    let binary = "";
+
+    for (let index = 0; index < bytes.length; index += chunkSize) {
+      const chunk = bytes.subarray(index, index + chunkSize);
+      binary += String.fromCharCode(...chunk);
+    }
+
+    return btoa(binary);
+  }
+
+  function buildBackupBridgeReadResourceMeta(item, extra = {}) {
+    return {
+      resourceId: item.resourceId,
+      resourceType: item.resourceType,
+      displayName: item.displayName,
+      logicalPath: item.logicalPath,
+      folderPath: Array.isArray(item.folderPath) ? [...item.folderPath] : [],
+      sourcePath: item.sourcePath || null,
+      identityMode: item.identityMode,
+      updatedAt: item.updatedAt,
+      fingerprint: item.fingerprint,
+      extensionHint: item.extensionHint || null,
+      mimeType: item.mimeType || null,
+      ...extra,
+    };
+  }
+
+  function buildBackupBridgeReadSuccess(item, content, extraResource = {}) {
+    return {
+      success: true,
+      resource: buildBackupBridgeReadResourceMeta(item, extraResource),
+      content,
+      exportMeta: {
+        exportedAt: Date.now(),
+        bridgeVersion: BACKUP_BRIDGE_VERSION,
+      },
+    };
+  }
+
+  function buildBackupBridgeReadError(request, error) {
+    return {
+      success: false,
+      resourceId: String(request?.resourceId || "").trim() || null,
+      resourceType: getBackupBridgeReadResourceType(request),
+      error: String(error?.message || error || "未知错误"),
+      exportMeta: {
+        exportedAt: Date.now(),
+        bridgeVersion: BACKUP_BRIDGE_VERSION,
+      },
+    };
+  }
+
+  function cloneBackupBridgeJsonValue(value) {
+    if (typeof structuredClone === "function") {
+      return structuredClone(value);
+    }
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function getBackupBridgeWriteResourceType(request = {}) {
+    const directType = normalizeBackupBridgeResourceType(
+      request?.resourceType || request?.resource?.resourceType,
+    );
+    if (directType) return directType;
+    const resourceId = String(
+      request?.resourceId || request?.resource?.resourceId || "",
+    ).trim();
+    const typeFromId = resourceId.split(":")[0];
+    return normalizeBackupBridgeResourceType(typeFromId);
+  }
+
+  function normalizeBackupBridgeWriteBaseName(
+    value,
+    fallback = "backup-resource",
+  ) {
+    const normalized = String(value || "")
+      .trim()
+      .replace(/[\\/:*?"<>|]+/g, "_")
+      .replace(/\s+/g, " ");
+    return normalized || fallback;
+  }
+
+  function normalizeBackupBridgeWriteExtension(value, fallback = ".json") {
+    const normalized = String(value || "").trim();
+    if (!normalized) return fallback;
+    return normalized.startsWith(".") ? normalized : `.${normalized}`;
+  }
+
+  function normalizeBackupBridgeBase64Data(value) {
+    return String(value || "")
+      .replace(/^data:[^;]+;base64,/i, "")
+      .trim();
+  }
+
+  function decodeBackupBridgeBase64ToBytes(value) {
+    const normalized = normalizeBackupBridgeBase64Data(value);
+    if (!normalized) {
+      throw new Error("base64 内容为空");
+    }
+    const binary = atob(normalized);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
+  }
+
+  function createBackupBridgeFileFromBase64(
+    content,
+    resource = {},
+    fallbackExtension = ".bin",
+  ) {
+    const bytes = decodeBackupBridgeBase64ToBytes(content?.data);
+    const logicalPath = String(resource?.logicalPath || "").trim();
+    const logicalLeaf = logicalPath ? logicalPath.split("/").pop() : "";
+    const extensionHint = normalizeBackupBridgeWriteExtension(
+      resource?.extensionHint ||
+        getBackupBridgeFileExtension(resource?.sourcePath || "") ||
+        fallbackExtension,
+      fallbackExtension,
+    );
+    const baseName = normalizeBackupBridgeWriteBaseName(
+      resource?.displayName ||
+        logicalLeaf ||
+        resource?.resourceType ||
+        "backup-resource",
+    );
+    const mimeType =
+      content?.mimeType ||
+      resource?.mimeType ||
+      getBackupBridgeMimeType(extensionHint) ||
+      "application/octet-stream";
+    return new File([bytes], `${baseName}${extensionHint}`, {
+      type: mimeType,
+    });
+  }
+
+  function resolveBackupBridgeWriteDisplayName(request = {}) {
+    const resource =
+      request?.resource && typeof request.resource === "object"
+        ? request.resource
+        : {};
+    const contentData = request?.content?.data;
+    const contentName =
+      contentData && typeof contentData === "object" ? contentData.name : null;
+    const directName = String(
+      resource.displayName || request?.displayName || contentName || "",
+    ).trim();
+    if (directName) return directName;
+    const sourcePath = String(
+      resource.sourcePath || request?.sourcePath || "",
+    ).trim();
+    if (!sourcePath) return null;
+    const segments = sourcePath.split("/").filter(Boolean);
+    return segments.length > 0 ? segments[segments.length - 1] : null;
+  }
+
+  function normalizeBackupBridgeWriteResource(request = {}) {
+    const source =
+      request?.resource && typeof request.resource === "object"
+        ? request.resource
+        : {};
+    const resourceType = getBackupBridgeWriteResourceType(request);
+    const displayName = resolveBackupBridgeWriteDisplayName(request);
+    const sourcePath =
+      String(source.sourcePath || request?.sourcePath || "").trim() || null;
+    const extensionHint =
+      source.extensionHint ||
+      request?.extensionHint ||
+      getBackupBridgeFileExtension(sourcePath || "") ||
+      null;
+    const mimeType =
+      source.mimeType ||
+      request?.mimeType ||
+      getBackupBridgeMimeType(extensionHint || "") ||
+      null;
+    const resourceId =
+      String(source.resourceId || request?.resourceId || "").trim() ||
+      (resourceType
+        ? buildBackupBridgeResourceId(
+            resourceType,
+            source.identityPath ||
+              source.logicalPath ||
+              displayName ||
+              sourcePath,
+            sourcePath,
+            displayName,
+          )
+        : null);
+
+    return {
+      ...source,
+      resourceId,
+      resourceType,
+      displayName,
+      sourcePath,
+      extensionHint,
+      mimeType,
+      logicalPath:
+        source.logicalPath ||
+        (displayName && resourceType
+          ? `${getBackupBridgeRootLabel(resourceType)}/${displayName}`
+          : null),
+      folderPath: Array.isArray(source.folderPath)
+        ? [...source.folderPath]
+        : [],
+      identityMode: source.identityMode || "path-based",
+    };
+  }
+
+  function getBackupBridgeWriteContent(request = {}) {
+    const content = request?.content;
+    if (!content || typeof content !== "object") {
+      throw new Error("缺少 content");
+    }
+
+    const requestedMode = String(content.mode || content.encoding || "")
+      .trim()
+      .toLowerCase();
+
+    if (requestedMode === "json") {
+      if (content.data == null) {
+        throw new Error("json 内容为空");
+      }
+      let data = null;
+      if (typeof content.data === "string") {
+        try {
+          data = JSON.parse(content.data);
+        } catch (error) {
+          throw new Error("json 内容不是有效 JSON");
+        }
+      } else {
+        data = cloneBackupBridgeJsonValue(content.data);
+      }
+      return {
+        mode: "json",
+        data,
+        size: getBackupBridgeJsonByteSize(data),
+        mimeType: "application/json",
+      };
+    }
+
+    if (requestedMode === "base64") {
+      const data = normalizeBackupBridgeBase64Data(content.data);
+      if (!data) {
+        throw new Error("base64 内容为空");
+      }
+      return {
+        mode: "base64",
+        data,
+        size: Number.isFinite(content?.size) ? content.size : null,
+        mimeType: content?.mimeType || null,
+      };
+    }
+
+    throw new Error(`不支持的写入内容模式: ${requestedMode || "unknown"}`);
+  }
+
+  function buildBackupBridgeWriteSuccess(resource, extraResource = {}) {
+    return {
+      success: true,
+      resource: buildBackupBridgeReadResourceMeta(resource, extraResource),
+      writeMeta: {
+        importedAt: Date.now(),
+        bridgeVersion: BACKUP_BRIDGE_VERSION,
+      },
+    };
+  }
+
+  function buildBackupBridgeWriteError(request, error) {
+    return {
+      success: false,
+      resourceId:
+        String(
+          request?.resourceId || request?.resource?.resourceId || "",
+        ).trim() || null,
+      resourceType: getBackupBridgeWriteResourceType(request),
+      error: String(error?.message || error || "未知错误"),
+      writeMeta: {
+        importedAt: Date.now(),
+        bridgeVersion: BACKUP_BRIDGE_VERSION,
+      },
+    };
+  }
+
+  async function resolveBackupBridgeReadItem(request = {}) {
+    const resourceId = String(request?.resourceId || "").trim();
+    const resourceType = getBackupBridgeReadResourceType(request);
+
+    if (!resourceId) {
+      throw new Error("缺少 resourceId");
+    }
+    if (!resourceType) {
+      throw new Error("无法识别 resourceType");
+    }
+
+    const listResult = await listBackupBridgeResources({
+      resourceTypes: [resourceType],
+    });
+
+    if (!listResult?.success) {
+      throw new Error(listResult?.error || "读取资源清单失败");
+    }
+
+    const item = Array.isArray(listResult.items)
+      ? listResult.items.find((entry) => entry?.resourceId === resourceId)
+      : null;
+
+    if (!item) {
+      throw new Error(`未找到资源: ${resourceId}`);
+    }
+
+    return item;
+  }
+
+  function getBackupBridgePreferredReadMode(item, request = {}) {
+    const modes = Array.isArray(item?.readModes) ? item.readModes : [];
+    const preferredMode = String(request?.preferredMode || "")
+      .trim()
+      .toLowerCase();
+
+    if (preferredMode && modes.includes(preferredMode)) {
+      return preferredMode;
+    }
+
+    return modes[0] || null;
+  }
+
+  async function listBackupBridgeResources(options = {}) {
+    try {
+      const requestedTypes = getBackupBridgeRequestedResourceTypes(options);
+      const items = [];
+
+      for (const resourceType of requestedTypes) {
+        if (resourceType === "chars") {
+          const characters = getCharacters();
+          const tagMap = getTagMap();
+          const folderIdSet = new Set(getFolderTagIds());
+          const folderPathCache = new Map();
+
+          for (const char of characters) {
+            const avatar = String(char?.avatar || "").trim();
+            const displayName =
+              String(char?.name || char?.data?.name || avatar || "").trim() ||
+              "未命名角色";
+            const charTags = Array.isArray(tagMap?.[avatar])
+              ? tagMap[avatar]
+              : [];
+            const folderTags = charTags.filter((tagId) =>
+              folderIdSet.has(String(tagId || "").trim()),
+            );
+
+            let folderSegments = [];
+            for (const folderId of folderTags) {
+              const normalizedId = String(folderId || "").trim();
+              if (!folderPathCache.has(normalizedId)) {
+                folderPathCache.set(
+                  normalizedId,
+                  buildBackupBridgeCharFolderPath(normalizedId),
+                );
+              }
+              const currentPath = folderPathCache.get(normalizedId) || [];
+              if (currentPath.length > folderSegments.length) {
+                folderSegments = currentPath;
+              }
+            }
+
+            items.push(
+              createBackupBridgeResourceItem({
+                resourceType: "chars",
+                displayName,
+                folderSegments,
+                identityPath: avatar
+                  ? `avatar/${avatar}`
+                  : [...folderSegments, displayName].join("/"),
+                sourcePath: avatar ? `characters/${avatar}` : null,
+                updatedAt: resolveBackupBridgeUpdatedAt(char),
+                readModes: ["base64"],
+                extensionHint: getBackupBridgeFileExtension(avatar),
+              }),
+            );
+          }
+          continue;
+        }
+
+        if (resourceType === "worldinfo") {
+          ensureResourceSettings();
+          const names = await getWorldInfoNames();
+          const groups = getResourceGroups("worldinfo") || {};
+          const tree = getResFolderTree("worldinfo") || {};
+
+          for (const name of names) {
+            const displayName = String(name || "").trim();
+            if (!displayName) continue;
+            const folderId = groups[displayName];
+            const folderSegments = buildBackupBridgeTreeFolderPath(
+              tree,
+              folderId,
+            );
+            items.push(
+              createBackupBridgeResourceItem({
+                resourceType: "worldinfo",
+                displayName,
+                folderSegments,
+                identityPath: [...folderSegments, displayName].join("/"),
+                sourcePath: `worldinfo/${displayName}`,
+                readModes: ["json"],
+                extensionHint: ".json",
+                mimeType: "application/json",
+              }),
+            );
+          }
+          continue;
+        }
+
+        if (resourceType === "presets") {
+          ensureResourceSettings();
+          const presets = getCurrentPresets();
+          const groups = getResourceGroups("presets") || {};
+          const tree = getResFolderTree("presets") || {};
+
+          for (const preset of presets) {
+            const displayName = String(preset?.name || "").trim();
+            if (!displayName) continue;
+            const folderId = groups[displayName];
+            const folderSegments = buildBackupBridgeTreeFolderPath(
+              tree,
+              folderId,
+            );
+            const presetValue = String(preset?.value || "").trim();
+            const presetUpdatedAt = resolveBackupBridgeUpdatedAt(preset);
+            const presetFingerprint = createBackupBridgeFingerprint(
+              preset && typeof preset === "object"
+                ? { ...preset, name: displayName }
+                : { name: displayName, value: presetValue || null },
+            );
+            items.push(
+              createBackupBridgeResourceItem({
+                resourceType: "presets",
+                displayName,
+                folderSegments,
+                identityPath: presetValue
+                  ? `id/${presetValue}`
+                  : [...folderSegments, displayName].join("/"),
+                sourcePath: presetValue
+                  ? `presets/${presetValue}`
+                  : `presets/${displayName}`,
+                updatedAt: presetUpdatedAt,
+                fingerprint: presetFingerprint,
+                readModes: ["json"],
+                extensionHint: ".json",
+                mimeType: "application/json",
+              }),
+            );
+          }
+          continue;
+        }
+
+        if (resourceType === "themes") {
+          ensureResourceSettings();
+          const names = getThemeNames();
+          const groups = getResourceGroups("themes") || {};
+          const tree = getResFolderTree("themes") || {};
+
+          for (const name of names) {
+            const displayName = String(name || "").trim();
+            if (!displayName) continue;
+            const folderId = groups[displayName];
+            const folderSegments = buildBackupBridgeTreeFolderPath(
+              tree,
+              folderId,
+            );
+            items.push(
+              createBackupBridgeResourceItem({
+                resourceType: "themes",
+                displayName,
+                folderSegments,
+                identityPath: [...folderSegments, displayName].join("/"),
+                sourcePath: `themes/${displayName}`,
+                readModes: ["json"],
+                extensionHint: ".json",
+                mimeType: "application/json",
+              }),
+            );
+          }
+          continue;
+        }
+
+        if (resourceType === "backgrounds") {
+          ensureResourceSettings();
+          const names = await getBackgroundNamesForBridge();
+          const groups = getResourceGroups("backgrounds") || {};
+          const tree = getResFolderTree("backgrounds") || {};
+
+          for (const bgfile of names) {
+            const sourcePath = String(bgfile || "").trim();
+            if (!sourcePath) continue;
+            const displayName =
+              String(
+                getBackgroundDisplayName(sourcePath) || sourcePath,
+              ).trim() || sourcePath;
+            const folderId = groups[sourcePath];
+            const folderSegments = buildBackupBridgeTreeFolderPath(
+              tree,
+              folderId,
+            );
+            items.push(
+              createBackupBridgeResourceItem({
+                resourceType: "backgrounds",
+                displayName,
+                folderSegments,
+                identityPath: sourcePath,
+                sourcePath,
+                readModes: ["base64"],
+                extensionHint: getBackupBridgeFileExtension(sourcePath),
+              }),
+            );
+          }
+          continue;
+        }
+
+        if (resourceType === "personas") {
+          ensureResourceSettings();
+          const groups = getResourceGroups("personas") || {};
+          const tree = getResFolderTree("personas") || {};
+          const personaIds = [];
+          $("#user_avatar_block .avatar-container").each(function () {
+            const avatarId = $(this).attr("data-avatar-id");
+            if (avatarId) personaIds.push(avatarId);
+          });
+
+          for (const avatarId of personaIds) {
+            const displayName = String(avatarId || "").trim();
+            if (!displayName) continue;
+            const folderId = groups[displayName];
+            const folderSegments = buildBackupBridgeTreeFolderPath(
+              tree,
+              folderId,
+            );
+            items.push(
+              createBackupBridgeResourceItem({
+                resourceType: "personas",
+                displayName,
+                folderSegments,
+                identityPath: displayName,
+                sourcePath: `personas/${displayName}`,
+                readModes: ["json"],
+                extensionHint: ".json",
+                mimeType: "application/json",
+              }),
+            );
+          }
+          continue;
+        }
+
+        if (resourceType === "regex") {
+          ensureResourceSettings();
+          const scripts = getRegexGlobalScripts();
+          const groups =
+            extension_settings?.[extensionName]?.regexGlobalGroups || {};
+          const tree =
+            extension_settings?.[extensionName]?.regexFolderTree || {};
+
+          for (const script of scripts) {
+            const scriptId = String(script?.id || "").trim();
+            const displayName =
+              String(script?.scriptName || scriptId || "").trim() ||
+              "未命名正则";
+            const folderId = groups[scriptId];
+            const folderSegments = buildBackupBridgeTreeFolderPath(
+              tree,
+              folderId,
+            );
+            const regexUpdatedAt = resolveBackupBridgeUpdatedAt(script);
+            const regexFingerprint = createBackupBridgeFingerprint(
+              script && typeof script === "object"
+                ? script
+                : { id: scriptId || null, scriptName: displayName },
+            );
+            items.push(
+              createBackupBridgeResourceItem({
+                resourceType: "regex",
+                displayName,
+                folderSegments,
+                identityPath: scriptId
+                  ? `id/${scriptId}`
+                  : [...folderSegments, displayName].join("/"),
+                sourcePath: scriptId
+                  ? `regex/${scriptId}`
+                  : `regex/${displayName}`,
+                updatedAt: regexUpdatedAt,
+                fingerprint: regexFingerprint,
+                readModes: ["json"],
+                extensionHint: ".json",
+                mimeType: "application/json",
+              }),
+            );
+          }
+          continue;
+        }
+
+        if (resourceType === "qr") {
+          ensureResourceSettings();
+          const names = await (async () => {
+            const collectNames = () =>
+              Array.from(
+                new Set(
+                  getQrSetNames()
+                    .map((name) => String(name || "").trim())
+                    .filter(Boolean),
+                ),
+              );
+
+            const immediateNames = collectNames();
+            if (immediateNames.length > 0) {
+              return immediateNames;
+            }
+
+            const timeoutAt = Date.now() + 2500;
+            while (Date.now() < timeoutAt) {
+              await new Promise((resolve) => setTimeout(resolve, 250));
+              const retriedNames = collectNames();
+              if (retriedNames.length > 0) {
+                return retriedNames;
+              }
+            }
+
+            return collectNames();
+          })();
+          const groups = getResourceGroups("quickreply") || {};
+          const tree = getResFolderTree("quickreply") || {};
+
+          for (const name of names) {
+            const displayName = String(name || "").trim();
+            if (!displayName) continue;
+            const folderId = groups[displayName];
+            const folderSegments = buildBackupBridgeTreeFolderPath(
+              tree,
+              folderId,
+            );
+            items.push(
+              createBackupBridgeResourceItem({
+                resourceType: "qr",
+                displayName,
+                folderSegments,
+                identityPath: [...folderSegments, displayName].join("/"),
+                sourcePath: `quickreply/${displayName}`,
+                readModes: ["json"],
+                extensionHint: ".json",
+                mimeType: "application/json",
+              }),
+            );
+          }
+        }
+      }
+
+      return {
+        success: true,
+        generatedAt: Date.now(),
+        cursor: null,
+        nextCursor: null,
+        items,
+        summary: {
+          total: items.length,
+          resourceTypes: Array.from(
+            new Set(items.map((item) => item.resourceType)),
+          ),
+        },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        generatedAt: Date.now(),
+        cursor: null,
+        nextCursor: null,
+        items: [],
+        summary: {
+          total: 0,
+          resourceTypes: [],
+        },
+        error: String(error?.message || error || "未知错误"),
+      };
+    }
+  }
+
+  async function readBackupBridgeResource(request = {}) {
+    try {
+      const item = await resolveBackupBridgeReadItem(request);
+      const readMode = getBackupBridgePreferredReadMode(item, request);
+
+      if (!readMode) {
+        throw new Error(`资源 ${item.resourceId} 不支持内容读取`);
+      }
+
+      if (item.resourceType === "chars") {
+        if (readMode !== "base64") {
+          throw new Error("角色卡仅支持 base64 读取");
+        }
+        const avatar = String(item.sourcePath || "")
+          .replace(/^characters\//, "")
+          .trim();
+        if (!avatar) {
+          throw new Error("角色卡缺少 avatar 标识");
+        }
+        const resp = await fetch("/api/characters/export", {
+          method: "POST",
+          headers: getContext().getRequestHeaders(),
+          body: JSON.stringify({ format: "png", avatar_url: avatar }),
+        });
+        if (!resp.ok) {
+          throw new Error(`导出角色卡失败: HTTP ${resp.status}`);
+        }
+        const blob = await resp.blob();
+        const data = await convertBackupBridgeBlobToBase64(blob);
+        return buildBackupBridgeReadSuccess(
+          item,
+          {
+            mode: "base64",
+            encoding: "base64",
+            data,
+            size: Number.isFinite(blob.size) ? blob.size : null,
+          },
+          {
+            updatedAt: item.updatedAt || null,
+            fingerprint:
+              item.fingerprint || createBackupBridgeFingerprint(data, "base64"),
+            extensionHint:
+              item.extensionHint ||
+              getBackupBridgeFileExtension(avatar) ||
+              ".png",
+            mimeType: item.mimeType || blob.type || "image/png",
+          },
+        );
+      }
+
+      if (item.resourceType === "backgrounds") {
+        if (readMode !== "base64") {
+          throw new Error("背景仅支持 base64 读取");
+        }
+        const sourcePath = String(item.sourcePath || "").trim();
+        if (!sourcePath) {
+          throw new Error("背景缺少 sourcePath");
+        }
+        const resp = await fetch(
+          `/backgrounds/${encodeURIComponent(sourcePath)}`,
+        );
+        if (!resp.ok) {
+          throw new Error(`导出背景失败: HTTP ${resp.status}`);
+        }
+        const blob = await resp.blob();
+        const data = await convertBackupBridgeBlobToBase64(blob);
+        return buildBackupBridgeReadSuccess(
+          item,
+          {
+            mode: "base64",
+            encoding: "base64",
+            data,
+            size: Number.isFinite(blob.size) ? blob.size : null,
+          },
+          {
+            updatedAt: item.updatedAt || null,
+            fingerprint:
+              item.fingerprint || createBackupBridgeFingerprint(data, "base64"),
+            extensionHint:
+              item.extensionHint ||
+              getBackupBridgeFileExtension(sourcePath) ||
+              ".png",
+            mimeType:
+              item.mimeType ||
+              blob.type ||
+              getBackupBridgeMimeType(
+                getBackupBridgeFileExtension(sourcePath),
+              ) ||
+              "application/octet-stream",
+          },
+        );
+      }
+
+      let data = null;
+
+      if (item.resourceType === "worldinfo") {
+        data = await fetchWorldInfoDetailData(item.displayName);
+      } else if (item.resourceType === "presets") {
+        const pm = getContext().getPresetManager();
+        if (!pm) {
+          throw new Error("预设管理器不可用");
+        }
+        if (typeof pm.getCompletionPresetByName === "function") {
+          const preset = pm.getCompletionPresetByName(item.displayName);
+          if (preset) {
+            data = structuredClone(preset);
+            data.name = item.displayName;
+          }
+        }
+        if (!data && typeof pm.getPresetList === "function") {
+          const { presets, preset_names } = pm.getPresetList();
+          let found = null;
+          if (Array.isArray(preset_names)) {
+            const idx = preset_names.indexOf(item.displayName);
+            if (idx >= 0) found = presets[idx];
+          } else if (preset_names && typeof preset_names === "object") {
+            if (preset_names[item.displayName] !== undefined) {
+              found = presets[preset_names[item.displayName]];
+            }
+          }
+          if (found) {
+            data = structuredClone(found);
+            data.name = item.displayName;
+          }
+        }
+        if (!data) {
+          throw new Error(`找不到预设: ${item.displayName}`);
+        }
+      } else if (item.resourceType === "themes") {
+        const resp = await fetch("/api/settings/get", {
+          method: "POST",
+          headers: getContext().getRequestHeaders(),
+          body: JSON.stringify({}),
+        });
+        if (!resp.ok) {
+          throw new Error(`获取主题数据失败: HTTP ${resp.status}`);
+        }
+        const settingsData = await resp.json();
+        const allThemes = Array.isArray(settingsData?.themes)
+          ? settingsData.themes
+          : [];
+        const themeData = allThemes.find(
+          (theme) =>
+            (typeof theme === "object" ? theme.name : theme) ===
+            item.displayName,
+        );
+        if (!themeData || typeof themeData !== "object") {
+          throw new Error(`找不到主题: ${item.displayName}`);
+        }
+        data = structuredClone(themeData);
+      } else if (item.resourceType === "personas") {
+        const avatarId = item.displayName;
+        const pu = getContext().powerUserSettings;
+        if (!pu) {
+          throw new Error("无法获取 powerUserSettings");
+        }
+        data = {
+          personas: {},
+          persona_descriptions: {},
+          default_persona:
+            pu.default_persona && pu.default_persona === avatarId
+              ? pu.default_persona
+              : null,
+        };
+        data.personas[avatarId] =
+          pu.personas && pu.personas[avatarId] !== undefined
+            ? pu.personas[avatarId]
+            : avatarId;
+        if (pu.persona_descriptions && pu.persona_descriptions[avatarId]) {
+          data.persona_descriptions[avatarId] = structuredClone(
+            pu.persona_descriptions[avatarId],
+          );
+        }
+      } else if (item.resourceType === "regex") {
+        const scriptId = String(item.sourcePath || "")
+          .replace(/^regex\//, "")
+          .trim();
+        const scripts = getRegexGlobalScripts();
+        const script = scripts.find(
+          (entry) => String(entry?.id || "").trim() === scriptId,
+        );
+        if (!script) {
+          throw new Error(`找不到正则脚本: ${item.displayName}`);
+        }
+        data = JSON.parse(JSON.stringify(script));
+      } else if (item.resourceType === "qr") {
+        const api =
+          typeof globalThis !== "undefined" && globalThis.quickReplyApi;
+        const QRS =
+          typeof globalThis !== "undefined" && globalThis.QuickReplySet;
+        if (api && typeof api.getSetByName === "function") {
+          const setData = api.getSetByName(item.displayName);
+          if (setData) {
+            data = JSON.parse(JSON.stringify(setData));
+          }
+        }
+        if (!data && QRS && Array.isArray(QRS.list)) {
+          const setData = QRS.list.find(
+            (entry) => entry?.name === item.displayName,
+          );
+          if (setData) {
+            data = JSON.parse(JSON.stringify(setData));
+          }
+        }
+        if (!data) {
+          throw new Error(`无法获取快速回复集: ${item.displayName}`);
+        }
+      }
+
+      if (data == null) {
+        throw new Error(`暂不支持读取资源类型: ${item.resourceType}`);
+      }
+
+      return buildBackupBridgeReadSuccess(
+        item,
+        {
+          mode: "json",
+          encoding: "json",
+          data,
+          size: getBackupBridgeJsonByteSize(data),
+        },
+        {
+          updatedAt: item.updatedAt || resolveBackupBridgeUpdatedAt(data),
+          fingerprint:
+            item.fingerprint || createBackupBridgeFingerprint(data, "json"),
+          extensionHint: item.extensionHint || ".json",
+          mimeType: item.mimeType || "application/json",
+        },
+      );
+    } catch (error) {
+      return buildBackupBridgeReadError(request, error);
+    }
+  }
+
+  async function saveBackupBridgeQuickReplySet(setData) {
+    const normalizedData =
+      setData && typeof setData === "object"
+        ? cloneBackupBridgeJsonValue(setData)
+        : {};
+    const setName = String(normalizedData.name || "").trim();
+    if (!setName) {
+      throw new Error("快速回复集缺少名称");
+    }
+
+    const api = typeof globalThis !== "undefined" && globalThis.quickReplyApi;
+    const QRS = typeof globalThis !== "undefined" && globalThis.QuickReplySet;
+    const existingSet =
+      (api && typeof api.getSetByName === "function"
+        ? api.getSetByName(setName)
+        : null) ||
+      (QRS && Array.isArray(QRS.list)
+        ? QRS.list.find((entry) => entry?.name === setName)
+        : null);
+
+    const syncLiveSet = (target) => {
+      if (!target) return;
+      target.name = setName;
+      target.qrList = Array.isArray(normalizedData.qrList)
+        ? cloneBackupBridgeJsonValue(normalizedData.qrList)
+        : [];
+      if ("disableSend" in normalizedData) {
+        target.disableSend = !!normalizedData.disableSend;
+      }
+      if ("placeBeforeInput" in normalizedData) {
+        target.placeBeforeInput = !!normalizedData.placeBeforeInput;
+      }
+      if ("injectInput" in normalizedData) {
+        target.injectInput = !!normalizedData.injectInput;
+      }
+    };
+
+    if (existingSet) {
+      syncLiveSet(existingSet);
+      if (typeof existingSet.save === "function") {
+        await existingSet.save();
+        return;
+      }
+      if (typeof existingSet.performSave === "function") {
+        await existingSet.performSave();
+        return;
+      }
+    } else if (api && typeof api.createSet === "function") {
+      try {
+        await api.createSet(setName, {
+          disableSend: !!normalizedData.disableSend,
+          placeBeforeInput: !!normalizedData.placeBeforeInput,
+          injectInput: !!normalizedData.injectInput,
+        });
+        const liveSet =
+          (typeof api.getSetByName === "function"
+            ? api.getSetByName(setName)
+            : null) ||
+          (QRS && Array.isArray(QRS.list)
+            ? QRS.list.find((entry) => entry?.name === setName)
+            : null);
+        syncLiveSet(liveSet);
+        if (liveSet && typeof liveSet.save === "function") {
+          await liveSet.save();
+          return;
+        }
+        if (liveSet && typeof liveSet.performSave === "function") {
+          await liveSet.performSave();
+          return;
+        }
+      } catch (error) {
+        console.warn("[CFM] 创建快速回复集失败，回退到直接保存", error);
+      }
+    }
+
+    const response = await fetch("/api/quick-replies/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(normalizedData),
+    });
+    if (!response.ok) {
+      throw new Error(`保存快速回复集失败: HTTP ${response.status}`);
+    }
+
+    const finalLiveSet =
+      (api && typeof api.getSetByName === "function"
+        ? api.getSetByName(setName)
+        : null) ||
+      (QRS && Array.isArray(QRS.list)
+        ? QRS.list.find((entry) => entry?.name === setName)
+        : null);
+    syncLiveSet(finalLiveSet);
+  }
+
+  async function writeBackupBridgeResource(request = {}) {
+    try {
+      const resource = normalizeBackupBridgeWriteResource(request);
+      const resourceType = resource.resourceType;
+      const content = getBackupBridgeWriteContent(request);
+      const supportedWriteResourceTypes =
+        getBackupBridgeSupportedWriteResourceTypes();
+
+      if (!resourceType) {
+        throw new Error("无法识别 resourceType");
+      }
+      if (!supportedWriteResourceTypes.includes(resourceType)) {
+        throw new Error(`暂不支持写入资源类型: ${resourceType}`);
+      }
+
+      if (resourceType === "chars") {
+        if (content.mode !== "base64") {
+          throw new Error("角色卡仅支持 base64 写入");
+        }
+        const file = createBackupBridgeFileFromBase64(
+          content,
+          resource,
+          ".png",
+        );
+        const fileExt = String(file.name.split(".").pop() || "png")
+          .trim()
+          .toLowerCase();
+        const formData = new FormData();
+        formData.append("avatar", file);
+        formData.append("file_type", fileExt || "png");
+        formData.append("user_name", getContext().name1 || "User");
+
+        const response = await fetch("/api/characters/import", {
+          method: "POST",
+          body: formData,
+          headers: getContext().getRequestHeaders({ omitContentType: true }),
+          cache: "no-cache",
+        });
+        if (!response.ok) {
+          throw new Error(`导入角色卡失败: HTTP ${response.status}`);
+        }
+        const result = await response.json();
+        if (result?.error) {
+          throw new Error(result.error);
+        }
+        try {
+          if (typeof getContext().getCharacters === "function") {
+            await getContext().getCharacters();
+          }
+        } catch (error) {
+          console.warn("[CFM] 刷新角色列表失败", error);
+        }
+        const avatarFileName = result?.file_name
+          ? `${result.file_name}.png`
+          : file.name;
+        return buildBackupBridgeWriteSuccess(resource, {
+          sourcePath: avatarFileName ? `characters/${avatarFileName}` : null,
+          extensionHint: ".png",
+          mimeType: "image/png",
+          updatedAt: Date.now(),
+        });
+      }
+
+      if (resourceType === "backgrounds") {
+        if (content.mode !== "base64") {
+          throw new Error("背景仅支持 base64 写入");
+        }
+        const file = createBackupBridgeFileFromBase64(
+          content,
+          resource,
+          ".png",
+        );
+        const headers = getContext().getRequestHeaders({
+          omitContentType: true,
+        });
+        const formData = new FormData();
+        formData.append("avatar", file);
+
+        const response = await fetch("/api/backgrounds/upload", {
+          method: "POST",
+          headers,
+          body: formData,
+        });
+        if (!response.ok) {
+          throw new Error(`导入背景失败: HTTP ${response.status}`);
+        }
+
+        try {
+          const bgModule = await import("../../../backgrounds.js");
+          if (typeof bgModule.getBackgrounds === "function") {
+            await bgModule.getBackgrounds();
+          }
+        } catch (error) {
+          console.warn("[CFM] 刷新背景列表失败", error);
+        }
+
+        try {
+          if (typeof renderBackgroundsView === "function") {
+            renderBackgroundsView();
+          }
+        } catch (error) {
+          console.warn("[CFM] 刷新背景视图失败", error);
+        }
+
+        return buildBackupBridgeWriteSuccess(resource, {
+          sourcePath: file.name,
+          extensionHint:
+            getBackupBridgeFileExtension(file.name) ||
+            resource.extensionHint ||
+            ".png",
+          mimeType:
+            file.type || resource.mimeType || "application/octet-stream",
+          updatedAt: Date.now(),
+        });
+      }
+
+      if (resourceType === "worldinfo") {
+        if (content.mode !== "json") {
+          throw new Error("世界书仅支持 json 写入");
+        }
+        const data = cloneBackupBridgeJsonValue(content.data);
+        const bookName = String(
+          data?.name || resource.displayName || "",
+        ).trim();
+        if (!bookName) {
+          throw new Error("世界书缺少名称");
+        }
+        await saveWorldInfoDetailData(bookName, data);
+        _worldInfoNamesCache = null;
+        try {
+          if (typeof getContext().updateWorldInfoList === "function") {
+            await getContext().updateWorldInfoList();
+          }
+        } catch (error) {
+          console.warn("[CFM] 刷新世界书列表失败", error);
+        }
+        return buildBackupBridgeWriteSuccess(resource, {
+          displayName: bookName,
+          sourcePath: `worldinfo/${bookName}`,
+          extensionHint: ".json",
+          mimeType: "application/json",
+          updatedAt: resolveBackupBridgeUpdatedAt(data) || Date.now(),
+          fingerprint: createBackupBridgeFingerprint(data, "json"),
+        });
+      }
+
+      if (resourceType === "presets") {
+        if (content.mode !== "json") {
+          throw new Error("预设仅支持 json 写入");
+        }
+        const pm = getContext().getPresetManager();
+        if (!pm) {
+          throw new Error("预设管理器不可用");
+        }
+        const data = cloneBackupBridgeJsonValue(content.data);
+        const presetName = String(
+          data?.name || resource.displayName || "",
+        ).trim();
+        if (!presetName) {
+          throw new Error("预设缺少名称");
+        }
+        data.name = presetName;
+
+        if (typeof pm.savePreset === "function") {
+          await pm.savePreset(presetName, data);
+        } else {
+          const response = await fetch("/api/presets/save", {
+            method: "POST",
+            headers: getContext().getRequestHeaders(),
+            body: JSON.stringify({
+              preset: data,
+              name: presetName,
+              apiId: pm.apiId,
+            }),
+          });
+          if (!response.ok) {
+            throw new Error(`保存预设失败: HTTP ${response.status}`);
+          }
+        }
+
+        try {
+          if (typeof renderPresetsView === "function") {
+            renderPresetsView();
+          }
+        } catch (error) {
+          console.warn("[CFM] 刷新预设视图失败", error);
+        }
+
+        return buildBackupBridgeWriteSuccess(resource, {
+          displayName: presetName,
+          sourcePath: `presets/${presetName}`,
+          extensionHint: ".json",
+          mimeType: "application/json",
+          updatedAt: resolveBackupBridgeUpdatedAt(data) || Date.now(),
+          fingerprint: createBackupBridgeFingerprint(data, "json"),
+        });
+      }
+
+      if (resourceType === "themes") {
+        if (content.mode !== "json") {
+          throw new Error("主题仅支持 json 写入");
+        }
+        const data = cloneBackupBridgeJsonValue(content.data);
+        const themeName = String(
+          data?.name || resource.displayName || "",
+        ).trim();
+        if (!themeName) {
+          throw new Error("主题缺少名称");
+        }
+        data.name = themeName;
+
+        const response = await fetch("/api/themes/save", {
+          method: "POST",
+          headers: getContext().getRequestHeaders(),
+          body: JSON.stringify(data),
+        });
+        if (!response.ok) {
+          throw new Error(`保存主题失败: HTTP ${response.status}`);
+        }
+
+        try {
+          if (typeof rememberImportedThemeRuntime === "function") {
+            rememberImportedThemeRuntime(themeName, data);
+          }
+          if (typeof refreshThemeRuntimeAfterImport === "function") {
+            await refreshThemeRuntimeAfterImport(true);
+          }
+          if (typeof renderThemesView === "function") {
+            renderThemesView();
+          }
+        } catch (error) {
+          console.warn("[CFM] 刷新主题运行时失败", error);
+        }
+
+        return buildBackupBridgeWriteSuccess(resource, {
+          displayName: themeName,
+          sourcePath: `themes/${themeName}`,
+          extensionHint: ".json",
+          mimeType: "application/json",
+          updatedAt: resolveBackupBridgeUpdatedAt(data) || Date.now(),
+          fingerprint: createBackupBridgeFingerprint(data, "json"),
+        });
+      }
+
+      if (resourceType === "qr") {
+        if (content.mode !== "json") {
+          throw new Error("快速回复集仅支持 json 写入");
+        }
+        const data = cloneBackupBridgeJsonValue(content.data);
+        const setName = String(data?.name || resource.displayName || "").trim();
+        if (!setName) {
+          throw new Error("快速回复集缺少名称");
+        }
+        data.name = setName;
+
+        await saveBackupBridgeQuickReplySet(data);
+
+        try {
+          if (typeof renderQRView === "function") {
+            renderQRView();
+          }
+        } catch (error) {
+          console.warn("[CFM] 刷新快速回复视图失败", error);
+        }
+
+        return buildBackupBridgeWriteSuccess(resource, {
+          displayName: setName,
+          sourcePath: `quickreply/${setName}`,
+          extensionHint: ".json",
+          mimeType: "application/json",
+          updatedAt: resolveBackupBridgeUpdatedAt(data) || Date.now(),
+          fingerprint: createBackupBridgeFingerprint(data, "json"),
+        });
+      }
+
+      throw new Error(`暂不支持写入资源类型: ${resourceType}`);
+    } catch (error) {
+      return buildBackupBridgeWriteError(request, error);
+    }
+  }
+
+  function getBackupBridgeDetails() {
+    const extSettings = extension_settings?.[extensionName] || {};
+    let charFolders = {};
+    try {
+      if (config?.folders && typeof config.folders === "object") {
+        charFolders = config.folders;
+      }
+    } catch (e) {
+      charFolders = {};
+    }
+
+    const exportCapabilities = getBackupBridgeExportCapabilities();
+    const resourceFolderTree = extSettings.resourceFolderTree || {};
+    const regexFolderTree = extSettings.regexFolderTree || {};
+    const qrFolderTree =
+      resourceFolderTree.quickreply || extSettings.qrFolderTree || {};
+    const resourceFolderDefinitions =
+      buildBackupBridgeResourceFolderDefinitionsMap(resourceFolderTree);
+    const regexFolderDefinitions =
+      buildBackupBridgeTreeFolderDefinitions(regexFolderTree);
+    const qrFolderDefinitions =
+      buildBackupBridgeTreeFolderDefinitions(qrFolderTree);
+    const charFolderDefinitions =
+      buildBackupBridgeCharFolderDefinitions(charFolders);
+
+    return {
+      source: "cfm-backup-bridge",
+      extensionName,
+      displayName: "酒馆资源管理器",
+      protocolVersion: BACKUP_BRIDGE_PROTOCOL_VERSION,
+      bridgeVersion: BACKUP_BRIDGE_VERSION,
+      status: window.__CFM_BACKUP_BRIDGE__?.status || "unknown",
+      timestamp: Date.now(),
+      detailsAvailable: true,
+      supportedResourceTypes: [
+        "chars",
+        "worldinfo",
+        "presets",
+        "themes",
+        "backgrounds",
+        "personas",
+        "regex",
+        "qr",
+      ],
+      counts: {
+        charFolders: getBridgeObjectKeyCount(charFolders),
+        presetGroups: getBridgeObjectKeyCount(extSettings.presetGroups),
+        worldInfoGroups: getBridgeObjectKeyCount(extSettings.worldInfoGroups),
+        themeGroups: getBridgeObjectKeyCount(extSettings.themeGroups),
+        bgGroups: getBridgeObjectKeyCount(extSettings.bgGroups),
+        personaGroups: getBridgeObjectKeyCount(extSettings.personaGroups),
+        resourceFolderTreePresets: getBridgeObjectKeyCount(
+          resourceFolderTree.presets,
+        ),
+        resourceFolderTreeWorldinfo: getBridgeObjectKeyCount(
+          resourceFolderTree.worldinfo,
+        ),
+        resourceFolderTreeThemes: getBridgeObjectKeyCount(
+          resourceFolderTree.themes,
+        ),
+        resourceFolderTreeBackgrounds: getBridgeObjectKeyCount(
+          resourceFolderTree.backgrounds,
+        ),
+        resourceFolderTreePersonas: getBridgeObjectKeyCount(
+          resourceFolderTree.personas,
+        ),
+        regexFolders: getBridgeObjectKeyCount(regexFolderTree),
+        qrFolders: getBridgeObjectKeyCount(qrFolderTree),
+      },
+      trees: {
+        chars: safeCloneBridgeValue(charFolders, 0, 8),
+        resources: safeCloneBridgeValue(resourceFolderTree, 0, 8),
+        regex: safeCloneBridgeValue(regexFolderTree, 0, 8),
+        qr: safeCloneBridgeValue(qrFolderTree, 0, 8),
+      },
+      folderDefinitions: {
+        chars: safeCloneBridgeValue(charFolderDefinitions, 0, 8),
+        resources: safeCloneBridgeValue(resourceFolderDefinitions, 0, 8),
+        regex: safeCloneBridgeValue(regexFolderDefinitions, 0, 8),
+        qr: safeCloneBridgeValue(qrFolderDefinitions, 0, 8),
+      },
+      mappings: {
+        presetGroups: safeCloneBridgeValue(extSettings.presetGroups || {}),
+        worldInfoGroups: safeCloneBridgeValue(
+          extSettings.worldInfoGroups || {},
+        ),
+        themeGroups: safeCloneBridgeValue(extSettings.themeGroups || {}),
+        bgGroups: safeCloneBridgeValue(extSettings.bgGroups || {}),
+        personaGroups: safeCloneBridgeValue(extSettings.personaGroups || {}),
+      },
+      metadata: {
+        topLevelSettingKeys: Object.keys(extSettings),
+        hasDefaultBackground:
+          typeof extSettings.defaultBackground === "string" &&
+          extSettings.defaultBackground.length > 0,
+      },
+      exportCapabilities,
+      resourceListAvailable: exportCapabilities.resourceListAvailable,
+      resourceReadAvailable: exportCapabilities.resourceReadAvailable,
+      resourceWriteAvailable: exportCapabilities.resourceWriteAvailable,
+      stableIdModes: [...exportCapabilities.stableIdModes],
+      fingerprintModes: [...exportCapabilities.fingerprintModes],
+      contentModes: [...exportCapabilities.contentModes],
+      writeModes: [...(exportCapabilities.writeModes || [])],
+      supportedExportResourceTypes: [
+        ...exportCapabilities.supportedExportResourceTypes,
+      ],
+      supportedWriteResourceTypes: [
+        ...(exportCapabilities.supportedWriteResourceTypes || []),
+      ],
+    };
+  }
+
+  function publishBackupBridgeSignal(status = "ready", extra = {}) {
+    try {
+      const signal = {
+        source: "cfm-backup-bridge",
+        extensionName,
+        status,
+        protocolVersion: BACKUP_BRIDGE_PROTOCOL_VERSION,
+        bridgeVersion: BACKUP_BRIDGE_VERSION,
+        detailsAvailable: true,
+        timestamp: Date.now(),
+        ...extra,
+      };
+      window.__CFM_BACKUP_BRIDGE__ = signal;
+      window.__CFM_PUBLISH_BACKUP_BRIDGE__ = publishBackupBridgeSignal;
+      window.__CFM_BACKUP_BRIDGE_GET_DETAILS__ = getBackupBridgeDetails;
+      window.__CFM_BACKUP_BRIDGE_LIST_RESOURCES__ = listBackupBridgeResources;
+      window.__CFM_BACKUP_BRIDGE_READ_RESOURCE__ = readBackupBridgeResource;
+      window.__CFM_BACKUP_BRIDGE_WRITE_RESOURCE__ = writeBackupBridgeResource;
+      document.documentElement?.setAttribute?.(
+        "data-cfm-backup-bridge",
+        status,
+      );
+      document.documentElement?.setAttribute?.(
+        "data-cfm-backup-bridge-extension",
+        extensionName,
+      );
+      document.documentElement?.setAttribute?.(
+        "data-cfm-backup-bridge-protocol",
+        String(BACKUP_BRIDGE_PROTOCOL_VERSION),
+      );
+      document.documentElement?.setAttribute?.(
+        "data-cfm-backup-bridge-details",
+        "available",
+      );
+      window.dispatchEvent(
+        new CustomEvent("cfm-backup-bridge", {
+          detail: signal,
+        }),
+      );
+      return signal;
+    } catch (e) {
+      console.warn("[CFM] 发布备份桥接信号失败:", e);
+      return null;
+    }
+  }
+
+  publishBackupBridgeSignal("loading");
 
   // ==================== 简繁转换模块加载 ====================
   // 动态加载 s2t.js（简繁逐字转换字典）
@@ -1018,6 +2906,61 @@ jQuery(async () => {
     return names;
   }
 
+  async function getBackgroundNamesForBridge() {
+    const collectNames = () =>
+      Array.from(
+        new Set(
+          getBackgroundNames()
+            .map((name) => String(name || "").trim())
+            .filter(Boolean),
+        ),
+      );
+
+    const immediateNames = collectNames();
+    if (immediateNames.length > 0) {
+      return immediateNames;
+    }
+
+    try {
+      const bgModule = await import("../../../backgrounds.js");
+      if (typeof bgModule.getBackgrounds === "function") {
+        await bgModule.getBackgrounds();
+      }
+    } catch (error) {
+      console.warn("[CFM] 刷新背景列表失败，尝试 API 回退", error);
+    }
+
+    const refreshedNames = collectNames();
+    if (refreshedNames.length > 0) {
+      return refreshedNames;
+    }
+
+    try {
+      const bgResp = await fetch("/api/backgrounds/all", {
+        method: "POST",
+        headers: getContext().getRequestHeaders(),
+        body: JSON.stringify({}),
+      });
+
+      if (!bgResp.ok) {
+        throw new Error(`HTTP ${bgResp.status}`);
+      }
+
+      const payload = await bgResp.json();
+      const apiNames = Array.isArray(payload?.images)
+        ? payload.images
+            .map((name) => String(name || "").trim())
+            .filter(Boolean)
+        : [];
+
+      return Array.from(new Set(apiNames));
+    } catch (error) {
+      console.warn("[CFM] 读取背景列表 API 失败", error);
+    }
+
+    return refreshedNames;
+  }
+
   // 获取背景的友好显示名（去掉扩展名）
   function getBackgroundDisplayName(bgfile) {
     if (!bgfile) return "";
@@ -1689,6 +3632,14 @@ jQuery(async () => {
     extension_settings[extensionName].batchTemplates[type] = templates;
     getContext().saveSettingsDebounced();
   }
+  function updateBatchTemplate(type, index, name, content) {
+    const templates = getBatchTemplates(type);
+    if (index >= 0 && index < templates.length) {
+      templates[index] = { name, content };
+      extension_settings[extensionName].batchTemplates[type] = templates;
+      getContext().saveSettingsDebounced();
+    }
+  }
   function deleteBatchTemplate(type, index) {
     const templates = getBatchTemplates(type);
     if (index >= 0 && index < templates.length) {
@@ -1698,15 +3649,16 @@ jQuery(async () => {
     }
   }
   // 生成模板区域HTML
-  function buildBatchTemplateHtml(type) {
+  function buildBatchTemplateHtml(type, editingIndex = -1, editingName = "") {
     const templates = getBatchTemplates(type);
+    const isEditing = editingIndex >= 0 && editingIndex < templates.length;
     let listHtml = "";
     if (templates.length > 0) {
       listHtml = templates
-        .map(
-          (t, i) =>
-            `<div class="cfm-tpl-item" data-tpl-idx="${i}"><span class="cfm-tpl-name" title="点击加载此模板">${escapeHtml(t.name)}</span><button class="cfm-tpl-del" data-tpl-idx="${i}" title="删除模板"><i class="fa-solid fa-xmark"></i></button></div>`,
-        )
+        .map((t, i) => {
+          const isEditingItem = i === editingIndex;
+          return `<div class="cfm-tpl-item ${isEditingItem ? "cfm-tpl-item-editing" : ""}" data-tpl-idx="${i}"><span class="cfm-tpl-name" title="点击加载此模板">${escapeHtml(t.name)}</span><span style="display:flex;align-items:center;gap:6px;"><button class="cfm-tpl-edit" data-tpl-idx="${i}" title="编辑模板"><i class="fa-solid fa-pen-to-square"></i></button><button class="cfm-tpl-del" data-tpl-idx="${i}" title="删除模板"><i class="fa-solid fa-xmark"></i></button></span></div>`;
+        })
         .join("");
     } else {
       listHtml = '<div class="cfm-tpl-empty">暂无保存的模板</div>';
@@ -1715,21 +3667,52 @@ jQuery(async () => {
       <div class="cfm-tpl-section">
         <div class="cfm-tpl-header">
           <span class="cfm-tpl-label"><i class="fa-solid fa-bookmark"></i> 模板</span>
-          <button class="cfm-btn cfm-tpl-save-btn"><i class="fa-solid fa-floppy-disk"></i> 保存当前为模板</button>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
+            ${isEditing ? '<button class="cfm-btn cfm-tpl-cancel-edit-btn"><i class="fa-solid fa-xmark"></i> 取消编辑</button>' : ""}
+            <button class="cfm-btn cfm-tpl-save-btn"><i class="fa-solid fa-floppy-disk"></i> ${isEditing ? "保存对当前模板的修改" : "保存当前为模板"}</button>
+          </div>
         </div>
+        ${isEditing ? `<div class="cfm-create-tag-hint" style="margin-bottom:8px;">正在编辑模板「${escapeHtml(editingName || templates[editingIndex]?.name || "")}」，可修改结构后保存；如需改名，可再次点击该模板右侧的编辑按钮。</div>` : ""}
         <div class="cfm-tpl-list">${listHtml}</div>
       </div>
     `;
   }
   // 绑定模板区域事件（type: 模板类型, popup: jQuery弹窗, textareaSelector: textarea选择器, refreshFn: 刷新模板列表的回调）
   function bindBatchTemplateEvents(type, popup, textareaSelector, refreshFn) {
-    // 保存模板
+    function getEditingIndex() {
+      const idx = Number.parseInt(popup.data("cfmEditingTemplateIndex"), 10);
+      return Number.isNaN(idx) ? -1 : idx;
+    }
+    function clearEditingState() {
+      popup.removeData("cfmEditingTemplateIndex");
+      popup.removeData("cfmEditingTemplateName");
+    }
+
+    // 保存模板 / 更新模板
     popup.find(".cfm-tpl-save-btn").on("click touchend", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      const content = popup.find(textareaSelector).val().trim();
+      const content = popup.find(textareaSelector).val().toString().trim();
       if (!content) {
         cfmToastr.warning("请先输入文件夹结构");
+        return;
+      }
+      const editingIdx = getEditingIndex();
+      if (editingIdx >= 0) {
+        const templates = getBatchTemplates(type);
+        if (!templates[editingIdx]) {
+          clearEditingState();
+          refreshFn();
+          cfmToastr.warning("当前编辑的模板不存在，已退出编辑状态");
+          return;
+        }
+        const editingName =
+          popup.data("cfmEditingTemplateName")?.toString().trim() ||
+          templates[editingIdx].name;
+        updateBatchTemplate(type, editingIdx, editingName, content);
+        clearEditingState();
+        cfmToastr.success(`模板「${editingName}」已更新`);
+        refreshFn();
         return;
       }
       const name = prompt("请输入模板名称：");
@@ -1738,6 +3721,16 @@ jQuery(async () => {
       cfmToastr.success(`模板「${name.trim()}」已保存`);
       refreshFn();
     });
+
+    // 取消编辑
+    popup.find(".cfm-tpl-cancel-edit-btn").on("click touchend", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      clearEditingState();
+      cfmToastr.info("已取消模板编辑");
+      refreshFn();
+    });
+
     // 加载模板
     popup
       .find(".cfm-tpl-item .cfm-tpl-name")
@@ -1751,6 +3744,59 @@ jQuery(async () => {
           cfmToastr.info(`已加载模板「${templates[idx].name}」`);
         }
       });
+
+    // 编辑模板
+    popup.find(".cfm-tpl-edit").on("click touchend", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      const idx = parseInt($(this).attr("data-tpl-idx"));
+      const templates = getBatchTemplates(type);
+      const template = templates[idx];
+      if (!template) return;
+
+      let editMode = prompt(
+        "请选择修改方式：\n名字 / 结构 / 都要\n（也支持输入 1 / 2 / 3）",
+        "都要",
+      );
+      if (!editMode) return;
+      editMode = editMode.toString().trim();
+      if (editMode === "1") editMode = "名字";
+      else if (editMode === "2") editMode = "结构";
+      else if (editMode === "3") editMode = "都要";
+
+      if (!["名字", "结构", "都要"].includes(editMode)) {
+        cfmToastr.warning("请输入：名字、结构、都要，或 1、2、3");
+        return;
+      }
+
+      if (editMode === "名字") {
+        const nextName = prompt("请输入新的模板名称：", template.name);
+        if (!nextName || !nextName.trim()) return;
+        updateBatchTemplate(type, idx, nextName.trim(), template.content);
+        if (getEditingIndex() === idx) clearEditingState();
+        cfmToastr.success(`模板已重命名为「${nextName.trim()}」`);
+        refreshFn();
+        return;
+      }
+
+      let editingName = template.name;
+      if (editMode === "都要") {
+        const nextName = prompt("请输入新的模板名称：", template.name);
+        if (!nextName || !nextName.trim()) return;
+        editingName = nextName.trim();
+      }
+
+      popup.data("cfmEditingTemplateIndex", idx);
+      popup.data("cfmEditingTemplateName", editingName);
+      popup.find(textareaSelector).val(template.content);
+      cfmToastr.info(
+        editMode === "结构"
+          ? `已载入模板「${template.name}」的结构，修改后点击“保存对当前模板的修改”`
+          : `已载入模板「${template.name}」，修改后点击“保存对当前模板的修改”`,
+      );
+      refreshFn();
+    });
+
     // 删除模板
     popup.find(".cfm-tpl-del").on("click touchend", function (e) {
       e.preventDefault();
@@ -1761,7 +3807,13 @@ jQuery(async () => {
         templates[idx] &&
         cfmConfirm(`确定删除模板「${templates[idx].name}」？`)
       ) {
+        const editingIdx = getEditingIndex();
         deleteBatchTemplate(type, idx);
+        if (editingIdx === idx) {
+          clearEditingState();
+        } else if (editingIdx > idx) {
+          popup.data("cfmEditingTemplateIndex", editingIdx - 1);
+        }
         cfmToastr.success("模板已删除");
         refreshFn();
       }
@@ -5425,6 +7477,8 @@ jQuery(async () => {
 
   // PC端拖拽数据备份（解决HTML5 dataTransfer可靠性问题）
   let _pcDragData = null;
+  let _pcLastResourceFolderHoverTarget = null;
+  let _pcDropHandled = false;
 
   // 获取当前右栏可见的资源列表（仅资源，不含文件夹），用于框选
   function getVisibleResourceIds() {
@@ -21742,9 +23796,7 @@ jQuery(async () => {
     );
     const missingPinned = pinned.filter((p) => {
       const key = p.avatar + "::" + p.chatFileName;
-      return (
-        !existingKeys.has(key) && !cfmPendingMissingPinnedFetches.has(key)
-      );
+      return !existingKeys.has(key) && !cfmPendingMissingPinnedFetches.has(key);
     });
     if (missingPinned.length > 0) {
       fetchAndInsertMissingPinnedChats(recentList, missingPinned, insertBefore);
@@ -21954,7 +24006,9 @@ jQuery(async () => {
     if (document.body) {
       startObserve();
     } else {
-      document.addEventListener("DOMContentLoaded", startObserve, { once: true });
+      document.addEventListener("DOMContentLoaded", startObserve, {
+        once: true,
+      });
     }
   }
 
@@ -22940,14 +24994,36 @@ jQuery(async () => {
     rerenderCurrentView();
   }
 
+  function cfmDebugDragLog(stage, payload = {}) {
+    try {
+      console.log("[CFM Drag]", stage, payload);
+    } catch {
+      /* noop */
+    }
+  }
+
   // PC端dragstart辅助：存储拖拽数据到全局变量并设置自定义拖拽图像
   function pcDragStart(e, dragData) {
     _pcDragData = dragData;
-    e.originalEvent.dataTransfer.setData(
-      "text/plain",
-      JSON.stringify(dragData),
-    );
-    e.originalEvent.dataTransfer.effectAllowed = "move";
+    _pcDropHandled = false;
+    _pcLastResourceFolderHoverTarget = null;
+    const dataTransfer = e.originalEvent?.dataTransfer;
+    cfmDebugDragLog("pcDragStart:begin", {
+      dragData,
+      hasDataTransfer: !!dataTransfer,
+      effectAllowedBefore: dataTransfer?.effectAllowed ?? null,
+      typesBefore: dataTransfer?.types ? Array.from(dataTransfer.types) : [],
+    });
+    dataTransfer?.setData("text/plain", JSON.stringify(dragData));
+    if (dataTransfer) {
+      dataTransfer.effectAllowed = "move";
+    }
+    cfmDebugDragLog("pcDragStart:afterSetData", {
+      dragData,
+      hasDataTransfer: !!dataTransfer,
+      effectAllowedAfter: dataTransfer?.effectAllowed ?? null,
+      typesAfter: dataTransfer?.types ? Array.from(dataTransfer.types) : [],
+    });
     // 多选时设置自定义拖拽图像
     if (dragData.multiSelect && dragData.count > 1) {
       const ghost = document.createElement("div");
@@ -22956,7 +25032,18 @@ jQuery(async () => {
       ghost.style.cssText =
         "position:fixed;left:-9999px;top:-9999px;padding:6px 16px;border-radius:8px;background:rgba(40,40,40,0.92);color:#fff;font-size:14px;white-space:nowrap;z-index:99999;pointer-events:none;";
       document.body.appendChild(ghost);
-      e.originalEvent.dataTransfer.setDragImage(ghost, 0, 0);
+      try {
+        dataTransfer?.setDragImage(ghost, 0, 0);
+        cfmDebugDragLog("pcDragStart:setDragImage:success", {
+          dragData,
+          ghostText: ghost.textContent,
+        });
+      } catch (error) {
+        cfmDebugDragLog("pcDragStart:setDragImage:error", {
+          dragData,
+          error: String(error?.message || error),
+        });
+      }
       // 异步移除幽灵元素
       setTimeout(() => ghost.remove(), 0);
     }
@@ -22964,10 +25051,37 @@ jQuery(async () => {
 
   // PC端drop辅助：优先从全局变量获取拖拽数据，回退到dataTransfer
   function pcGetDropData(e) {
-    if (_pcDragData) return _pcDragData;
+    const dataTransfer = e.originalEvent?.dataTransfer;
+    if (_pcDragData) {
+      cfmDebugDragLog("pcGetDropData:fromGlobal", {
+        dragData: _pcDragData,
+        hasDataTransfer: !!dataTransfer,
+        dropEffect: dataTransfer?.dropEffect ?? null,
+        effectAllowed: dataTransfer?.effectAllowed ?? null,
+        types: dataTransfer?.types ? Array.from(dataTransfer.types) : [],
+      });
+      return _pcDragData;
+    }
     try {
-      return JSON.parse(e.originalEvent.dataTransfer.getData("text/plain"));
-    } catch {
+      const raw = dataTransfer?.getData("text/plain") || "";
+      const parsed = raw ? JSON.parse(raw) : null;
+      cfmDebugDragLog("pcGetDropData:fromDataTransfer", {
+        raw,
+        parsed,
+        hasDataTransfer: !!dataTransfer,
+        dropEffect: dataTransfer?.dropEffect ?? null,
+        effectAllowed: dataTransfer?.effectAllowed ?? null,
+        types: dataTransfer?.types ? Array.from(dataTransfer.types) : [],
+      });
+      return parsed;
+    } catch (error) {
+      cfmDebugDragLog("pcGetDropData:error", {
+        hasDataTransfer: !!dataTransfer,
+        dropEffect: dataTransfer?.dropEffect ?? null,
+        effectAllowed: dataTransfer?.effectAllowed ?? null,
+        types: dataTransfer?.types ? Array.from(dataTransfer.types) : [],
+        error: String(error?.message || error),
+      });
       return null;
     }
   }
@@ -23121,10 +25235,330 @@ jQuery(async () => {
     tryHighlight();
   }
 
-  // PC端dragend辅助：清除全局拖拽数据和视觉反馈
+  // PC端dragend辅助：清除视觉反馈，并延迟释放全局拖拽数据
   function pcDragEnd() {
     const dragData = _pcDragData;
-    _pcDragData = null;
+    const fallbackTarget = _pcLastResourceFolderHoverTarget;
+    cfmDebugDragLog("pcDragEnd:begin", {
+      dragData,
+      fallbackTarget,
+      dropHandled: _pcDropHandled,
+    });
+    const fallbackTypeMap = {
+      preset: {
+        groupType: "presets",
+        label: "预设",
+        render: () => renderPresetsView(),
+        getNames: (data) =>
+          data.multiSelect && data.selectedIds ? data.selectedIds : [data.name],
+        firstName: (data) => data.name,
+      },
+      theme: {
+        groupType: "themes",
+        label: "主题",
+        render: () => renderThemesView(),
+        getNames: (data) =>
+          data.multiSelect && data.selectedIds ? data.selectedIds : [data.name],
+        firstName: (data) => data.name,
+      },
+      background: {
+        groupType: "backgrounds",
+        label: "背景",
+        render: () => renderBackgroundsView(),
+        getNames: (data) =>
+          data.multiSelect && data.selectedIds ? data.selectedIds : [data.name],
+        firstName: (data) => data.name,
+      },
+      worldinfo: {
+        groupType: "worldinfo",
+        label: "世界书",
+        render: () => renderWorldInfoView(),
+        getNames: (data) =>
+          data.multiSelect && data.selectedIds ? data.selectedIds : [data.name],
+        firstName: (data) => data.name,
+      },
+      quickreply: {
+        groupType: "quickreply",
+        label: "快速回复集",
+        render: () => renderQRView(),
+        getNames: (data) =>
+          data.multiSelect && data.selectedIds ? data.selectedIds : [data.name],
+        firstName: (data) => data.name,
+      },
+      persona: {
+        groupType: "personas",
+        label: "User",
+        render: () => renderPersonasView(),
+        getNames: (data) =>
+          data.multiSelect && data.selectedIds
+            ? data.selectedIds
+            : [data.avatarId || data.name],
+        firstName: (data) => data.name,
+      },
+      char: {
+        groupType: "chars",
+        label: "角色",
+        render: () => {
+          renderLeftTree();
+          renderRightPane();
+        },
+        moveItems: (data, target) => {
+          const avatars =
+            data.multiSelect && data.selectedIds
+              ? data.selectedIds
+              : [data.avatar];
+          avatars.forEach((avatar) =>
+            handleCharDropToFolder(avatar, target.folderId),
+          );
+          return avatars;
+        },
+        firstName: (data) => data.name,
+      },
+      "regex-script": {
+        groupType: "regex",
+        label: "脚本",
+        render: () => renderRegexView(),
+        moveItems: (data, target) => {
+          const scriptIds =
+            data.multiSelect && data.selectedIds
+              ? data.selectedIds
+              : [data.scriptId || data.id].filter(Boolean);
+          if (!scriptIds.length) return [];
+          const regexGlobalGroups =
+            extension_settings[extensionName].regexGlobalGroups || {};
+          if (target.targetKind === "ungrouped") {
+            scriptIds.forEach((sid) => {
+              delete regexGlobalGroups[sid];
+            });
+          } else {
+            scriptIds.forEach((sid) => {
+              regexGlobalGroups[sid] = target.folderId;
+            });
+          }
+          extension_settings[extensionName].regexGlobalGroups = regexGlobalGroups;
+          if (data.multiSelect) clearMultiSelect();
+          getContext().saveSettingsDebounced();
+          return scriptIds;
+        },
+        firstName: (data) =>
+          data.scriptName ||
+          globalScripts.find((sc) => sc.id === (data.scriptId || data.id))?.scriptName ||
+          data.scriptId ||
+          data.id,
+      },
+      folder: {
+        groupType: "chars",
+        label: "文件夹",
+        render: () => {
+          renderLeftTree();
+          renderRightPane();
+        },
+        moveItems: (data, target) => {
+          if (!data.id) return [];
+          if (target.targetKind === "ungrouped") {
+            reorderFolder(data.id, null, null);
+          } else if (target.zone === "into") {
+            if (
+              data.id === target.folderId ||
+              wouldCreateCycle(data.id, target.folderId)
+            ) {
+              return [];
+            }
+            reorderFolder(data.id, target.folderId, null);
+          } else {
+            const targetParentId =
+              config.folders[target.folderId]?.parentId || null;
+            if (wouldCreateCycle(data.id, targetParentId)) return [];
+            if (target.zone === "before") {
+              reorderFolder(data.id, targetParentId, target.folderId);
+            } else {
+              const siblings = sortFolders(getChildFolders(targetParentId));
+              const curIdx = siblings.indexOf(target.folderId);
+              const nextSiblingId =
+                curIdx >= 0 && curIdx < siblings.length - 1
+                  ? siblings[curIdx + 1]
+                  : null;
+              reorderFolder(data.id, targetParentId, nextSiblingId);
+            }
+          }
+          return [data.id];
+        },
+        firstName: (data) => getTagName(data.id),
+      },
+      "regex-folder": {
+        groupType: "regex",
+        label: "文件夹",
+        render: () => renderRegexView(),
+        moveItems: () => [],
+        firstName: (data) => data.name,
+      },
+      "res-folder": {
+        groupType: "res-folder",
+        label: "文件夹",
+        render: () => {
+          const resType = _pcDragData?.resType;
+          if (resType === "presets") renderPresetsView();
+          else if (resType === "themes") renderThemesView();
+          else if (resType === "backgrounds") renderBackgroundsView();
+          else if (resType === "worldinfo") renderWorldInfoView();
+          else if (resType === "quickreply") renderQRView();
+          else if (resType === "personas") renderPersonasView();
+        },
+        moveItems: (data, target) => {
+          if (!data.id || !data.resType) return [];
+          const resType = data.resType;
+          if (target.groupType !== resType) return [];
+          if (target.targetKind === "ungrouped") {
+            reorderResFolder(resType, data.id, null, null);
+          } else if (target.zone === "into") {
+            if (
+              data.id === target.folderId ||
+              wouldCreateResCycle(resType, data.id, target.folderId)
+            ) {
+              return [];
+            }
+            reorderResFolder(resType, data.id, target.folderId, null);
+          } else {
+            const tree = getResFolderTree(resType);
+            const targetParentId = tree[target.folderId]?.parentId || null;
+            if (wouldCreateResCycle(resType, data.id, targetParentId))
+              return [];
+            if (target.zone === "before") {
+              reorderResFolder(
+                resType,
+                data.id,
+                targetParentId,
+                target.folderId,
+              );
+            } else {
+              const siblings = sortResFolders(
+                resType,
+                getResChildFolders(resType, targetParentId),
+              );
+              const curIdx = siblings.indexOf(target.folderId);
+              const nextSiblingId =
+                curIdx >= 0 && curIdx < siblings.length - 1
+                  ? siblings[curIdx + 1]
+                  : null;
+              reorderResFolder(resType, data.id, targetParentId, nextSiblingId);
+            }
+          }
+          return [data.id];
+        },
+        firstName: (data) => getResFolderDisplayName(data.resType, data.id),
+      },
+    };
+    const fallbackMeta = fallbackTypeMap[dragData?.type];
+    cfmDebugDragLog("pcDragEnd:fallbackMeta", {
+      dragType: dragData?.type ?? null,
+      dragResType: dragData?.resType ?? null,
+      fallbackMetaGroupType: fallbackMeta?.groupType ?? null,
+      fallbackTarget,
+    });
+    if (!_pcDropHandled && fallbackMeta) {
+      const isFallbackTargetMatch =
+        dragData?.type === "res-folder"
+          ? fallbackTarget?.groupType === dragData?.resType
+          : fallbackTarget?.groupType === fallbackMeta.groupType;
+      let itemIds = null;
+      let successMessage = "";
+      if (isFallbackTargetMatch && fallbackTarget?.targetKind === "ungrouped") {
+        itemIds = fallbackMeta.moveItems
+          ? fallbackMeta.moveItems(dragData, fallbackTarget)
+          : (() => {
+              const ids = fallbackMeta.getNames(dragData);
+              ids.forEach((itemId) =>
+                setItemGroup(fallbackMeta.groupType, itemId, null),
+              );
+              return ids;
+            })();
+        if (dragData.multiSelect) clearMultiSelect();
+        cfmDebugDragLog("pcDragEnd:fallbackMoveToUngrouped", {
+          dragData,
+          fallbackTarget,
+          itemIds,
+        });
+        fallbackMeta.render();
+        successMessage =
+          itemIds.length > 1
+            ? `已将 ${itemIds.length} 个${fallbackMeta.label}移出文件夹`
+            : `已将「${fallbackMeta.firstName(dragData)}」移出文件夹`;
+      } else if (
+        isFallbackTargetMatch &&
+        fallbackTarget?.folderId &&
+        (fallbackTarget?.zone === "into" ||
+          fallbackMeta.label === "文件夹" ||
+          fallbackTarget?.targetKind === "folder")
+      ) {
+        itemIds = fallbackMeta.moveItems
+          ? fallbackMeta.moveItems(dragData, fallbackTarget)
+          : (() => {
+              const ids = fallbackMeta.getNames(dragData);
+              ids.forEach((itemId) =>
+                setItemGroup(
+                  fallbackMeta.groupType,
+                  itemId,
+                  fallbackTarget.folderId,
+                ),
+              );
+              return ids;
+            })();
+        if (itemIds.length) {
+          if (dragData.multiSelect) clearMultiSelect();
+          cfmDebugDragLog("pcDragEnd:fallbackMoveToResourceFolder", {
+            dragData,
+            fallbackTarget,
+            itemIds,
+          });
+          fallbackMeta.render();
+          cfmDebugDragLog("pcDragEnd:fallbackRenderDone", {
+            dragData,
+            fallbackTarget,
+            currentResourceType,
+            targetResType: dragData?.resType ?? fallbackMeta.groupType ?? null,
+          });
+          const regexFolderTree =
+            extension_settings[extensionName].regexFolderTree || {};
+          const targetName =
+            fallbackMeta.groupType === "chars"
+              ? getTagName(fallbackTarget.folderId)
+              : fallbackMeta.groupType === "regex"
+                ? regexFolderTree[fallbackTarget.folderId]?.displayName ||
+                  fallbackTarget.folderId
+                : dragData?.type === "res-folder"
+                  ? getResFolderDisplayName(
+                      dragData.resType,
+                      fallbackTarget.folderId,
+                    )
+                  : getResFolderDisplayName(
+                      fallbackMeta.groupType,
+                      fallbackTarget.folderId,
+                    );
+          const isFolderReorder =
+            (dragData?.type === "folder" || dragData?.type === "res-folder") &&
+            fallbackTarget?.zone !== "into";
+          successMessage = isFolderReorder
+            ? itemIds.length > 1
+              ? `已将 ${itemIds.length} 个${fallbackMeta.label}重新排序`
+              : `已将「${fallbackMeta.firstName(dragData)}」重新排序`
+            : itemIds.length > 1
+              ? `已将 ${itemIds.length} 个${fallbackMeta.label}移入「${targetName}」`
+              : `已将「${fallbackMeta.firstName(dragData)}」移入「${targetName}」`;
+        }
+      }
+      if (successMessage) {
+        cfmToastr.success(successMessage);
+      }
+    }
+    _pcDropHandled = false;
+    _pcLastResourceFolderHoverTarget = null;
+    // 某些 Chromium 分支（如 QQ 浏览器）可能在目标 drop 处理前先触发 dragend，
+    // 这里延迟清空，给 drop 处理留出一个短暂回退窗口。
+    setTimeout(() => {
+      if (_pcDragData === dragData) {
+        _pcDragData = null;
+      }
+    }, 120);
     // 清除所有右栏拖放高亮
     $(".cfm-right-list-drop-target").removeClass("cfm-right-list-drop-target");
     const highlightSelector = buildDraggedHighlightSelector(dragData);
@@ -28178,19 +30612,37 @@ jQuery(async () => {
     uncatNode.on("dragover", (e) => {
       e.preventDefault();
       uncatNode.addClass("cfm-drop-target");
+      e.originalEvent.dataTransfer.dropEffect = "move";
+      const data = _pcDragData || {};
+      if (data.type === "char" || data.type === "folder") {
+        _pcLastResourceFolderHoverTarget = {
+          groupType: "chars",
+          targetKind: "ungrouped",
+          zone: "into",
+        };
+      } else if (_pcLastResourceFolderHoverTarget?.groupType === "chars") {
+        _pcLastResourceFolderHoverTarget = null;
+      }
     });
     uncatNode.on("dragleave", () => {
       uncatNode.removeClass("cfm-drop-target");
     });
     uncatNode.on("drop", (e) => {
       e.preventDefault();
+      _pcDropHandled = true;
+      _pcLastResourceFolderHoverTarget = null;
       $(".cfm-right-list-drop-target").removeClass(
         "cfm-right-list-drop-target",
       );
       uncatNode.removeClass("cfm-drop-target");
       const data = pcGetDropData(e);
       if (!data) return;
-      if (data.type === "char" && data.avatar) {
+      if (data.type === "folder" && data.id) {
+        reorderFolder(data.id, null, null);
+        cfmToastr.success(`「${getTagName(data.id)}」已移出到根目录`);
+        renderLeftTree();
+        renderRightPane();
+      } else if (data.type === "char" && data.avatar) {
         const avatars =
           data.multiSelect && data.selectedIds
             ? data.selectedIds
@@ -28330,6 +30782,19 @@ jQuery(async () => {
 
       // 对于文件夹拖放，检查循环（仅 into 模式需要检查）
       const data = _pcDragData || {};
+      if (
+        (data.type === "char" && dropZone === "into") ||
+        data.type === "folder"
+      ) {
+        _pcLastResourceFolderHoverTarget = {
+          groupType: "chars",
+          targetKind: "folder",
+          folderId,
+          zone: dropZone,
+        };
+      } else if (_pcLastResourceFolderHoverTarget?.groupType === "chars") {
+        _pcLastResourceFolderHoverTarget = null;
+      }
 
       if (data.type === "folder" && data.id) {
         if (data.id === folderId) {
@@ -28359,6 +30824,8 @@ jQuery(async () => {
     node.on("drop", (e) => {
       e.preventDefault();
       e.stopPropagation();
+      _pcDropHandled = true;
+      _pcLastResourceFolderHoverTarget = null;
       $(".cfm-right-list-drop-target").removeClass(
         "cfm-right-list-drop-target",
       );
@@ -30356,7 +32823,7 @@ jQuery(async () => {
     // 2. 当前文件夹树形展示（支持拖拽 + 点击选中）
     const treeSection = $(`
             <div class="cfm-config-section">
-                <label>当前文件夹结构 <span class="cfm-drag-hint">点击选中为目标父级</span></label>
+                <label>当前文件夹结构 <span style="font-size:11px;opacity:0.5;color:#57f287;">点击选中为目标父级</span></label>
                 <div class="cfm-config-tree-actions">
                     <button id="cfm-config-expand-all" class="cfm-btn cfm-btn-sm" title="展开全部"><i class="fa-solid fa-angles-down"></i> 展开</button>
                     <button id="cfm-config-collapse-all" class="cfm-btn cfm-btn-sm" title="收起全部"><i class="fa-solid fa-angles-up"></i> 收起</button>
@@ -30654,7 +33121,7 @@ jQuery(async () => {
     // 3. 当前文件夹树形结构
     const treeSection = $(`
       <div class="cfm-config-section">
-        <label>当前文件夹结构 <span style="font-size:11px;opacity:0.5;">(${allFolderIds.length} 个)</span></label>
+        <label>当前文件夹结构 <span style="font-size:11px;opacity:0.5;">(${allFolderIds.length} 个)</span> <span style="font-size:11px;opacity:0.5;color:#57f287;">点击选中为目标父级</span></label>
         <div class="cfm-config-tree-actions">
           <button id="cfm-res-config-expand-all" class="cfm-btn cfm-btn-sm"><i class="fa-solid fa-angles-down"></i> 展开</button>
           <button id="cfm-res-config-collapse-all" class="cfm-btn cfm-btn-sm"><i class="fa-solid fa-angles-up"></i> 收起</button>
@@ -31468,7 +33935,18 @@ jQuery(async () => {
     const tplType = type === "presets" ? "presets" : "worldinfo";
     function refreshResBatchTemplates() {
       const tplArea = popup.find("#cfm-res-batch-tpl-area");
-      tplArea.html(buildBatchTemplateHtml(tplType));
+      const editingIdx = Number.parseInt(
+        popup.data("cfmEditingTemplateIndex"),
+        10,
+      );
+      const editingName = popup.data("cfmEditingTemplateName") || "";
+      tplArea.html(
+        buildBatchTemplateHtml(
+          tplType,
+          Number.isNaN(editingIdx) ? -1 : editingIdx,
+          editingName.toString(),
+        ),
+      );
       bindBatchTemplateEvents(
         tplType,
         popup,
@@ -31998,7 +34476,18 @@ jQuery(async () => {
     // 渲染模板区域
     function refreshBatchTemplates() {
       const tplArea = popup.find("#cfm-batch-tpl-area");
-      tplArea.html(buildBatchTemplateHtml("characters"));
+      const editingIdx = Number.parseInt(
+        popup.data("cfmEditingTemplateIndex"),
+        10,
+      );
+      const editingName = popup.data("cfmEditingTemplateName") || "";
+      tplArea.html(
+        buildBatchTemplateHtml(
+          "characters",
+          Number.isNaN(editingIdx) ? -1 : editingIdx,
+          editingName.toString(),
+        ),
+      );
       bindBatchTemplateEvents(
         "characters",
         popup,
@@ -32312,6 +34801,22 @@ jQuery(async () => {
       });
 
       // 拖放目标（三区域）
+      node[0].addEventListener(
+        "drop",
+        (event) => {
+          cfmDebugDragLog("presetTreeNode:nativeDrop:capture", {
+            folderId,
+            targetClassName: event.target?.className || null,
+            currentTargetClassName: event.currentTarget?.className || null,
+            dropEffect: event.dataTransfer?.dropEffect ?? null,
+            effectAllowed: event.dataTransfer?.effectAllowed ?? null,
+            types: event.dataTransfer?.types
+              ? Array.from(event.dataTransfer.types)
+              : [],
+          });
+        },
+        true,
+      );
       node.on("dragover", (e) => {
         e.preventDefault();
         node.removeClass(
@@ -32321,8 +34826,56 @@ jQuery(async () => {
         const relY = (e.originalEvent.clientY - rect.top) / rect.height;
         let zone = relY < 0.25 ? "before" : relY > 0.75 ? "after" : "into";
         node.data("dropZone", zone);
+        if (e.originalEvent?.dataTransfer) {
+          e.originalEvent.dataTransfer.dropEffect = "move";
+        }
 
         const data = _pcDragData || {};
+        const isPresetItemDrag =
+          data.type === "preset" ||
+          (data.type === "res-folder" && data.resType === "presets");
+        const isPresetFolderDrag =
+          data.type === "res-folder" && data.resType === "presets";
+        if (isPresetItemDrag && (zone === "into" || isPresetFolderDrag)) {
+          _pcLastResourceFolderHoverTarget = {
+            groupType: "presets",
+            targetKind: "folder",
+            folderId,
+            zone,
+          };
+          window._cfmLastResourceFolderHoverTarget =
+            _pcLastResourceFolderHoverTarget;
+        } else if (
+          !isPresetItemDrag &&
+          _pcLastResourceFolderHoverTarget?.groupType === "presets"
+        ) {
+          _pcLastResourceFolderHoverTarget = null;
+          window._cfmLastResourceFolderHoverTarget = null;
+        }
+        cfmDebugDragLog("presetTreeNode:dragover", {
+          folderId,
+          zone,
+          dragData: data,
+          isPresetItemDrag,
+          hoverTargetSnapshot:
+            isPresetItemDrag && zone === "into"
+              ? {
+                  groupType: "presets",
+                  targetKind: "folder",
+                  folderId,
+                  zone,
+                }
+              : _pcLastResourceFolderHoverTarget,
+          lastResourceFolderHoverTarget: _pcLastResourceFolderHoverTarget,
+          clientY: e.originalEvent?.clientY ?? null,
+          rectTop: rect.top,
+          rectHeight: rect.height,
+          dropEffect: e.originalEvent?.dataTransfer?.dropEffect ?? null,
+          effectAllowed: e.originalEvent?.dataTransfer?.effectAllowed ?? null,
+          types: e.originalEvent?.dataTransfer?.types
+            ? Array.from(e.originalEvent.dataTransfer.types)
+            : [],
+        });
 
         if (data.type === "res-folder" && data.resType === "presets") {
           if (data.id === folderId) {
@@ -32350,6 +34903,8 @@ jQuery(async () => {
       node.on("drop", (e) => {
         e.preventDefault();
         e.stopPropagation();
+        _pcDropHandled = true;
+        _pcLastResourceFolderHoverTarget = null;
         $(".cfm-right-list-drop-target").removeClass(
           "cfm-right-list-drop-target",
         );
@@ -32473,10 +35028,23 @@ jQuery(async () => {
     uncatNode.on("dragover", (e) => {
       e.preventDefault();
       uncatNode.addClass("cfm-drop-target");
+      e.originalEvent.dataTransfer.dropEffect = "move";
+      const data = _pcDragData || {};
+      if (data.type === "preset") {
+        _pcLastResourceFolderHoverTarget = {
+          groupType: "presets",
+          targetKind: "ungrouped",
+          zone: "into",
+        };
+      } else if (_pcLastResourceFolderHoverTarget?.groupType === "presets") {
+        _pcLastResourceFolderHoverTarget = null;
+      }
     });
     uncatNode.on("dragleave", () => uncatNode.removeClass("cfm-drop-target"));
     uncatNode.on("drop", (e) => {
       e.preventDefault();
+      _pcDropHandled = true;
+      _pcLastResourceFolderHoverTarget = null;
       $(".cfm-right-list-drop-target").removeClass(
         "cfm-right-list-drop-target",
       );
@@ -33225,7 +35793,28 @@ jQuery(async () => {
         const relY = (e.originalEvent.clientY - rect.top) / rect.height;
         let zone = relY < 0.25 ? "before" : relY > 0.75 ? "after" : "into";
         node.data("dropZone", zone);
+        if (e.originalEvent?.dataTransfer) {
+          e.originalEvent.dataTransfer.dropEffect = "move";
+        }
         const data = _pcDragData || {};
+        const isThemeItemDrag =
+          data.type === "theme" ||
+          (data.type === "res-folder" && data.resType === "themes");
+        const isThemeFolderDrag =
+          data.type === "res-folder" && data.resType === "themes";
+        if (isThemeItemDrag && (zone === "into" || isThemeFolderDrag)) {
+          _pcLastResourceFolderHoverTarget = {
+            groupType: "themes",
+            targetKind: "folder",
+            folderId,
+            zone,
+          };
+        } else if (
+          !isThemeItemDrag &&
+          _pcLastResourceFolderHoverTarget?.groupType === "themes"
+        ) {
+          _pcLastResourceFolderHoverTarget = null;
+        }
         if (data.type === "res-folder" && data.resType === "themes") {
           if (data.id === folderId) {
             node.addClass("cfm-drop-forbidden");
@@ -33251,6 +35840,8 @@ jQuery(async () => {
       node.on("drop", (e) => {
         e.preventDefault();
         e.stopPropagation();
+        _pcDropHandled = true;
+        _pcLastResourceFolderHoverTarget = null;
         $(".cfm-right-list-drop-target").removeClass(
           "cfm-right-list-drop-target",
         );
@@ -33367,10 +35958,23 @@ jQuery(async () => {
     uncatNode.on("dragover", (e) => {
       e.preventDefault();
       uncatNode.addClass("cfm-drop-target");
+      e.originalEvent.dataTransfer.dropEffect = "move";
+      const data = _pcDragData || {};
+      if (data.type === "theme") {
+        _pcLastResourceFolderHoverTarget = {
+          groupType: "themes",
+          targetKind: "ungrouped",
+          zone: "into",
+        };
+      } else if (_pcLastResourceFolderHoverTarget?.groupType === "themes") {
+        _pcLastResourceFolderHoverTarget = null;
+      }
     });
     uncatNode.on("dragleave", () => uncatNode.removeClass("cfm-drop-target"));
     uncatNode.on("drop", (e) => {
       e.preventDefault();
+      _pcDropHandled = true;
+      _pcLastResourceFolderHoverTarget = null;
       $(".cfm-right-list-drop-target").removeClass(
         "cfm-right-list-drop-target",
       );
@@ -33987,7 +36591,28 @@ jQuery(async () => {
         const relY = (e.originalEvent.clientY - rect.top) / rect.height;
         let zone = relY < 0.25 ? "before" : relY > 0.75 ? "after" : "into";
         node.data("dropZone", zone);
+        if (e.originalEvent?.dataTransfer) {
+          e.originalEvent.dataTransfer.dropEffect = "move";
+        }
         const data = _pcDragData || {};
+        const isBackgroundItemDrag =
+          data.type === "background" ||
+          (data.type === "res-folder" && data.resType === "backgrounds");
+        const isBackgroundFolderDrag =
+          data.type === "res-folder" && data.resType === "backgrounds";
+        if (isBackgroundItemDrag && (zone === "into" || isBackgroundFolderDrag)) {
+          _pcLastResourceFolderHoverTarget = {
+            groupType: "backgrounds",
+            targetKind: "folder",
+            folderId,
+            zone,
+          };
+        } else if (
+          !isBackgroundItemDrag &&
+          _pcLastResourceFolderHoverTarget?.groupType === "backgrounds"
+        ) {
+          _pcLastResourceFolderHoverTarget = null;
+        }
         if (data.type === "res-folder" && data.resType === "backgrounds") {
           if (data.id === folderId) {
             node.addClass("cfm-drop-forbidden");
@@ -34013,6 +36638,8 @@ jQuery(async () => {
       node.on("drop", (e) => {
         e.preventDefault();
         e.stopPropagation();
+        _pcDropHandled = true;
+        _pcLastResourceFolderHoverTarget = null;
         $(".cfm-right-list-drop-target").removeClass(
           "cfm-right-list-drop-target",
         );
@@ -34120,10 +36747,25 @@ jQuery(async () => {
     uncatNode.on("dragover", (e) => {
       e.preventDefault();
       uncatNode.addClass("cfm-drop-target");
+      e.originalEvent.dataTransfer.dropEffect = "move";
+      const data = _pcDragData || {};
+      if (data.type === "background") {
+        _pcLastResourceFolderHoverTarget = {
+          groupType: "backgrounds",
+          targetKind: "ungrouped",
+          zone: "into",
+        };
+      } else if (
+        _pcLastResourceFolderHoverTarget?.groupType === "backgrounds"
+      ) {
+        _pcLastResourceFolderHoverTarget = null;
+      }
     });
     uncatNode.on("dragleave", () => uncatNode.removeClass("cfm-drop-target"));
     uncatNode.on("drop", (e) => {
       e.preventDefault();
+      _pcDropHandled = true;
+      _pcLastResourceFolderHoverTarget = null;
       $(".cfm-right-list-drop-target").removeClass(
         "cfm-right-list-drop-target",
       );
@@ -35078,9 +37720,44 @@ jQuery(async () => {
         const relY = (e.originalEvent.clientY - rect.top) / rect.height;
         let zone = relY < 0.25 ? "before" : relY > 0.75 ? "after" : "into";
         node.data("dropZone", zone);
+        if (e.originalEvent?.dataTransfer) {
+          e.originalEvent.dataTransfer.dropEffect = "move";
+        }
 
         const data = _pcDragData || {};
+        const isWorldInfoItemDrag =
+          data.type === "worldinfo" ||
+          (data.type === "res-folder" && data.resType === "worldinfo");
+        cfmDebugDragLog("presetTreeNode:dragover", {
+          folderId,
+          zone,
+          dragData: data,
+          isWorldInfoItemDrag,
+          clientY: e.originalEvent?.clientY ?? null,
+          rectTop: rect.top,
+          rectHeight: rect.height,
+          dropEffect: e.originalEvent?.dataTransfer?.dropEffect ?? null,
+          effectAllowed: e.originalEvent?.dataTransfer?.effectAllowed ?? null,
+          types: e.originalEvent?.dataTransfer?.types
+            ? Array.from(e.originalEvent.dataTransfer.types)
+            : [],
+        });
 
+        const isWorldInfoFolderDrag =
+          data.type === "res-folder" && data.resType === "worldinfo";
+        if (isWorldInfoItemDrag && (zone === "into" || isWorldInfoFolderDrag)) {
+          _pcLastResourceFolderHoverTarget = {
+            groupType: "worldinfo",
+            targetKind: "folder",
+            folderId,
+            zone,
+          };
+        } else if (
+          !isWorldInfoItemDrag &&
+          _pcLastResourceFolderHoverTarget?.groupType === "worldinfo"
+        ) {
+          _pcLastResourceFolderHoverTarget = null;
+        }
         if (data.type === "res-folder" && data.resType === "worldinfo") {
           if (data.id === folderId) {
             node.addClass("cfm-drop-forbidden");
@@ -35107,6 +37784,8 @@ jQuery(async () => {
       node.on("drop", (e) => {
         e.preventDefault();
         e.stopPropagation();
+        _pcDropHandled = true;
+        _pcLastResourceFolderHoverTarget = null;
         $(".cfm-right-list-drop-target").removeClass(
           "cfm-right-list-drop-target",
         );
@@ -35246,10 +37925,23 @@ jQuery(async () => {
     uncatNode.on("dragover", (e) => {
       e.preventDefault();
       uncatNode.addClass("cfm-drop-target");
+      e.originalEvent.dataTransfer.dropEffect = "move";
+      const data = _pcDragData || {};
+      if (data.type === "worldinfo") {
+        _pcLastResourceFolderHoverTarget = {
+          groupType: "worldinfo",
+          targetKind: "ungrouped",
+          zone: "into",
+        };
+      } else if (_pcLastResourceFolderHoverTarget?.groupType === "worldinfo") {
+        _pcLastResourceFolderHoverTarget = null;
+      }
     });
     uncatNode.on("dragleave", () => uncatNode.removeClass("cfm-drop-target"));
     uncatNode.on("drop", (e) => {
       e.preventDefault();
+      _pcDropHandled = true;
+      _pcLastResourceFolderHoverTarget = null;
       $(".cfm-right-list-drop-target").removeClass(
         "cfm-right-list-drop-target",
       );
@@ -35817,16 +38509,16 @@ jQuery(async () => {
   function getQrSetNames() {
     try {
       const api = typeof globalThis !== "undefined" && globalThis.quickReplyApi;
-      if (!api) return [];
-      const QuickReplySet = api.listSets
-        ? null
-        : globalThis.QuickReplySet || null;
+      const QuickReplySet =
+        typeof globalThis !== "undefined"
+          ? globalThis.QuickReplySet || null
+          : null;
       // 尝试通过 api.listSets() 获取
-      if (api.listSets) {
+      if (api && typeof api.listSets === "function") {
         return api.listSets().map((s) => (typeof s === "string" ? s : s.name));
       }
       // 尝试通过 QuickReplySet.list
-      if (QuickReplySet && QuickReplySet.list) {
+      if (QuickReplySet && Array.isArray(QuickReplySet.list)) {
         return QuickReplySet.list.map((s) => s.name);
       }
       // 从 DOM 读取
@@ -36476,7 +39168,28 @@ jQuery(async () => {
         const relY = (e.originalEvent.clientY - rect.top) / rect.height;
         let zone = relY < 0.25 ? "before" : relY > 0.75 ? "after" : "into";
         node.data("dropZone", zone);
+        if (e.originalEvent?.dataTransfer) {
+          e.originalEvent.dataTransfer.dropEffect = "move";
+        }
         const data = _pcDragData || {};
+        const isQuickReplyItemDrag =
+          data.type === "quickreply" ||
+          (data.type === "res-folder" && data.resType === "quickreply");
+        const isQuickReplyFolderDrag =
+          data.type === "res-folder" && data.resType === "quickreply";
+        if (isQuickReplyItemDrag && (zone === "into" || isQuickReplyFolderDrag)) {
+          _pcLastResourceFolderHoverTarget = {
+            groupType: "quickreply",
+            targetKind: "folder",
+            folderId,
+            zone,
+          };
+        } else if (
+          !isQuickReplyItemDrag &&
+          _pcLastResourceFolderHoverTarget?.groupType === "quickreply"
+        ) {
+          _pcLastResourceFolderHoverTarget = null;
+        }
         if (data.type === "res-folder" && data.resType === "quickreply") {
           if (data.id === folderId) {
             node.addClass("cfm-drop-forbidden");
@@ -36502,6 +39215,8 @@ jQuery(async () => {
       node.on("drop", (e) => {
         e.preventDefault();
         e.stopPropagation();
+        _pcDropHandled = true;
+        _pcLastResourceFolderHoverTarget = null;
         $(".cfm-right-list-drop-target").removeClass(
           "cfm-right-list-drop-target",
         );
@@ -36640,10 +39355,23 @@ jQuery(async () => {
     uncatNode.on("dragover", (e) => {
       e.preventDefault();
       uncatNode.addClass("cfm-drop-target");
+      e.originalEvent.dataTransfer.dropEffect = "move";
+      const data = _pcDragData || {};
+      if (data.type === "quickreply") {
+        _pcLastResourceFolderHoverTarget = {
+          groupType: "quickreply",
+          targetKind: "ungrouped",
+          zone: "into",
+        };
+      } else if (_pcLastResourceFolderHoverTarget?.groupType === "quickreply") {
+        _pcLastResourceFolderHoverTarget = null;
+      }
     });
     uncatNode.on("dragleave", () => uncatNode.removeClass("cfm-drop-target"));
     uncatNode.on("drop", (e) => {
       e.preventDefault();
+      _pcDropHandled = true;
+      _pcLastResourceFolderHoverTarget = null;
       $(".cfm-right-list-drop-target").removeClass(
         "cfm-right-list-drop-target",
       );
@@ -40995,9 +43723,44 @@ jQuery(async () => {
         const relY = (e.originalEvent.clientY - rect.top) / rect.height;
         let zone = relY < 0.25 ? "before" : relY > 0.75 ? "after" : "into";
         node.data("dropZone", zone);
+        if (e.originalEvent?.dataTransfer) {
+          e.originalEvent.dataTransfer.dropEffect = "move";
+        }
 
         const data = _pcDragData || {};
+        const isPersonaItemDrag =
+          data.type === "persona" ||
+          (data.type === "res-folder" && data.resType === "personas");
+        cfmDebugDragLog("presetTreeNode:dragover", {
+          folderId,
+          zone,
+          dragData: data,
+          isPersonaItemDrag,
+          clientY: e.originalEvent?.clientY ?? null,
+          rectTop: rect.top,
+          rectHeight: rect.height,
+          dropEffect: e.originalEvent?.dataTransfer?.dropEffect ?? null,
+          effectAllowed: e.originalEvent?.dataTransfer?.effectAllowed ?? null,
+          types: e.originalEvent?.dataTransfer?.types
+            ? Array.from(e.originalEvent.dataTransfer.types)
+            : [],
+        });
 
+        const isPersonaFolderDrag =
+          data.type === "res-folder" && data.resType === "personas";
+        if (isPersonaItemDrag && (zone === "into" || isPersonaFolderDrag)) {
+          _pcLastResourceFolderHoverTarget = {
+            groupType: "personas",
+            targetKind: "folder",
+            folderId,
+            zone,
+          };
+        } else if (
+          !isPersonaItemDrag &&
+          _pcLastResourceFolderHoverTarget?.groupType === "personas"
+        ) {
+          _pcLastResourceFolderHoverTarget = null;
+        }
         if (data.type === "res-folder" && data.resType === "personas") {
           if (data.id === folderId) {
             node.addClass("cfm-drop-forbidden");
@@ -41024,6 +43787,8 @@ jQuery(async () => {
       node.on("drop", (e) => {
         e.preventDefault();
         e.stopPropagation();
+        _pcDropHandled = true;
+        _pcLastResourceFolderHoverTarget = null;
         $(".cfm-right-list-drop-target").removeClass(
           "cfm-right-list-drop-target",
         );
@@ -41147,10 +43912,23 @@ jQuery(async () => {
     uncatNode.on("dragover", (e) => {
       e.preventDefault();
       uncatNode.addClass("cfm-drop-target");
+      e.originalEvent.dataTransfer.dropEffect = "move";
+      const data = _pcDragData || {};
+      if (data.type === "persona") {
+        _pcLastResourceFolderHoverTarget = {
+          groupType: "personas",
+          targetKind: "ungrouped",
+          zone: "into",
+        };
+      } else if (_pcLastResourceFolderHoverTarget?.groupType === "personas") {
+        _pcLastResourceFolderHoverTarget = null;
+      }
     });
     uncatNode.on("dragleave", () => uncatNode.removeClass("cfm-drop-target"));
     uncatNode.on("drop", (e) => {
       e.preventDefault();
+      _pcDropHandled = true;
+      _pcLastResourceFolderHoverTarget = null;
       $(".cfm-right-list-drop-target").removeClass(
         "cfm-right-list-drop-target",
       );
@@ -45233,11 +48011,22 @@ jQuery(async () => {
         e.preventDefault();
         node.addClass("cfm-drop-target");
         e.originalEvent.dataTransfer.dropEffect = "move";
+        const data = _pcDragData || {};
+        if (data.type === "regex-script") {
+          _pcLastResourceFolderHoverTarget = {
+            groupType: "regex",
+            targetKind: "folder",
+            folderId,
+            zone: "into",
+          };
+        }
       });
       node.on("dragleave", () => node.removeClass("cfm-drop-target"));
       node.on("drop", (e) => {
         e.preventDefault();
         e.stopPropagation();
+        _pcDropHandled = true;
+        _pcLastResourceFolderHoverTarget = null;
         node.removeClass("cfm-drop-target");
         const data = pcGetDropData(e);
         if (!data) return;
@@ -45317,10 +48106,22 @@ jQuery(async () => {
       e.preventDefault();
       uncatNode.addClass("cfm-drop-target");
       e.originalEvent.dataTransfer.dropEffect = "move";
+      const data = _pcDragData || {};
+      if (data.type === "regex-script" || data.type === "regex-folder") {
+        _pcLastResourceFolderHoverTarget = {
+          groupType: "regex",
+          targetKind: "ungrouped",
+          zone: "into",
+        };
+      } else if (_pcLastResourceFolderHoverTarget?.groupType === "regex") {
+        _pcLastResourceFolderHoverTarget = null;
+      }
     });
     uncatNode.on("dragleave", () => uncatNode.removeClass("cfm-drop-target"));
     uncatNode.on("drop", (e) => {
       e.preventDefault();
+      _pcDropHandled = true;
+      _pcLastResourceFolderHoverTarget = null;
       uncatNode.removeClass("cfm-drop-target");
       const data = pcGetDropData(e);
       if (!data) return;
@@ -45444,10 +48245,25 @@ jQuery(async () => {
           folderRow.removeClass("cfm-drop-target cfm-drop-forbidden");
           const data = _pcDragData || {};
           if (data.type === "regex-script") {
+            _pcLastResourceFolderHoverTarget = {
+              groupType: "regex",
+              targetKind: "folder",
+              folderId: childId,
+              zone: "into",
+            };
             folderRow.addClass("cfm-drop-target");
           } else if (data.type === "regex-folder" && data.id !== childId) {
+            _pcLastResourceFolderHoverTarget = {
+              groupType: "regex",
+              targetKind: "folder",
+              folderId: childId,
+              zone: "into",
+            };
             folderRow.addClass("cfm-drop-target");
           } else {
+            if (_pcLastResourceFolderHoverTarget?.groupType === "regex") {
+              _pcLastResourceFolderHoverTarget = null;
+            }
             folderRow.addClass("cfm-drop-forbidden");
             return;
           }
@@ -45459,6 +48275,8 @@ jQuery(async () => {
         folderRow.on("drop", (e) => {
           e.preventDefault();
           e.stopPropagation();
+          _pcDropHandled = true;
+          _pcLastResourceFolderHoverTarget = null;
           folderRow.removeClass("cfm-drop-target cfm-drop-forbidden");
           const data = pcGetDropData(e);
           if (!data) return;
@@ -45934,6 +48752,47 @@ jQuery(async () => {
       };
     }
 
+    if (scope === "all" || scope === "regex") {
+      ensureResourceSettings();
+      const globalScripts = getRegexGlobalScripts();
+      const regexGroups =
+        extension_settings[extensionName].regexGlobalGroups || {};
+      const regexFavIds = new Set(getResFavorites("regex"));
+      const assignments = {};
+      const favorites = [];
+
+      for (const script of globalScripts) {
+        const scriptName = String(script?.scriptName || "").trim();
+        const scriptId = String(script?.id || "").trim();
+        if (!scriptName || !scriptId) continue;
+        const folderId = regexGroups[scriptId];
+        if (folderId) assignments[scriptName] = folderId;
+        if (regexFavIds.has(scriptId)) favorites.push(scriptName);
+      }
+
+      data.regex = {
+        folderTree: JSON.parse(
+          JSON.stringify(
+            extension_settings[extensionName].regexFolderTree || {},
+          ),
+        ),
+        assignments,
+        favorites: Array.from(new Set(favorites)),
+      };
+    }
+
+    if (scope === "all" || scope === "quickreply") {
+      ensureResourceSettings();
+      data.quickreply = {
+        folderTree: JSON.parse(JSON.stringify(getResFolderTree("quickreply"))),
+        groups: JSON.parse(JSON.stringify(getResourceGroups("quickreply"))),
+        favorites: [...getResFavorites("quickreply")],
+        notes: JSON.parse(
+          JSON.stringify(extension_settings[extensionName].qrNotes || {}),
+        ),
+      };
+    }
+
     return data;
   }
 
@@ -45957,7 +48816,11 @@ jQuery(async () => {
                 ? "背景"
                 : scope === "personas"
                   ? "User"
-                  : "世界书";
+                  : scope === "regex"
+                    ? "正则"
+                    : scope === "quickreply"
+                      ? "QR"
+                      : "世界书";
     a.download = `cfm-backup-${scopeLabel}-${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(a);
     a.click();
@@ -45974,6 +48837,8 @@ jQuery(async () => {
       themes: { matched: 0, skipped: 0 },
       backgrounds: { matched: 0, skipped: 0 },
       personas: { matched: 0, skipped: 0 },
+      regex: { matched: 0, skipped: 0 },
+      quickreply: { matched: 0, skipped: 0 },
       foldersCreated: 0,
       favoritesRestored: 0,
     };
@@ -46375,6 +49240,130 @@ jQuery(async () => {
       }
     }
 
+    if (jsonData.regex) {
+      const { folderTree, assignments, favorites } = jsonData.regex;
+      ensureResourceSettings();
+      let regexChanged = false;
+
+      if (folderTree) {
+        const existingTree =
+          extension_settings[extensionName].regexFolderTree || {};
+        extension_settings[extensionName].regexFolderTree = existingTree;
+        for (const [folderId, folderData] of Object.entries(folderTree)) {
+          if (!existingTree[folderId]) {
+            existingTree[folderId] = { ...folderData };
+            report.foldersCreated++;
+            regexChanged = true;
+          }
+        }
+      }
+
+      const globalScripts = getRegexGlobalScripts();
+      const scriptNameToIds = new Map();
+      for (const script of globalScripts) {
+        const scriptName = String(script?.scriptName || "").trim();
+        const scriptId = String(script?.id || "").trim();
+        if (!scriptName || !scriptId) continue;
+        if (!scriptNameToIds.has(scriptName))
+          scriptNameToIds.set(scriptName, []);
+        scriptNameToIds.get(scriptName).push(scriptId);
+      }
+
+      if (assignments) {
+        const existingFolderIds = new Set(
+          Object.keys(extension_settings[extensionName].regexFolderTree || {}),
+        );
+        const currentGroups = {
+          ...(extension_settings[extensionName].regexGlobalGroups || {}),
+        };
+
+        for (const [scriptName, folderId] of Object.entries(assignments)) {
+          const matchedIds =
+            scriptNameToIds.get(String(scriptName || "").trim()) || [];
+          if (matchedIds.length > 0 && existingFolderIds.has(folderId)) {
+            for (const scriptId of matchedIds)
+              currentGroups[scriptId] = folderId;
+            report.regex.matched += matchedIds.length;
+            regexChanged = true;
+          } else {
+            report.regex.skipped++;
+          }
+        }
+
+        extension_settings[extensionName].regexGlobalGroups = currentGroups;
+      }
+
+      if (favorites) {
+        const currentFavs = new Set(getResFavorites("regex"));
+        for (const scriptName of favorites) {
+          const matchedIds =
+            scriptNameToIds.get(String(scriptName || "").trim()) || [];
+          for (const scriptId of matchedIds) {
+            if (!currentFavs.has(scriptId)) {
+              currentFavs.add(scriptId);
+              report.favoritesRestored++;
+              regexChanged = true;
+            }
+          }
+        }
+        extension_settings[extensionName].regexFavorites = [...currentFavs];
+      }
+
+      if (regexChanged) {
+        getContext().saveSettingsDebounced();
+      }
+    }
+
+    if (jsonData.quickreply) {
+      const { folderTree, groups, favorites } = jsonData.quickreply;
+      ensureResourceSettings();
+
+      if (folderTree) {
+        const existingTree = getResFolderTree("quickreply");
+        for (const [folderId, folderData] of Object.entries(folderTree)) {
+          if (!existingTree[folderId]) {
+            existingTree[folderId] = { ...folderData };
+            report.foldersCreated++;
+          }
+        }
+        saveResTree("quickreply");
+      }
+
+      if (groups) {
+        const qrNameSet = getExistingQrSetNameSet();
+        const existingFolderIds = new Set(getResFolderIds("quickreply"));
+
+        for (const [setName, folderName] of Object.entries(groups)) {
+          if (qrNameSet.has(setName) && existingFolderIds.has(folderName)) {
+            setItemGroup("quickreply", setName, folderName);
+            report.quickreply.matched++;
+          } else {
+            report.quickreply.skipped++;
+          }
+        }
+      }
+
+      if (favorites) {
+        const qrNameSet = getExistingQrSetNameSet();
+        for (const name of favorites) {
+          if (qrNameSet.has(name) && !isResFavorite("quickreply", name)) {
+            toggleResFavorite("quickreply", name);
+            report.favoritesRestored++;
+          }
+        }
+      }
+
+      const qrNotes = jsonData.quickreply.notes;
+      if (qrNotes && typeof qrNotes === "object") {
+        const qrNameSet = getExistingQrSetNameSet();
+        for (const [name, note] of Object.entries(qrNotes)) {
+          if (qrNameSet.has(name) && note) {
+            setQrNote(name, note);
+          }
+        }
+      }
+    }
+
     return report;
   }
 
@@ -46394,7 +49383,11 @@ jQuery(async () => {
               ? "背景"
               : currentResourceType === "personas"
                 ? "User"
-                : "世界书";
+                : currentResourceType === "regex"
+                  ? "正则"
+                  : currentResourceType === "quickreply"
+                    ? "QR"
+                    : "世界书";
     const popup = $(`
       <div class="cfm-batch-popup" style="max-width:480px;">
         <div class="cfm-config-header">
@@ -46476,6 +49469,10 @@ jQuery(async () => {
             html += `背景：匹配 ${report.backgrounds.matched} 个，跳过 ${report.backgrounds.skipped} 个<br>`;
           if (jsonData.personas)
             html += `User：匹配 ${report.personas.matched} 个，跳过 ${report.personas.skipped} 个<br>`;
+          if (jsonData.regex)
+            html += `正则：匹配 ${report.regex.matched} 个，跳过 ${report.regex.skipped} 个<br>`;
+          if (jsonData.quickreply)
+            html += `QR：匹配 ${report.quickreply.matched} 个，跳过 ${report.quickreply.skipped} 个<br>`;
           if (report.favoritesRestored > 0)
             html += `恢复了 ${report.favoritesRestored} 个收藏<br>`;
           html += `</div>`;
@@ -48310,6 +51307,22 @@ jQuery(async () => {
       });
     }
   }
+
+  publishBackupBridgeSignal("ready", {
+    displayName: "酒馆资源管理器",
+    bridgeVersion: "0.1.0",
+    capabilities: [
+      "handshake",
+      "chars",
+      "worldinfo",
+      "presets",
+      "themes",
+      "backgrounds",
+      "personas",
+      "regex",
+      "qr",
+    ],
+  });
 
   console.log(`[${extensionName}] 酒馆资源管理器已加载`);
 });
