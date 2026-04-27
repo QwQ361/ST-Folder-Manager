@@ -514,7 +514,7 @@
 #cfm-config-popup .cfm-config-body {
   flex-grow: 1;
   overflow-y: auto;
-  padding: 14px 18px;
+  padding: 0 18px 14px;
   scrollbar-width: thin;
 }
 
@@ -527,6 +527,68 @@
   font-size: 13px;
   margin-bottom: 6px;
   font-weight: 600;
+}
+.cfm-config-tab-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0 -18px 0;
+}
+.cfm-config-top-tabs {
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 1;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--SmartThemeBorderColor, #45475a);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px;
+  position: sticky;
+  top: -1px;
+  z-index: 8;
+  background-color: var(--SmartThemeBlurTintColor, #1e1e2e);
+  background-image: none;
+  box-shadow: 0 1px 0 var(--SmartThemeBorderColor, #45475a);
+  box-sizing: border-box;
+  width: 100%;
+}
+.cfm-config-top-tab {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  color: var(--SmartThemeBodyColor, #cdd6f4);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  opacity: 0.6;
+  transition:
+    opacity 0.15s,
+    background-color 0.15s,
+    color 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  line-height: 1.2;
+  box-sizing: border-box;
+}
+.cfm-config-top-tab:hover {
+  opacity: 1;
+  background-color: rgba(255, 255, 255, 0.1);
+}
+.cfm-config-top-tab.cfm-config-top-tab-active {
+  opacity: 1;
+  color: var(--SmartThemeQuoteColor, #89b4fa);
+  background-color: rgba(137, 180, 250, 0.12);
+}
+.cfm-config-tab-panel {
+  min-width: 0;
+  padding: 8px 18px 0;
 }
 
 /* 按钮模式切换 */
@@ -1987,6 +2049,13 @@
     cursor: default;
   }
 
+  .cfm-layout-menu-switch-label input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    min-width: 18px;
+    min-height: 18px;
+  }
+
   /* 移动端提示：添加分隔线拖动手柄 */
   .cfm-left-pane::after {
     content: "";
@@ -2000,6 +2069,36 @@
     border-radius: 2px;
     opacity: 0.5;
     pointer-events: none;
+  }
+
+  .cfm-regex-transfer-dialog-popup {
+    width: calc(100vw - 16px) !important;
+    max-width: calc(100vw - 16px) !important;
+    max-height: calc(
+      100dvh - max(env(safe-area-inset-bottom, 0px), 56px) - 12px
+    ) !important;
+    top: 8px !important;
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+    margin: 0 !important;
+  }
+
+  .cfm-regex-transfer-dialog-popup .cfm-edit-popup-body {
+    padding-bottom: 8px;
+  }
+
+  .cfm-regex-transfer-dialog-popup .cfm-regex-transfer-preset-tree {
+    max-height: min(38vh, 320px) !important;
+  }
+
+  .cfm-regex-transfer-dialog-popup .cfm-edit-popup-footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    margin-top: 0;
+    padding: 10px 0 max(env(safe-area-inset-bottom, 0px), 12px);
+    background: var(--SmartThemeBlurTintColor, #1e1e2e);
+    border-top: 1px solid var(--SmartThemeBorderColor, #45475a);
   }
 }
 
@@ -2328,6 +2427,75 @@ select.cfm-search-select {
   background-color: rgba(137, 180, 250, 0.08);
   font-weight: 600;
 }
+.cfm-tab-menu-wrap {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+}
+.cfm-tab-menu-btn {
+  flex: 0 0 auto;
+  min-width: 46px;
+  padding-inline: 12px;
+  background: transparent;
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
+}
+.cfm-tab-menu-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 3501;
+  min-width: 140px;
+  max-width: 220px;
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(24, 24, 34, 0.96);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(8px);
+}
+.cfm-tab-menu-wrap.cfm-tab-menu-open .cfm-tab-menu-dropdown {
+  display: flex;
+}
+.cfm-tab-menu-item {
+  width: 100%;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--SmartThemeBodyColor, #cdd6f4);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition:
+    background-color 0.15s,
+    color 0.15s,
+    opacity 0.15s;
+}
+.cfm-tab-menu-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.cfm-tab-menu-item i {
+  width: 14px;
+  text-align: center;
+  opacity: 0.9;
+}
+.cfm-tab-menu-item span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cfm-tab-menu-item.cfm-tab-menu-item-active {
+  color: #89b4fa;
+  background: rgba(137, 180, 250, 0.12);
+  font-weight: 600;
+}
 
 /* ========== 资源视图（预设/世界书） ========== */
 .cfm-resource-view {
@@ -2494,6 +2662,19 @@ input.cfm-rv-search {
     min-width: calc(100% / 5);
     max-width: calc(100% / 4);
     border-bottom: 2px solid transparent;
+  }
+  .cfm-tab-menu-wrap {
+    width: 100%;
+  }
+  .cfm-tab-menu-btn {
+    width: 100%;
+    border-left: none;
+    max-width: none;
+  }
+  .cfm-tab-menu-dropdown {
+    left: 0;
+    right: 0;
+    max-width: none;
   }
   .cfm-rv-item {
     padding: 12px 16px 12px 32px;
@@ -3116,6 +3297,136 @@ input.cfm-rv-search {
   border-left: 2px solid #f38ba8 !important;
 }
 
+/* ========== 自定义布局：按钮收纳 ========== */
+.cfm-layout-menu-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.cfm-layout-menu-switch-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.cfm-layout-menu-switch-label input[type="checkbox"] {
+  appearance: auto;
+  -webkit-appearance: checkbox;
+  accent-color: #89b4fa;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex: 0 0 auto;
+}
+.cfm-layout-menu-switch-hint {
+  font-size: 12px;
+  opacity: 0.65;
+}
+.cfm-layout-action-item {
+  gap: 8px;
+}
+.cfm-layout-menu-check {
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: transparent;
+  color: #89b4fa;
+  cursor: pointer;
+  padding: 0;
+  opacity: 0.82;
+  transition:
+    border-color 0.15s,
+    background-color 0.15s,
+    color 0.15s,
+    opacity 0.15s,
+    transform 0.12s;
+}
+.cfm-layout-menu-check:hover {
+  opacity: 1;
+  border-color: rgba(137, 180, 250, 0.8);
+  background: rgba(137, 180, 250, 0.08);
+}
+.cfm-layout-menu-check:active {
+  transform: scale(0.94);
+}
+.cfm-layout-menu-check i {
+  font-size: 11px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.cfm-layout-menu-check.cfm-layout-menu-check-checked {
+  border-color: rgba(166, 227, 161, 0.75);
+  background: rgba(166, 227, 161, 0.12);
+  color: #a6e3a1;
+}
+.cfm-layout-menu-check.cfm-layout-menu-check-checked i {
+  opacity: 1;
+}
+.cfm-layout-menu-check-hidden {
+  display: none !important;
+}
+.cfm-toolbar-menu-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  order: 9;
+  margin-left: 4px;
+}
+.cfm-toolbar-menu-dropdown {
+  display: none;
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  z-index: 2000;
+  min-width: 180px;
+  max-height: 320px;
+  overflow: auto;
+  padding: 6px;
+  background: var(--SmartThemeBlurTintColor, #1e1e2e);
+  color: var(--SmartThemeBodyColor, #cdd6f4);
+  border: 1px solid var(--SmartThemeBorderColor, #45475a);
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(8px);
+}
+.cfm-toolbar-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 8px;
+  text-align: left;
+}
+.cfm-toolbar-menu-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.cfm-toolbar-menu-item i {
+  width: 16px;
+  text-align: center;
+  opacity: 0.9;
+}
+.cfm-toolbar-menu-item span {
+  flex: 1;
+}
+
 /* 删除工具栏 */
 .cfm-res-delete-toolbar {
   display: flex;
@@ -3523,6 +3834,10 @@ textarea.cfm-edit-input {
   gap: 6px;
   flex: 1 1 0;
   min-width: 0;
+}
+
+.cfm-regex-transfer-dialog-popup {
+  max-height: min(calc(100vh - 32px), calc(100dvh - 32px));
 }
 .cfm-edit-popup-actions .cfm-btn {
   padding: 6px 16px;

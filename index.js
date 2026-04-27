@@ -2104,6 +2104,8 @@ jQuery(async () => {
       extension_settings[extensionName].themeBackgroundBindings = {};
     if (!extension_settings[extensionName].worldInfoEntryDetailSortMode)
       extension_settings[extensionName].worldInfoEntryDetailSortMode = "custom";
+    if (extension_settings[extensionName].defaultSearchScope === undefined)
+      extension_settings[extensionName].defaultSearchScope = "current";
     // 默认背景图（切换到没有绑定背景的主题时使用，空字符串=不设置）
     if (extension_settings[extensionName].defaultBackground === undefined)
       extension_settings[extensionName].defaultBackground = "";
@@ -2147,6 +2149,8 @@ jQuery(async () => {
       extension_settings[extensionName].regexFolderTree = {};
     if (!extension_settings[extensionName].regexGlobalGroups)
       extension_settings[extensionName].regexGlobalGroups = {};
+    if (extension_settings[extensionName].defaultRegexTransferMode !== "copy")
+      extension_settings[extensionName].defaultRegexTransferMode = "move";
     // 快速回复标签页
     if (!extension_settings[extensionName].qrGroups)
       extension_settings[extensionName].qrGroups = {};
@@ -2190,6 +2194,94 @@ jQuery(async () => {
   function getResChildFolders(type, parentId) {
     const tree = getResFolderTree(type);
     return Object.keys(tree).filter((id) => tree[id].parentId === parentId);
+  }
+  function getRegexFolderTree() {
+    ensureResourceSettings();
+    return extension_settings[extensionName].regexFolderTree;
+  }
+  function sortRegexFolderIds(folderIds) {
+    const tree = getRegexFolderTree();
+    return [...folderIds].sort((a, b) => {
+      const oa = tree[a]?.sortOrder ?? 0;
+      const ob = tree[b]?.sortOrder ?? 0;
+      if (oa !== ob) return oa - ob;
+      return (tree[a]?.displayName || a).localeCompare(
+        tree[b]?.displayName || b,
+        "zh-CN",
+      );
+    });
+  }
+  function wouldCreateRegexCycle(folderId, parentId) {
+    const tree = getRegexFolderTree();
+    let current = parentId;
+    const visited = new Set();
+    while (current) {
+      if (current === folderId) return true;
+      if (visited.has(current)) return false;
+      visited.add(current);
+      current = tree[current]?.parentId || null;
+    }
+    return false;
+  }
+  function reorderRegexFolder(folderId, newParentId, insertBeforeId) {
+    const tree = getRegexFolderTree();
+    if (!tree[folderId]) return false;
+    const targetParentId = newParentId || null;
+    tree[folderId].parentId = targetParentId;
+    const siblings = sortRegexFolderIds(
+      Object.keys(tree).filter(
+        (id) =>
+          id !== folderId && (tree[id].parentId || null) === targetParentId,
+      ),
+    );
+    let insertIdx = siblings.length;
+    if (insertBeforeId) {
+      const idx = siblings.indexOf(insertBeforeId);
+      if (idx >= 0) insertIdx = idx;
+    }
+    if (!targetParentId && !insertBeforeId) {
+      tree[folderId].sortOrder = 0;
+    }
+    siblings.splice(insertIdx, 0, folderId);
+    siblings.forEach((id, i) => {
+      tree[id].sortOrder = i + 1;
+    });
+    saveResTree("regex");
+    return true;
+  }
+  function moveRegexFolder(data, target) {
+    const folderId = data?.id;
+    if (!folderId) return [];
+    const tree = getRegexFolderTree();
+    if (!tree[folderId]) return [];
+    if (target?.targetKind === "ungrouped") {
+      reorderRegexFolder(folderId, null, null);
+      return [folderId];
+    }
+    if (folderId === target?.folderId) return [];
+    if (target?.zone === "into") {
+      if (wouldCreateRegexCycle(folderId, target.folderId)) return [];
+      reorderRegexFolder(folderId, target.folderId, null);
+      return [folderId];
+    }
+    const targetParentId = tree[target?.folderId]?.parentId || null;
+    if (wouldCreateRegexCycle(folderId, targetParentId)) return [];
+    if (target?.zone === "before") {
+      reorderRegexFolder(folderId, targetParentId, target.folderId);
+    } else {
+      const siblings = sortRegexFolderIds(
+        Object.keys(tree).filter(
+          (id) => (tree[id].parentId || null) === targetParentId,
+        ),
+      ).filter((id) => id !== folderId);
+      const curIdx = siblings.indexOf(target.folderId);
+      const nextSiblingId =
+        curIdx >= 0 && curIdx < siblings.length - 1
+          ? siblings[curIdx + 1]
+          : null;
+      reorderRegexFolder(folderId, targetParentId, nextSiblingId);
+    }
+    return [folderId];
   }
   function sortResFolders(type, folderIds) {
     const tree = getResFolderTree(type);
@@ -2260,6 +2352,9 @@ jQuery(async () => {
     if (insertBeforeId) {
       const idx = others.indexOf(insertBeforeId);
       if (idx >= 0) insertIdx = idx;
+    }
+    if (!newParentId && !insertBeforeId) {
+      tree[folderId].sortOrder = 0;
     }
     others.splice(insertIdx, 0, folderId);
     others.forEach((id, i) => {
@@ -3240,6 +3335,9 @@ jQuery(async () => {
     // 被用户主动删除（但保留标签）的文件夹ID列表，防止自动重新导入
     if (!Array.isArray(extension_settings[extensionName].excludedTagIds))
       extension_settings[extensionName].excludedTagIds = [];
+    // 是否自动录入新标签为文件夹（默认开启，兼容旧行为）
+    if (extension_settings[extensionName].autoImportTags === undefined)
+      extension_settings[extensionName].autoImportTags = true;
     // 批量创建文件夹结构模板（按类型分开存储）
     if (
       !extension_settings[extensionName].batchTemplates ||
@@ -3432,29 +3530,68 @@ jQuery(async () => {
     default: { label: "设置默认背景", icon: "fa-image" },
   };
 
+  function ensureTabMenuConfig() {
+    const layout = extension_settings[extensionName].customLayout;
+    if (!layout) return;
+    if (!layout.tabMenu || typeof layout.tabMenu !== "object") {
+      layout.tabMenu = { enabled: false };
+    }
+    if (layout.tabMenu.enabled === undefined) layout.tabMenu.enabled = false;
+    const orderedTabs = layout.tabs || [];
+    for (const tab of orderedTabs) {
+      if (tab.menu === undefined) tab.menu = false;
+    }
+  }
+
+  function getTabMenuConfig() {
+    ensureTabMenuConfig();
+    return extension_settings[extensionName].customLayout?.tabMenu || {
+      enabled: false,
+    };
+  }
+
   /** 获取当前生效的标签页列表（已排序、已过滤不可见） */
   function getVisibleTabs() {
     const layout = extension_settings[extensionName].customLayout;
     if (!layout || !layout.tabs) return CFM_TAB_META.map((t) => t.id);
+    ensureTabMenuConfig();
     // 确保新增标签页也被包含（防止新增标签页在已有布局中缺失）
     const existing = new Set(layout.tabs.map((t) => t.id));
     const allTabs = [...layout.tabs];
     for (const meta of CFM_TAB_META) {
-      if (!existing.has(meta.id)) allTabs.push({ id: meta.id, visible: true });
+      if (!existing.has(meta.id))
+        allTabs.push({ id: meta.id, visible: true, menu: false });
     }
-    return allTabs.filter((t) => t.visible !== false).map((t) => t.id);
+    const menuEnabled = getTabMenuConfig().enabled;
+    return allTabs
+      .filter((t) => t.visible !== false && !(menuEnabled && t.menu === true))
+      .map((t) => t.id);
+  }
+
+  function getMenuTabs() {
+    const layout = extension_settings[extensionName].customLayout;
+    if (!layout || !layout.tabs) return [];
+    ensureTabMenuConfig();
+    if (!getTabMenuConfig().enabled) return [];
+    return getOrderedTabs()
+      .filter((t) => t.visible !== false && t.menu === true)
+      .map((t) => t.id);
   }
 
   /** 获取当前生效的标签页列表（已排序，含不可见） */
   function getOrderedTabs() {
     const layout = extension_settings[extensionName].customLayout;
     if (!layout || !layout.tabs)
-      return CFM_TAB_META.map((t) => ({ id: t.id, visible: true }));
+      return CFM_TAB_META.map((t) => ({ id: t.id, visible: true, menu: false }));
+    ensureTabMenuConfig();
     // 确保所有标签页都在列表中（防止新增标签页丢失）
     const existing = new Set(layout.tabs.map((t) => t.id));
     const result = [...layout.tabs];
     for (const meta of CFM_TAB_META) {
-      if (!existing.has(meta.id)) result.push({ id: meta.id, visible: true });
+      if (!existing.has(meta.id)) result.push({ id: meta.id, visible: true, menu: false });
+    }
+    for (const tab of result) {
+      if (tab.menu === undefined) tab.menu = false;
     }
     return result;
   }
@@ -3466,7 +3603,7 @@ jQuery(async () => {
       // 没有保存的配置时，根据 CFM_ACTION_BTN_MAP 生成默认可见列表
       const knownIds = CFM_ACTION_BTN_MAP[tabId];
       if (knownIds) {
-        return Object.keys(knownIds).map((id) => ({ id, visible: true }));
+        return Object.keys(knownIds).map((id) => ({ id, visible: true, menu: false }));
       }
       return [];
     }
@@ -3474,28 +3611,18 @@ jQuery(async () => {
     const saved = layout.tabActions[tabId];
     const knownIds = CFM_ACTION_BTN_MAP[tabId];
     if (knownIds) {
+      for (const a of saved) {
+        if (a.visible === undefined) a.visible = true;
+        if (a.menu === undefined) a.menu = false;
+      }
       const existingIds = new Set(saved.map((a) => a.id));
       // 默认顺序参考表
       const defaultOrder = {
-        chars: [
-          "import",
-          "chatmode",
-          "regexmode",
-          "quickedit",
-          "export",
-          "delete",
-        ],
+        chars: ["import", "chatmode", "regexmode", "quickedit", "export", "delete"],
         worldinfo: ["import", "note", "rename", "export", "delete"],
         presets: ["import", "regexmode", "note", "rename", "export", "delete"],
         themes: ["import", "note", "rename", "export", "delete"],
-        backgrounds: [
-          "import",
-          "note",
-          "rename",
-          "default",
-          "export",
-          "delete",
-        ],
+        backgrounds: ["import", "note", "rename", "default", "export", "delete"],
         personas: ["import", "note", "export", "delete"],
         regex: ["import", "create", "transfer", "export", "delete", "sort"],
         quickreply: ["import", "note", "rename", "export", "delete"],
@@ -3503,11 +3630,9 @@ jQuery(async () => {
       const refOrder = defaultOrder[tabId] || Object.keys(knownIds);
       for (const actionId of Object.keys(knownIds)) {
         if (!existingIds.has(actionId)) {
-          // 找到默认顺序中该 action 前面的 action，插入到其后面
           const refIdx = refOrder.indexOf(actionId);
-          let insertIdx = saved.length; // 默认追加到末尾
+          let insertIdx = saved.length;
           if (refIdx > 0) {
-            // 从该 action 在默认顺序中的前一个开始，向前找已存在的 action
             for (let i = refIdx - 1; i >= 0; i--) {
               const prevId = refOrder[i];
               const prevSavedIdx = saved.findIndex((a) => a.id === prevId);
@@ -3517,23 +3642,55 @@ jQuery(async () => {
               }
             }
           } else {
-            insertIdx = 0; // 默认顺序中排第一，插入到最前面
+            insertIdx = 0;
           }
-          saved.splice(insertIdx, 0, { id: actionId, visible: true });
+          saved.splice(insertIdx, 0, { id: actionId, visible: true, menu: false });
         }
       }
     }
     return saved;
   }
 
+  function ensureToolbarMenuConfig() {
+    const layout = extension_settings[extensionName].customLayout;
+    if (!layout) return;
+    if (!layout.tabMenus || Array.isArray(layout.tabMenus)) layout.tabMenus = {};
+    for (const meta of CFM_TAB_META) {
+      if (!layout.tabMenus[meta.id]) layout.tabMenus[meta.id] = { enabled: false };
+      if (layout.tabMenus[meta.id].enabled === undefined) layout.tabMenus[meta.id].enabled = false;
+    }
+  }
+
+  function getToolbarMenuConfig(tabId) {
+    ensureToolbarMenuConfig();
+    return extension_settings[extensionName].customLayout?.tabMenus?.[tabId] || { enabled: false };
+  }
+
+  function getToolbarMenuActions(tabId) {
+    const menuCfg = getToolbarMenuConfig(tabId);
+    if (!menuCfg.enabled) return [];
+    return getOrderedActions(tabId).filter((a) => a.menu === true).map((a) => a.id);
+  }
+
   /** 获取某标签页可见的子功能 ID 列表 */
   function getVisibleActions(tabId) {
+    const menuSet = new Set(getToolbarMenuActions(tabId));
     return getOrderedActions(tabId)
-      .filter((a) => a.visible !== false)
+      .filter((a) => a.visible !== false && !menuSet.has(a.id))
       .map((a) => a.id);
   }
 
   /** 工具栏按钮 ID 映射：tabId -> { actionId -> jQuery selector } */
+  const CFM_HEADER_COUNT_MAP = {
+    chars: "#cfm-rh-count",
+    worldinfo: "#cfm-worldinfo-rh-count",
+    presets: "#cfm-preset-rh-count",
+    themes: "#cfm-theme-rh-count",
+    backgrounds: "#cfm-bg-rh-count",
+    personas: "#cfm-persona-rh-count",
+    regex: "#cfm-regex-rh-count",
+    quickreply: "#cfm-qr-rh-count",
+  };
   const CFM_ACTION_BTN_MAP = {
     chars: {
       import: "#cfm-import-char-btn",
@@ -3600,17 +3757,70 @@ jQuery(async () => {
   function applyToolbarVisibility(tabId) {
     const btnMap = CFM_ACTION_BTN_MAP[tabId];
     if (!btnMap) return;
+    ensureToolbarMenuConfig();
     const visibleActions = getVisibleActions(tabId);
+    const menuActions = new Set(getToolbarMenuActions(tabId));
     const orderedActions = getOrderedActions(tabId);
     for (const [actionId, selector] of Object.entries(btnMap)) {
       $(selector).toggle(visibleActions.includes(actionId));
     }
-    // 按配置顺序设置 CSS order
     orderedActions.forEach((a, idx) => {
       const selector = btnMap[a.id];
-      if (selector) {
-        $(selector).css("order", idx + 10); // 从10开始，给 path/count 等留空间
+      if (selector) $(selector).css("order", idx + 10);
+    });
+    const wrapId = `cfm-toolbar-menu-wrap-${tabId}`;
+    $(`#${wrapId}`).remove();
+    $(document).off(`click.cfmToolbarMenu_${tabId}`);
+    const countSelector = CFM_HEADER_COUNT_MAP[tabId];
+    const countEl = countSelector ? $(countSelector) : $();
+    const menuCfg = getToolbarMenuConfig(tabId);
+    if (!countEl.length || !menuCfg.enabled || !menuActions.size) return;
+    const menuItemsHtml = orderedActions
+      .filter((a) => menuActions.has(a.id))
+      .map((a) => {
+        const meta = CFM_ACTION_META[a.id];
+        if (!meta) return "";
+        return `<button type="button" class="cfm-toolbar-menu-item" data-action-id="${a.id}">
+          <i class="fa-solid ${meta.icon}"></i>
+          <span>${meta.label}</span>
+        </button>`;
+      })
+      .join("");
+    const wrap = $(
+      `<div id="${wrapId}" class="cfm-toolbar-menu-wrap">
+         <button type="button" class="cfm-edit-char-btn cfm-toolbar-menu-btn" title="按钮菜单" aria-expanded="false"><i class="fa-solid fa-bars"></i></button>
+         <div class="cfm-toolbar-menu-dropdown">
+           ${menuItemsHtml}
+         </div>
+       </div>`,
+    );
+    countEl.after(wrap);
+    const dropdown = wrap.find(".cfm-toolbar-menu-dropdown");
+    const btn = wrap.find(".cfm-toolbar-menu-btn");
+    btn.on("click touchend", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const open = dropdown.is(":visible");
+      $(document).find(".cfm-toolbar-menu-dropdown").hide();
+      $(document).find(".cfm-toolbar-menu-btn").attr("aria-expanded", "false");
+      if (!open) {
+        dropdown.show();
+        btn.attr("aria-expanded", "true");
       }
+    });
+    dropdown.on("click touchend", ".cfm-toolbar-menu-item", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      const actionId = $(this).data("action-id");
+      const selector = btnMap[actionId];
+      if (selector) $(selector).trigger("click");
+      dropdown.hide();
+      btn.attr("aria-expanded", "false");
+    });
+    $(document).on(`click.cfmToolbarMenu_${tabId}`, (e) => {
+      if ($(e.target).closest(`#${wrapId}`).length) return;
+      dropdown.hide();
+      btn.attr("aria-expanded", "false");
     });
   }
 
@@ -3848,6 +4058,11 @@ jQuery(async () => {
   // 首次加载：自动导入所有现有标签为顶级文件夹
   function autoImportAllTags() {
     if (extension_settings[extensionName].firstInitDone) return;
+    extension_settings[extensionName].firstInitDone = true;
+    if (!extension_settings[extensionName].autoImportTags) {
+      getContext().saveSettingsDebounced();
+      return;
+    }
     const tags = getTagList();
     const existingIds = Object.keys(extension_settings[extensionName].folders);
     const excludedSet = new Set(
@@ -3862,7 +4077,6 @@ jQuery(async () => {
         imported++;
       }
     }
-    extension_settings[extensionName].firstInitDone = true;
     getContext().saveSettingsDebounced();
     if (imported > 0) {
       console.log(
@@ -3880,6 +4094,10 @@ jQuery(async () => {
 
   // 每次打开弹窗时：检测新标签并自动导入 + 高亮（仅本次打开弹窗高亮）
   function detectAndImportNewTags() {
+    if (!extension_settings[extensionName].autoImportTags) {
+      sessionNewlyImportedIds = [];
+      return;
+    }
     const tags = getTagList();
     const existingIds = Object.keys(config.folders);
     const excludedSet = new Set(
@@ -5399,6 +5617,9 @@ jQuery(async () => {
     if (insertBeforeId) {
       const idx = others.indexOf(insertBeforeId);
       if (idx >= 0) insertIdx = idx;
+    }
+    if (!newParentId && !insertBeforeId) {
+      config.folders[folderId].sortOrder = 0;
     }
     others.splice(insertIdx, 0, folderId);
     others.forEach((id, i) => {
@@ -13142,8 +13363,17 @@ jQuery(async () => {
       const currentCharName = getCurrentCharName();
       const currentPresetName = getCurrentPresetName();
 
-      // 计算需要关闭的分组（之前应用但现在不需要的）
-      const toDeactivate = prevApplied.filter((i) => !shouldApply.includes(i));
+      // 计算需要关闭的分组（之前由自动绑定应用、但现在已不匹配的分组）
+      const toDeactivate = prevApplied.filter((i) => {
+        if (shouldApply.includes(i)) return false;
+        const p = presets[i];
+        if (!p || p.scope === "global") return false;
+        const hasBindings =
+          (p.bindChars && p.bindChars.length > 0) ||
+          (p.bindPresets && p.bindPresets.length > 0) ||
+          (p.bindChats && p.bindChats.length > 0);
+        return hasBindings;
+      });
       // 计算需要新激活的分组
       const toActivate = shouldApply.filter((i) => !prevApplied.includes(i));
       // 计算保持应用的分组（之前应用且现在仍需应用）
@@ -14012,6 +14242,7 @@ jQuery(async () => {
     // 组合过滤函数（文件夹 + 文本搜索）
     function getWiFolderFilterLabel(folderVal) {
       if (!folderVal || folderVal === "__all__") return "显示全部";
+      if (folderVal === "__current_selected__") return "当前分组";
       if (folderVal === "__ungrouped__") return "未归类世界书";
       return getResFolderDisplayName("worldinfo", folderVal) || folderVal;
     }
@@ -14032,7 +14263,8 @@ jQuery(async () => {
       if (
         folderVal &&
         folderVal !== "__all__" &&
-        folderVal !== "__ungrouped__"
+        folderVal !== "__ungrouped__" &&
+        folderVal !== "__current_selected__"
       ) {
         allowedFolders = new Set();
         function collectChildren(pid) {
@@ -14047,8 +14279,11 @@ jQuery(async () => {
       overlay.find(".cfm-wi-preset-edit-item").each(function () {
         const name = $(this).find("span").text().toLowerCase();
         const folder = $(this).attr("data-folder") || "";
+        const isChecked = $(this).find("input").prop("checked");
         let folderMatch = true;
-        if (folderVal === "__ungrouped__") {
+        if (folderVal === "__current_selected__") {
+          folderMatch = isChecked;
+        } else if (folderVal === "__ungrouped__") {
           folderMatch = !folder || !wiTree[folder];
         } else if (allowedFolders) {
           folderMatch = allowedFolders.has(folder);
@@ -14060,6 +14295,17 @@ jQuery(async () => {
     overlay.find("#cfm-wi-preset-edit-folder-btn").on("click", function (e) {
       e.preventDefault();
       e.stopPropagation();
+      const currentCheckedInput = overlay.find(
+        ".cfm-wi-preset-edit-item input:checked",
+      ).first();
+      const currentCheckedItem = currentCheckedInput.closest(
+        ".cfm-wi-preset-edit-item",
+      );
+      const currentCheckedFolderRaw = currentCheckedItem.attr("data-folder") || "";
+      const currentCheckedFolder =
+        currentCheckedFolderRaw && wiTree[currentCheckedFolderRaw]
+          ? currentCheckedFolderRaw
+          : "__ungrouped__";
       showPresetEditFolderFilterPanel($(this), {
         panelKey: "wi_preset_edit",
         folderTree: wiTree,
@@ -14086,6 +14332,11 @@ jQuery(async () => {
         ungroupedLabel: "未归类世界书",
         currentFilter:
           overlay.find("#cfm-wi-preset-edit-folder-filter").val() || "__all__",
+        currentSelectedFilter: "__current_selected__",
+        currentSelectedLabel: "当前分组",
+        currentSelectedCount: overlay.find(
+          ".cfm-wi-preset-edit-item input:checked",
+        ).length,
         onSelect: (folderId) => {
           overlay.find("#cfm-wi-preset-edit-folder-filter").val(folderId);
           applyEditFilters();
@@ -22791,17 +23042,144 @@ jQuery(async () => {
   /**
    * 保存预设正则脚本
    * @param {Array} scripts - 正则脚本列表
+   * @param {string} [presetName=""] - 目标预设名称；为空时写入当前选中预设
    */
-  async function savePresetRegexScripts(scripts) {
+  async function savePresetRegexScripts(scripts, presetName = "") {
     const pm = getContext().getPresetManager();
+    const normalizedPresetName = String(presetName || "").trim();
+    const nextScripts = Array.isArray(scripts) ? scripts : [];
     if (pm) {
-      await pm.writePresetExtensionField({
-        path: "regex_scripts",
-        value: scripts,
-      });
+      const currentPresetName = String(getCurrentPresetName() || "").trim();
+      if (normalizedPresetName && normalizedPresetName !== currentPresetName) {
+        const presetData = getPresetDataForDetail(pm, normalizedPresetName);
+        if (!presetData) {
+          throw new Error(`找不到预设「${normalizedPresetName}」的数据`);
+        }
+        const nextPresetData = structuredClone(presetData);
+        if (
+          !nextPresetData.extensions ||
+          typeof nextPresetData.extensions !== "object"
+        ) {
+          nextPresetData.extensions = {};
+        }
+        nextPresetData.extensions.regex_scripts = nextScripts;
+        await saveNormalizedPresetData(
+          pm,
+          normalizedPresetName,
+          nextPresetData,
+        );
+      } else {
+        await pm.writePresetExtensionField({
+          path: "regex_scripts",
+          value: nextScripts,
+        });
+      }
     }
     // 清除原生正则引擎缓存 & 刷新原生正则UI
     await syncNativeRegexState();
+  }
+
+  async function openNativePresetRegexScriptEditor(presetName, scriptId) {
+    const normalizedPresetName = String(presetName || "").trim();
+    const normalizedScriptId = String(scriptId || "").trim();
+    if (!normalizedPresetName || !normalizedScriptId) return false;
+
+    const pm = getContext().getPresetManager();
+    if (!pm?.select) return false;
+
+    const originalValue = String(pm.select.val() || "");
+    let switchedPreset = false;
+
+    const clickNativeEditButton = () => {
+      const nativeEl = $(
+        `#saved_preset_scripts > #${$.escapeSelector(normalizedScriptId)}`,
+      );
+      if (!nativeEl.length) return false;
+      const editBtn = nativeEl.find(".edit_existing_regex").first();
+      const nativeBtn = editBtn.get(0);
+      if (!(nativeBtn instanceof HTMLElement)) return false;
+      nativeBtn.click();
+      return true;
+    };
+
+    const syncTargetPresetSelection = async () => {
+      const targetValue = findPresetSelectValueByName(pm, normalizedPresetName);
+      const currentValue = String(pm.select.val() || "");
+      if (!targetValue) return "";
+      if (currentValue === String(targetValue)) return String(targetValue);
+
+      switchedPreset = true;
+      const presetChangedPromise = new Promise((resolve) => {
+        const ctx = getContext();
+        const evtSource = ctx?.eventSource;
+        const evtTypes = ctx?.eventTypes;
+        const eventType = evtTypes?.OAI_PRESET_CHANGED_AFTER;
+        if (!eventType || !evtSource) {
+          window.setTimeout(resolve, 800);
+          return;
+        }
+        let resolved = false;
+        const handler = () => {
+          if (resolved) return;
+          resolved = true;
+          try {
+            evtSource.removeListener(eventType, handler);
+          } catch {}
+          window.setTimeout(resolve, 120);
+        };
+        evtSource.once(eventType, handler);
+        window.setTimeout(() => {
+          if (!resolved) {
+            resolved = true;
+            try {
+              evtSource.removeListener(eventType, handler);
+            } catch {}
+            resolve();
+          }
+        }, 3000);
+      });
+
+      pm.select.val(targetValue);
+      pm.select.trigger("change");
+      await presetChangedPromise;
+      return String(targetValue);
+    };
+
+    beginSuppressPresetRegexToast();
+    try {
+      const targetValue = await syncTargetPresetSelection();
+      const start = Date.now();
+      while (Date.now() - start < 3200) {
+        if (
+          (!targetValue ||
+            String(pm.select.val() || "") === String(targetValue)) &&
+          clickNativeEditButton()
+        ) {
+          if (
+            switchedPreset &&
+            originalValue &&
+            String(targetValue || "") !== originalValue
+          ) {
+            _presetValueToRestore = originalValue;
+            bindNativePopupCleanup();
+          }
+          return true;
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 80));
+      }
+
+      if (
+        switchedPreset &&
+        originalValue &&
+        String(pm.select.val() || "") !== originalValue
+      ) {
+        pm.select.val(originalValue);
+        pm.select.trigger("change");
+      }
+      return false;
+    } finally {
+      endSuppressPresetRegexToast();
+    }
   }
 
   /**
@@ -22820,8 +23198,8 @@ jQuery(async () => {
     presetRow.next(".cfm-regex-sublist").remove();
     const subList = $('<div class="cfm-regex-sublist"></div>');
 
-    // === 工具栏（仅对目标预设显示） ===
-    if (isTarget) {
+    // === 工具栏（预设正则均可编辑；新建仍仅当前预设可用） ===
+    {
       const regexToolbar = $(`
         <div class="cfm-regex-toolbar">
           <button class="cfm-btn cfm-btn-sm cfm-regex-import-btn" title="导入正则脚本"><i class="fa-solid fa-file-import"></i> 导入</button>
@@ -22854,7 +23232,7 @@ jQuery(async () => {
               scripts.push(regexScript);
             }
           }
-          await savePresetRegexScripts(scripts);
+          await savePresetRegexScripts(scripts, presetName);
           cfmToastr.success("正则脚本导入成功");
           rerenderCurrentView();
         } catch (err) {
@@ -22866,6 +23244,12 @@ jQuery(async () => {
       regexToolbar.find(".cfm-regex-create-btn").on("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
+        if (!isTarget) {
+          cfmToastr.info(
+            "当前仅支持在已选中的预设中通过原生编辑器新建正则，请先切换预设，或使用导入/互通方式处理其它预设",
+          );
+          return;
+        }
         createPresetRegexFromManager(presetName);
       });
       // 批量操作切换
@@ -22928,7 +23312,7 @@ jQuery(async () => {
               scripts,
               selectedIds: Array.from(cfmRegexBatchSelected),
               activate: true,
-              save: () => savePresetRegexScripts(scripts),
+              save: () => savePresetRegexScripts(scripts, presetName),
             });
             if (changed) rerenderCurrentView();
           });
@@ -22940,7 +23324,7 @@ jQuery(async () => {
               scripts,
               selectedIds: Array.from(cfmRegexBatchSelected),
               activate: false,
-              save: () => savePresetRegexScripts(scripts),
+              save: () => savePresetRegexScripts(scripts, presetName),
             });
             if (changed) rerenderCurrentView();
           });
@@ -23010,7 +23394,7 @@ jQuery(async () => {
               const idx = scripts.findIndex((s) => s.id === id);
               if (idx !== -1) scripts.splice(idx, 1);
             }
-            await savePresetRegexScripts(scripts);
+            await savePresetRegexScripts(scripts, presetName);
             cfmRegexBatchSelected.clear();
             cfmToastr.success(`已删除 ${toDeleteIds.length} 个正则脚本`);
             rerenderCurrentView();
@@ -23032,37 +23416,29 @@ jQuery(async () => {
         const script = scripts[i];
         const isDisabled = !!script.disabled;
         const isBatchSel =
-          isTarget && cfmRegexBatchMode && cfmRegexBatchSelected.has(script.id);
-        const toggleHtml = isTarget
-          ? `<div class="cfm-wi-toggle ${isDisabled ? "" : "cfm-wi-toggle-on"}" title="${isDisabled ? "已禁用 - 点击启用" : "已启用 - 点击禁用"}"><i class="fa-solid fa-toggle-${isDisabled ? "off" : "on"}"></i></div>`
-          : `<div class="cfm-wi-toggle cfm-toggle-readonly ${isDisabled ? "" : "cfm-wi-toggle-on"}" title="${isDisabled ? "已禁用" : "已启用"}（非当前预设，不可切换）"><i class="fa-solid fa-toggle-${isDisabled ? "off" : "on"}"></i></div>`;
+          cfmRegexBatchMode && cfmRegexBatchSelected.has(script.id);
+        const toggleHtml = `<div class="cfm-wi-toggle ${isDisabled ? "" : "cfm-wi-toggle-on"}" title="${isDisabled ? "已禁用 - 点击启用" : "已启用 - 点击禁用"}"><i class="fa-solid fa-toggle-${isDisabled ? "off" : "on"}"></i></div>`;
         const row = $(`
           <div class="cfm-row cfm-row-char cfm-regex-script-row ${isDisabled ? "cfm-regex-disabled" : ""} ${isBatchSel ? "cfm-regex-batch-selected" : ""}"
                data-script-id="${escapeHtml(script.id || "")}"
                data-script-idx="${i}"
                data-script-type="2"
                data-owner="${escapeHtml(presetName || "")}">
-            ${isTarget && cfmRegexBatchMode ? `<div class="cfm-regex-batch-check"><i class="fa-${isBatchSel ? "solid" : "regular"} fa-square${isBatchSel ? "-check" : ""}"></i></div>` : ""}
+            ${cfmRegexBatchMode ? `<div class="cfm-regex-batch-check"><i class="fa-${isBatchSel ? "solid" : "regular"} fa-square${isBatchSel ? "-check" : ""}"></i></div>` : ""}
             ${toggleHtml}
             <div class="cfm-row-name">
               <span>${escapeHtml(script.scriptName || "(未命名)")}</span>
             </div>
             <div class="cfm-regex-row-actions">
               <div class="cfm-regex-action-btn cfm-regex-edit-btn" title="编辑"><i class="fa-solid fa-pen-to-square"></i></div>
-              ${
-                isTarget
-                  ? `
               <div class="cfm-regex-action-btn cfm-regex-move-up-btn${i === 0 ? " cfm-regex-move-disabled" : ""}" title="上移"><i class="fa-solid fa-arrow-up"></i></div>
               <div class="cfm-regex-action-btn cfm-regex-move-down-btn${i === scripts.length - 1 ? " cfm-regex-move-disabled" : ""}" title="下移"><i class="fa-solid fa-arrow-down"></i></div>
-              `
-                  : ""
-              }
             </div>
           </div>
         `);
 
-        // 批量模式：行点击切换选中（仅目标预设）
-        if (isTarget && cfmRegexBatchMode) {
+        // 批量模式：行点击切换选中
+        if (cfmRegexBatchMode) {
           row.on("click", (e) => {
             if (
               $(e.target).closest(
@@ -23080,34 +23456,32 @@ jQuery(async () => {
           });
         }
 
-        // toggle 点击（只有目标预设可操作，readonly的不绑定事件）
-        row
-          .find(".cfm-wi-toggle:not(.cfm-toggle-readonly)")
-          .on("click", async function (e) {
-            e.preventDefault();
-            e.stopPropagation();
+        // toggle 点击
+        row.find(".cfm-wi-toggle").on("click", async function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          script.disabled = !script.disabled;
+          try {
+            await savePresetRegexScripts(scripts, presetName);
+          } catch (err) {
+            console.error("[CFM] 正则toggle保存失败:", err);
+            cfmToastr.error("保存失败: " + err.message);
             script.disabled = !script.disabled;
-            try {
-              await savePresetRegexScripts(scripts);
-            } catch (err) {
-              console.error("[CFM] 正则toggle保存失败:", err);
-              cfmToastr.error("保存失败: " + err.message);
-              script.disabled = !script.disabled;
-              return;
-            }
-            const isNowDisabled = !!script.disabled;
-            const el = $(this);
-            el.toggleClass("cfm-wi-toggle-on", !isNowDisabled);
-            el.find("i").attr(
-              "class",
-              `fa-solid fa-toggle-${isNowDisabled ? "off" : "on"}`,
-            );
-            el.attr(
-              "title",
-              isNowDisabled ? "已禁用 - 点击启用" : "已启用 - 点击禁用",
-            );
-            row.toggleClass("cfm-regex-disabled", isNowDisabled);
-          });
+            return;
+          }
+          const isNowDisabled = !!script.disabled;
+          const el = $(this);
+          el.toggleClass("cfm-wi-toggle-on", !isNowDisabled);
+          el.find("i").attr(
+            "class",
+            `fa-solid fa-toggle-${isNowDisabled ? "off" : "on"}`,
+          );
+          el.attr(
+            "title",
+            isNowDisabled ? "已禁用 - 点击启用" : "已启用 - 点击禁用",
+          );
+          row.toggleClass("cfm-regex-disabled", isNowDisabled);
+        });
         // 编辑按钮点击
         row.find(".cfm-regex-edit-btn").on("click", function (e) {
           e.preventDefault();
@@ -23117,9 +23491,19 @@ jQuery(async () => {
           const nativeEl = $("#" + $.escapeSelector(String(scriptId)));
           if (nativeEl.length) {
             nativeEl.find(".edit_existing_regex").trigger("click");
-          } else {
-            cfmToastr.warning("非当前预设的正则脚本，无法编辑");
+            return;
           }
+          openNativePresetRegexScriptEditor(presetName, scriptId).then(
+            (opened) => {
+              if (!opened) {
+                cfmToastr.warning("未能打开该预设正则的原生编辑器，请稍后重试");
+              }
+            },
+            (err) => {
+              console.error("[CFM] 打开非当前预设正则编辑器失败:", err);
+              cfmToastr.error("打开编辑器失败: " + (err?.message || err));
+            },
+          );
         });
         // 上移按钮
         row.find(".cfm-regex-move-up-btn").on("click", async function (e) {
@@ -23129,7 +23513,7 @@ jQuery(async () => {
           const movedScriptId = String(script?.id || "").trim();
           [scripts[i - 1], scripts[i]] = [scripts[i], scripts[i - 1]];
           try {
-            await savePresetRegexScripts(scripts);
+            await savePresetRegexScripts(scripts, presetName);
             rerenderCurrentView();
             if (movedScriptId) {
               flashDraggedElement(
@@ -23150,7 +23534,7 @@ jQuery(async () => {
           const movedScriptId = String(script?.id || "").trim();
           [scripts[i], scripts[i + 1]] = [scripts[i + 1], scripts[i]];
           try {
-            await savePresetRegexScripts(scripts);
+            await savePresetRegexScripts(scripts, presetName);
             rerenderCurrentView();
             if (movedScriptId) {
               flashDraggedElement(
@@ -23166,12 +23550,8 @@ jQuery(async () => {
         subList.append(row);
       }
 
-      // 拖拽排序（仅目标预设）
-      if (
-        isTarget &&
-        typeof subList.sortable === "function" &&
-        !cfmIsTouchDevice()
-      ) {
+      // 拖拽排序
+      if (typeof subList.sortable === "function" && !cfmIsTouchDevice()) {
         subList.sortable({
           items: ".cfm-regex-script-row",
           axis: "y",
@@ -23214,7 +23594,7 @@ jQuery(async () => {
               .map((id) => scriptMap.get(id))
               .filter(Boolean);
             try {
-              await savePresetRegexScripts(reorderedScripts);
+              await savePresetRegexScripts(reorderedScripts, presetName);
               rerenderCurrentView();
               if (movedScriptId) {
                 flashDraggedElement(
@@ -25335,14 +25715,16 @@ jQuery(async () => {
               regexGlobalGroups[sid] = target.folderId;
             });
           }
-          extension_settings[extensionName].regexGlobalGroups = regexGlobalGroups;
+          extension_settings[extensionName].regexGlobalGroups =
+            regexGlobalGroups;
           if (data.multiSelect) clearMultiSelect();
           getContext().saveSettingsDebounced();
           return scriptIds;
         },
         firstName: (data) =>
           data.scriptName ||
-          globalScripts.find((sc) => sc.id === (data.scriptId || data.id))?.scriptName ||
+          globalScripts.find((sc) => sc.id === (data.scriptId || data.id))
+            ?.scriptName ||
           data.scriptId ||
           data.id,
       },
@@ -25389,7 +25771,7 @@ jQuery(async () => {
         groupType: "regex",
         label: "文件夹",
         render: () => renderRegexView(),
-        moveItems: () => [],
+        moveItems: (data, target) => moveRegexFolder(data, target),
         firstName: (data) => data.name,
       },
       "res-folder": {
@@ -25535,7 +25917,9 @@ jQuery(async () => {
                       fallbackTarget.folderId,
                     );
           const isFolderReorder =
-            (dragData?.type === "folder" || dragData?.type === "res-folder") &&
+            (dragData?.type === "folder" ||
+              dragData?.type === "res-folder" ||
+              dragData?.type === "regex-folder") &&
             fallbackTarget?.zone !== "into";
           successMessage = isFolderReorder
             ? itemIds.length > 1
@@ -25700,6 +26084,12 @@ jQuery(async () => {
     ) {
       overlay.addClass("cfm-topbar-avoid");
     }
+    const visibleTabs = getVisibleTabs();
+    const menuTabs = getMenuTabs();
+    const activeVisibleTab = visibleTabs.includes(initialTab)
+      ? initialTab
+      : visibleTabs[0] || menuTabs[0] || "chars";
+    const activeMenuTab = menuTabs.includes(initialTab);
     const popup = $(`
             <div id="cfm-popup">
                 <div class="cfm-header">
@@ -25713,12 +26103,20 @@ jQuery(async () => {
                     </div>
                 </div>
                 <div class="cfm-resource-tabs">
-                    ${getVisibleTabs()
+                    ${menuTabs.length ? `<div class="cfm-tab-menu-wrap"><button type="button" class="cfm-tab cfm-tab-menu-btn ${activeMenuTab ? "cfm-tab-active" : ""}" aria-expanded="false" title="更多标签页"><i class="fa-solid fa-ellipsis"></i></button><div class="cfm-tab-menu-dropdown">${menuTabs
+                      .map((tabId) => {
+                        const meta = CFM_TAB_META.find((m) => m.id === tabId);
+                        if (!meta) return "";
+                        const isActive = tabId === initialTab ? "cfm-tab-menu-item-active" : "";
+                        return `<button type="button" class="cfm-tab-menu-item ${isActive}" data-tab="${tabId}"><i class="fa-solid ${meta.icon}"></i><span>${meta.label}</span></button>`;
+                      })
+                      .join("")}</div></div>` : ""}
+                    ${visibleTabs
                       .map((tabId) => {
                         const meta = CFM_TAB_META.find((m) => m.id === tabId);
                         if (!meta) return "";
                         const isActive =
-                          tabId === initialTab ? "cfm-tab-active" : "";
+                          tabId === activeVisibleTab ? "cfm-tab-active" : "";
                         return `<div class="cfm-tab ${isActive}" data-tab="${tabId}"><i class="fa-solid ${meta.icon}"></i> ${meta.label}</div>`;
                       })
                       .join("")}
@@ -26371,6 +26769,12 @@ jQuery(async () => {
       popup
         .find(`.cfm-tab[data-tab="${initialTab}"]`)
         .addClass("cfm-tab-active");
+      if (menuTabs.includes(initialTab)) {
+        popup.find(".cfm-tab-menu-btn").addClass("cfm-tab-active");
+        popup
+          .find(`.cfm-tab-menu-item[data-tab="${initialTab}"]`)
+          .addClass("cfm-tab-menu-item-active");
+      }
       // 切换视图
       popup.find("#cfm-chars-view").hide();
       popup.find("#cfm-presets-view").toggle(initialTab === "presets");
@@ -26407,17 +26811,29 @@ jQuery(async () => {
     // 应用工具栏按钮可见性（根据自定义布局配置）
     applyAllToolbarVisibility();
 
-    // 资源类型标签切换
-    popup.find(".cfm-tab").on("click touchend", function (e) {
-      e.preventDefault();
-      const tab = $(this).data("tab");
+    function switchResourceTab(tab, triggerEl = null) {
       if (tab === currentResourceType) {
         handleCurrentTabRelocate(tab);
         return;
       }
       currentResourceType = tab;
       popup.find(".cfm-tab").removeClass("cfm-tab-active");
-      $(this).addClass("cfm-tab-active");
+      popup.find(".cfm-tab-menu-item").removeClass("cfm-tab-menu-item-active");
+      popup.find(".cfm-tab-menu-btn").removeClass("cfm-tab-active");
+      if (triggerEl?.hasClass("cfm-tab-menu-item")) {
+        popup.find(".cfm-tab-menu-btn").addClass("cfm-tab-active");
+        triggerEl.addClass("cfm-tab-menu-item-active");
+      } else if (triggerEl) {
+        triggerEl.addClass("cfm-tab-active");
+      } else {
+        popup.find(`.cfm-tab[data-tab="${tab}"]`).addClass("cfm-tab-active");
+        if (popup.find(`.cfm-tab-menu-item[data-tab="${tab}"]`).length) {
+          popup.find(".cfm-tab-menu-btn").addClass("cfm-tab-active");
+          popup
+            .find(`.cfm-tab-menu-item[data-tab="${tab}"]`)
+            .addClass("cfm-tab-menu-item-active");
+        }
+      }
       // 切换标签时清空多选状态并关闭多选模式
       cfmMultiSelectMode = false;
       clearMultiSelect();
@@ -26465,6 +26881,47 @@ jQuery(async () => {
       popup.find("#cfm-persona-search-bar").toggle(tab === "personas");
       popup.find("#cfm-regex-search-bar").toggle(tab === "regex");
       popup.find("#cfm-qr-search-bar").toggle(tab === "quickreply");
+      popup.find(".cfm-tab-menu-wrap").removeClass("cfm-tab-menu-open");
+      popup.find(".cfm-tab-menu-btn").attr("aria-expanded", "false");
+      if (tab === "chars") renderRightPane();
+      else if (tab === "presets") renderPresetsView();
+      else if (tab === "worldinfo") renderWorldInfoView();
+      else if (tab === "themes") renderThemesView();
+      else if (tab === "backgrounds") renderBackgroundsView();
+      else if (tab === "personas") renderPersonasView();
+      else if (tab === "regex") renderRegexView();
+      else if (tab === "quickreply") renderQRView();
+    }
+
+    // 资源类型标签切换
+    popup.find(".cfm-tab[data-tab]").on("click touchend", function (e) {
+      e.preventDefault();
+      switchResourceTab($(this).data("tab"), $(this));
+    });
+
+    popup.find(".cfm-tab-menu-btn").on("click touchend", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      const wrap = $(this).closest(".cfm-tab-menu-wrap");
+      const willOpen = !wrap.hasClass("cfm-tab-menu-open");
+      popup.find(".cfm-tab-menu-wrap").removeClass("cfm-tab-menu-open");
+      popup.find(".cfm-tab-menu-btn").attr("aria-expanded", "false");
+      if (willOpen) {
+        wrap.addClass("cfm-tab-menu-open");
+        $(this).attr("aria-expanded", "true");
+      }
+    });
+
+    popup.find(".cfm-tab-menu-item").on("click touchend", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      switchResourceTab($(this).data("tab"), $(this));
+    });
+
+    popup.on("click touchend", function (e) {
+      if ($(e.target).closest(".cfm-tab-menu-wrap").length) return;
+      popup.find(".cfm-tab-menu-wrap").removeClass("cfm-tab-menu-open");
+      popup.find(".cfm-tab-menu-btn").attr("aria-expanded", "false");
       if (tab === "presets") renderPresetsView();
       else if (tab === "worldinfo") renderWorldInfoView();
       else if (tab === "themes") renderThemesView();
@@ -28903,6 +29360,13 @@ jQuery(async () => {
       $(this).closest(".cfm-search-input-wrapper").removeClass("cfm-has-text");
       renderRightPane();
     });
+    const defaultSearchScope = getDefaultSearchScope();
+    popup
+      .find(
+        "#cfm-search-scope, #cfm-preset-search-scope, #cfm-worldinfo-search-scope, #cfm-theme-search-scope, #cfm-bg-search-scope, #cfm-persona-search-scope, #cfm-regex-search-scope, #cfm-qr-search-scope",
+      )
+      .val(defaultSearchScope);
+
     popup.find("#cfm-search-scope").on("change", function () {
       executeGlobalSearch();
     });
@@ -29494,11 +29958,13 @@ jQuery(async () => {
             ? msCheckHtml ||
               `<div class="cfm-edit-checkbox ${isRenameSel ? "cfm-edit-checked" : ""}"><i class="fa-${isRenameSel ? "solid" : "regular"} fa-square${isRenameSel ? "-check" : ""}"></i></div>`
             : msCheckHtml;
+        const isPresetDetailExpanded = cfmPresetDetailExpandedNames.has(p.name);
+        const presetDetailToggleHtml = `<div class="cfm-char-detail-toggle cfm-preset-detail-toggle" title="展开/折叠预设详情"><i class="fa-solid fa-caret-${isPresetDetailExpanded ? "down" : "right"}"></i></div>`;
         const row = $(`
           <div class="cfm-row cfm-row-char cfm-search-result ${isActive ? "cfm-rv-item-active" : ""} ${isDelSel ? "cfm-res-delete-row-selected" : ""} ${isExpSel ? "cfm-export-row-selected" : ""} ${isNoteSel ? "cfm-edit-row-selected" : ""} ${isRenameSel ? "cfm-edit-row-selected" : ""} ${isMSel ? "cfm-multisel-row-selected" : ""}" data-res-id="${escapeHtml(p.name)}">
             ${finalCheckHtml}
             <div class="cfm-row-icon"><i class="fa-solid fa-file-lines" style="font-size:20px;color:#8b9dfc;"></i></div>
-            <div class="cfm-row-name"><span class="cfm-preset-name-text">${escapeHtml(p.name)}</span>${noteHtml}${pFolderPath ? `<div class="cfm-row-folder-path">${escapeHtml(pFolderPath)}</div>` : ""}</div>
+            <div class="cfm-row-name"><span class="cfm-char-name-inline">${presetDetailToggleHtml}<span class="cfm-preset-name-text">${escapeHtml(p.name)}</span></span>${noteHtml}${pFolderPath ? `<div class="cfm-row-folder-path">${escapeHtml(pFolderPath)}</div>` : ""}</div>
             ${singleRenameBtn}
             ${singleNoteBtn}
             <div class="cfm-row-star ${fav ? "cfm-star-active" : ""}" title="${fav ? "取消收藏" : "添加收藏"}"><i class="fa-${fav ? "solid" : "regular"} fa-star"></i></div>
@@ -29528,10 +29994,54 @@ jQuery(async () => {
           e.stopPropagation();
           executePresetRename([p.name]);
         });
+        row
+          .find(".cfm-preset-detail-toggle")
+          .on("touchstart", (e) =>
+            recordTouchTapStart(e, "cfmPresetDetailToggleTap"),
+          )
+          .on("click touchend", (e) => {
+            if (
+              shouldIgnoreTouchTapAfterMove(e, {
+                prefix: "cfmPresetDetailToggleTap",
+              })
+            ) {
+              e.preventDefault();
+              e.stopPropagation();
+              return;
+            }
+            e.preventDefault();
+            e.stopPropagation();
+            const name = p.name;
+            const detailSubList = row
+              .nextAll(".cfm-preset-detail-sublist")
+              .first();
+            if (cfmPresetDetailExpandedNames.has(name)) {
+              cfmPresetDetailExpandedNames.delete(name);
+              detailSubList.slideUp(150, function () {
+                $(this).remove();
+              });
+              row
+                .find(".cfm-preset-detail-toggle i")
+                .removeClass("fa-caret-down")
+                .addClass("fa-caret-right");
+            } else {
+              cfmPresetDetailExpandedNames.add(name);
+              row
+                .find(".cfm-preset-detail-toggle i")
+                .removeClass("fa-caret-right")
+                .addClass("fa-caret-down");
+              renderPresetDetailSubList(row, p);
+              row
+                .nextAll(".cfm-preset-detail-sublist")
+                .first()
+                .hide()
+                .slideDown(150);
+            }
+          });
         row.on("click", (e) => {
           if (
             $(e.target).closest(
-              ".cfm-row-star, .cfm-row-note-btn, .cfm-row-rename-btn",
+              ".cfm-row-star, .cfm-row-note-btn, .cfm-row-rename-btn, .cfm-preset-detail-toggle",
             ).length
           )
             return;
@@ -29580,6 +30090,9 @@ jQuery(async () => {
           return getMultiDragData(singleData);
         });
         rightList.append(row);
+        if (cfmPresetDetailExpandedNames.has(p.name)) {
+          renderPresetDetailSubList(row, p);
+        }
       }
 
       // 删除工具栏（搜索预设）
@@ -31708,16 +32221,25 @@ jQuery(async () => {
     if ($("#cfm-overlay").length > 0) {
       // --- 刷新标签栏（自定义布局生效） ---
       const visibleTabs = getVisibleTabs();
-      // 如果当前标签被隐藏，切换到第一个可见标签
+      const menuTabs = getMenuTabs();
+      const allReachableTabs = [...visibleTabs, ...menuTabs];
       if (
-        visibleTabs.length > 0 &&
-        !visibleTabs.includes(currentResourceType)
+        allReachableTabs.length > 0 &&
+        !allReachableTabs.includes(currentResourceType)
       ) {
-        currentResourceType = visibleTabs[0];
+        currentResourceType = allReachableTabs[0];
       }
       const tabsContainer = $("#cfm-overlay .cfm-resource-tabs");
       if (tabsContainer.length > 0) {
-        const newTabsHtml = visibleTabs
+        const newTabsHtml = `${menuTabs.length ? `<div class="cfm-tab-menu-wrap"><button type="button" class="cfm-tab cfm-tab-menu-btn ${menuTabs.includes(currentResourceType) ? "cfm-tab-active" : ""}" aria-expanded="false" title="更多标签页"><i class="fa-solid fa-ellipsis"></i></button><div class="cfm-tab-menu-dropdown">${menuTabs
+          .map((tabId) => {
+            const meta = CFM_TAB_META.find((m) => m.id === tabId);
+            if (!meta) return "";
+            const isActive =
+              tabId === currentResourceType ? "cfm-tab-menu-item-active" : "";
+            return `<button type="button" class="cfm-tab-menu-item ${isActive}" data-tab="${tabId}"><i class="fa-solid ${meta.icon}"></i><span>${meta.label}</span></button>`;
+          })
+          .join("")}</div></div>` : ""}${visibleTabs
           .map((tabId) => {
             const meta = CFM_TAB_META.find((m) => m.id === tabId);
             if (!meta) return "";
@@ -31725,19 +32247,38 @@ jQuery(async () => {
               tabId === currentResourceType ? "cfm-tab-active" : "";
             return `<div class="cfm-tab ${isActive}" data-tab="${tabId}"><i class="fa-solid ${meta.icon}"></i> ${meta.label}</div>`;
           })
-          .join("");
+          .join("")}`;
         tabsContainer.html(newTabsHtml);
-        // 重新绑定标签点击事件
-        tabsContainer.find(".cfm-tab").on("click touchend", function (e) {
-          e.preventDefault();
-          const tab = $(this).data("tab");
+        const syncTabSwitch = (tab, triggerEl = null) => {
           if (tab === currentResourceType) {
             handleCurrentTabRelocate(tab);
             return;
           }
           currentResourceType = tab;
           $("#cfm-overlay .cfm-tab").removeClass("cfm-tab-active");
-          $(this).addClass("cfm-tab-active");
+          $("#cfm-overlay .cfm-tab-menu-item").removeClass(
+            "cfm-tab-menu-item-active",
+          );
+          $("#cfm-overlay .cfm-tab-menu-btn").removeClass("cfm-tab-active");
+          if (triggerEl?.hasClass("cfm-tab-menu-item")) {
+            $("#cfm-overlay .cfm-tab-menu-btn").addClass("cfm-tab-active");
+            triggerEl.addClass("cfm-tab-menu-item-active");
+          } else if (triggerEl) {
+            triggerEl.addClass("cfm-tab-active");
+          } else {
+            $("#cfm-overlay .cfm-tab[data-tab='" + tab + "']").addClass(
+              "cfm-tab-active",
+            );
+            if (
+              $("#cfm-overlay .cfm-tab-menu-item[data-tab='" + tab + "']")
+                .length
+            ) {
+              $("#cfm-overlay .cfm-tab-menu-btn").addClass("cfm-tab-active");
+              $(
+                "#cfm-overlay .cfm-tab-menu-item[data-tab='" + tab + "']",
+              ).addClass("cfm-tab-menu-item-active");
+            }
+          }
           cfmMultiSelectMode = false;
           clearMultiSelect();
           cfmMultiSelectRangeMode = false;
@@ -31754,9 +32295,7 @@ jQuery(async () => {
           if (cfmPresetRenameMode) exitPresetRenameMode();
           if (cfmWorldInfoRenameMode) exitWorldInfoRenameMode();
           if (cfmQrRenameMode) exitQrRenameMode();
-          $("#cfm-overlay")
-            .find("#cfm-chars-view")
-            .toggle(tab === "chars");
+          $("#cfm-overlay").find("#cfm-chars-view").toggle(tab === "chars");
           $("#cfm-overlay")
             .find("#cfm-presets-view")
             .toggle(tab === "presets");
@@ -31772,9 +32311,7 @@ jQuery(async () => {
           $("#cfm-overlay")
             .find("#cfm-personas-view")
             .toggle(tab === "personas");
-          $("#cfm-overlay")
-            .find("#cfm-regex-view")
-            .toggle(tab === "regex");
+          $("#cfm-overlay").find("#cfm-regex-view").toggle(tab === "regex");
           $("#cfm-overlay")
             .find("#cfm-qr-view")
             .toggle(tab === "quickreply");
@@ -31812,13 +32349,37 @@ jQuery(async () => {
           $("#cfm-overlay")
             .find("#cfm-qr-search-bar")
             .toggle(tab === "quickreply");
-          if (tab === "presets") renderPresetsView();
+          $("#cfm-overlay .cfm-tab-menu-wrap").removeClass("cfm-tab-menu-open");
+          $("#cfm-overlay .cfm-tab-menu-btn").attr("aria-expanded", "false");
+          if (tab === "chars") renderRightPane();
+          else if (tab === "presets") renderPresetsView();
           else if (tab === "worldinfo") renderWorldInfoView();
           else if (tab === "themes") renderThemesView();
           else if (tab === "backgrounds") renderBackgroundsView();
           else if (tab === "personas") renderPersonasView();
           else if (tab === "regex") renderRegexView();
           else if (tab === "quickreply") renderQRView();
+        };
+        tabsContainer.find(".cfm-tab[data-tab]").on("click touchend", function (e) {
+          e.preventDefault();
+          syncTabSwitch($(this).data("tab"), $(this));
+        });
+        tabsContainer.find(".cfm-tab-menu-btn").on("click touchend", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          const wrap = $(this).closest(".cfm-tab-menu-wrap");
+          const willOpen = !wrap.hasClass("cfm-tab-menu-open");
+          $("#cfm-overlay .cfm-tab-menu-wrap").removeClass("cfm-tab-menu-open");
+          $("#cfm-overlay .cfm-tab-menu-btn").attr("aria-expanded", "false");
+          if (willOpen) {
+            wrap.addClass("cfm-tab-menu-open");
+            $(this).attr("aria-expanded", "true");
+          }
+        });
+        tabsContainer.find(".cfm-tab-menu-item").on("click touchend", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          syncTabSwitch($(this).data("tab"), $(this));
         });
       }
       // --- 刷新视图和工具栏 ---
@@ -32046,6 +32607,8 @@ jQuery(async () => {
       { value: "themes", label: "美化", icon: "fa-palette" },
       { value: "backgrounds", label: "背景", icon: "fa-panorama" },
       { value: "personas", label: "User", icon: "fa-user-pen" },
+      { value: "regex", label: "正则", icon: "fa-code" },
+      { value: "quickreply", label: "QR", icon: "fa-reply" },
       { value: "last", label: "记住上次页面", icon: "fa-clock-rotate-left" },
     ];
 
@@ -32084,6 +32647,109 @@ jQuery(async () => {
             : "每次打开插件时，默认显示" + label + "页面",
         );
     });
+
+    body.append(section);
+  }
+
+  function getDefaultSearchScope() {
+    const scope = extension_settings[extensionName].defaultSearchScope;
+    return scope === "all" ? "all" : "current";
+  }
+
+  // ==================== 共享：默认搜索范围 ====================
+  function renderDefaultSearchScopeSection(body) {
+    const current = getDefaultSearchScope();
+    const section = $(`
+      <div class="cfm-config-section cfm-default-page-section">
+        <label>默认搜索范围</label>
+        <div class="cfm-default-page-options">
+          <div class="cfm-default-page-option cfm-search-scope-option ${current === "current" ? "cfm-default-page-active" : ""}" data-value="current" title="默认只搜索当前选中文件夹及其子文件夹">
+            <i class="fa-solid fa-folder-tree"></i><span>当前文件夹</span>
+          </div>
+          <div class="cfm-default-page-option cfm-search-scope-option ${current === "all" ? "cfm-default-page-active" : ""}" data-value="all" title="默认搜索全部文件夹和资源">
+            <i class="fa-solid fa-globe"></i><span>全部文件夹</span>
+          </div>
+        </div>
+        <div class="cfm-icon-config-hint">${current === "all" ? "打开搜索时，默认在全部文件夹中搜索。" : "打开搜索时，默认只在当前文件夹范围内搜索。"}</div>
+      </div>
+    `);
+
+    section.find(".cfm-search-scope-option").on("click touchend", function (e) {
+      e.preventDefault();
+      const value = $(this).data("value") === "all" ? "all" : "current";
+      extension_settings[extensionName].defaultSearchScope = value;
+      getContext().saveSettingsDebounced();
+      section
+        .find(".cfm-search-scope-option")
+        .removeClass("cfm-default-page-active");
+      $(this).addClass("cfm-default-page-active");
+      section
+        .find(".cfm-icon-config-hint")
+        .text(
+          value === "all"
+            ? "打开搜索时，默认在全部文件夹中搜索。"
+            : "打开搜索时，默认只在当前文件夹范围内搜索。",
+        );
+      cfmToastr.success(
+        value === "all"
+          ? "默认搜索范围已切换为全部文件夹"
+          : "默认搜索范围已切换为当前文件夹",
+      );
+    });
+
+    body.append(section);
+  }
+
+  function getDefaultRegexTransferMode() {
+    ensureResourceSettings();
+    return extension_settings[extensionName].defaultRegexTransferMode === "copy"
+      ? "copy"
+      : "move";
+  }
+
+  // ==================== 共享：正则互通默认选择模式 ====================
+  function renderDefaultRegexTransferModeSection(body) {
+    const current = getDefaultRegexTransferMode();
+    const section = $(`
+      <div class="cfm-config-section cfm-default-page-section">
+        <label>正则互通默认选择模式</label>
+        <div class="cfm-default-page-options">
+          <div class="cfm-default-page-option cfm-regex-transfer-mode-option ${current === "move" ? "cfm-default-page-active" : ""}" data-value="move" title="互通正则时默认选中移动">
+            <i class="fa-solid fa-arrow-right-arrow-left"></i><span>移动</span>
+          </div>
+          <div class="cfm-default-page-option cfm-regex-transfer-mode-option ${current === "copy" ? "cfm-default-page-active" : ""}" data-value="copy" title="互通正则时默认选中复制">
+            <i class="fa-solid fa-copy"></i><span>复制</span>
+          </div>
+        </div>
+        <div class="cfm-icon-config-hint">${current === "copy" ? "打开互通正则弹窗时，默认选中复制。" : "打开互通正则弹窗时，默认选中移动。"}</div>
+      </div>
+    `);
+
+    section
+      .find(".cfm-regex-transfer-mode-option")
+      .on("click touchend", function (e) {
+        e.preventDefault();
+        const value = $(this).data("value") === "copy" ? "copy" : "move";
+        ensureResourceSettings();
+        extension_settings[extensionName].defaultRegexTransferMode = value;
+        getContext().saveSettingsDebounced();
+        section
+          .find(".cfm-regex-transfer-mode-option")
+          .removeClass("cfm-default-page-active");
+        $(this).addClass("cfm-default-page-active");
+        section
+          .find(".cfm-icon-config-hint")
+          .text(
+            value === "copy"
+              ? "打开互通正则弹窗时，默认选中复制。"
+              : "打开互通正则弹窗时，默认选中移动。",
+          );
+        cfmToastr.success(
+          value === "copy"
+            ? "正则互通默认模式已切换为复制"
+            : "正则互通默认模式已切换为移动",
+        );
+      });
 
     body.append(section);
   }
@@ -32211,12 +32877,18 @@ jQuery(async () => {
     const orderedTabs = getOrderedTabs();
 
     // --- 标签页排序/可见性 ---
+    ensureTabMenuConfig();
+    const tabMenuCfg = getTabMenuConfig();
     let tabItemsHtml = orderedTabs
       .map((t) => {
         const meta = CFM_TAB_META.find((m) => m.id === t.id);
         if (!meta) return "";
         const checked = t.visible !== false ? "checked" : "";
+        const menuChecked = t.menu === true ? "cfm-layout-menu-check-checked" : "";
         return `<div class="cfm-layout-item" data-id="${t.id}">
+          <button type="button" class="cfm-layout-menu-check ${menuChecked} ${tabMenuCfg.enabled ? "" : "cfm-layout-menu-check-hidden"}" data-tab-menu-toggle="${t.id}" title="收纳到标签页菜单" aria-pressed="${t.menu === true ? "true" : "false"}">
+            <i class="fa-solid fa-check"></i>
+          </button>
           <span class="cfm-layout-drag"><i class="fa-solid fa-grip-vertical"></i></span>
           <span class="cfm-layout-icon"><i class="fa-solid ${meta.icon}"></i></span>
           <span class="cfm-layout-label">${meta.label}</span>
@@ -32233,10 +32905,24 @@ jQuery(async () => {
         <div class="cfm-layout-header-row"><label>自定义布局</label><button class="cfm-layout-reset-btn" title="恢复默认布局"><i class="fa-solid fa-rotate-left"></i> 恢复默认</button></div>
         <div class="cfm-layout-hint">拖拽或使用箭头调整标签页顺序，开关控制显示/隐藏</div>
         <div class="cfm-layout-tabs-title">标签页</div>
+        <div class="cfm-layout-menu-switch">
+          <label class="cfm-layout-menu-switch-label">
+            <input type="checkbox" id="cfm-layout-tab-menu-enabled" ${tabMenuCfg.enabled ? "checked" : ""}>
+            <span>标签页收纳</span>
+          </label>
+          <span class="cfm-layout-menu-switch-hint">开启后，勾选前方方块的标签页会进入顶部标签菜单。</span>
+        </div>
         <div class="cfm-layout-tabs-list">
           ${tabItemsHtml}
         </div>
         <div class="cfm-layout-actions-title">子功能 <span class="cfm-layout-actions-tab-hint">（点击上方标签页名称切换）</span></div>
+        <div class="cfm-layout-menu-switch">
+          <label class="cfm-layout-menu-switch-label">
+            <input type="checkbox" id="cfm-layout-menu-enabled">
+            <span>按钮收纳</span>
+          </label>
+          <span class="cfm-layout-menu-switch-hint">开启后，勾选“收纳”的按钮会进入菜单，菜单按钮默认固定在最左边。</span>
+        </div>
         <div class="cfm-layout-actions-list"></div>
       </div>
     `);
@@ -32255,15 +32941,22 @@ jQuery(async () => {
         .addClass("cfm-layout-arrow-disabled");
     }
 
+    let cfmLayoutMenuTouchStamp = 0;
+
     // 保存标签页顺序
     function saveTabOrder() {
       const newOrder = [];
       section.find(".cfm-layout-tabs-list .cfm-layout-item").each(function () {
         const id = $(this).data("id");
         const visible = $(this).find("input[type=checkbox]").prop("checked");
-        newOrder.push({ id, visible });
+        const menu = $(this)
+          .find(".cfm-layout-menu-check")
+          .hasClass("cfm-layout-menu-check-checked");
+        newOrder.push({ id, visible, menu });
       });
       layout.tabs = newOrder;
+      layout.tabMenu = layout.tabMenu || { enabled: false };
+      layout.tabMenu.enabled = !!section.find("#cfm-layout-tab-menu-enabled").prop("checked");
       getContext().saveSettingsDebounced();
       updateArrowStyles();
     }
@@ -32272,7 +32965,6 @@ jQuery(async () => {
     section
       .find(".cfm-layout-tabs-list")
       .on("change", "input[type=checkbox]", function () {
-        // 至少保留一个可见标签页
         const allChecks = section.find(
           ".cfm-layout-tabs-list input[type=checkbox]",
         );
@@ -32283,7 +32975,35 @@ jQuery(async () => {
           return;
         }
         saveTabOrder();
+      })
+      .on("click touchend", ".cfm-layout-menu-check", function (e) {
+        if (e.type === "touchend") {
+          cfmLayoutMenuTouchStamp = Date.now();
+          e.preventDefault();
+        } else if (Date.now() - cfmLayoutMenuTouchStamp < 450) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+        e.stopPropagation();
+        if ($(this).hasClass("cfm-layout-menu-check-hidden")) return;
+        $(this).toggleClass("cfm-layout-menu-check-checked");
+        $(this).attr(
+          "aria-pressed",
+          $(this).hasClass("cfm-layout-menu-check-checked") ? "true" : "false",
+        );
+        saveTabOrder();
       });
+    section.find("#cfm-layout-tab-menu-enabled").on("change", function (e) {
+      e.stopPropagation();
+      layout.tabMenu = layout.tabMenu || { enabled: false };
+      layout.tabMenu.enabled = !!$(this).prop("checked");
+      getContext().saveSettingsDebounced();
+      renderConfigBody("layout");
+      cfmToastr.success(
+        $(this).prop("checked") ? "已开启标签页收纳" : "已关闭标签页收纳",
+      );
+    });
 
     // 标签页箭头移动
     section
@@ -32334,71 +33054,96 @@ jQuery(async () => {
 
     function renderActionsPanel(tabId) {
       selectedLayoutTab = tabId;
+      ensureToolbarMenuConfig();
+      const menuCfg = getToolbarMenuConfig(tabId);
       const actionsList = section.find(".cfm-layout-actions-list");
       actionsList.empty();
+      section.find("#cfm-layout-menu-enabled").prop("checked", !!menuCfg.enabled);
+      section
+        .find(".cfm-layout-menu-switch")
+        .toggleClass("cfm-layout-menu-switch-enabled", !!menuCfg.enabled);
       const actions = getOrderedActions(tabId);
       if (!actions.length) {
-        actionsList.html(
-          '<div class="cfm-layout-empty">该标签页无子功能</div>',
-        );
+        actionsList.html('<div class="cfm-layout-empty">该标签页无子功能</div>');
         return;
       }
       actions.forEach((a) => {
         const meta = CFM_ACTION_META[a.id];
         if (!meta) return;
-        const checked = a.visible !== false ? "checked" : "";
+        const visibleChecked = a.visible !== false ? "checked" : "";
+        const menuChecked = a.menu === true ? "cfm-layout-menu-check-checked" : "";
         actionsList.append(`<div class="cfm-layout-item cfm-layout-action-item" data-id="${a.id}">
+          <button type="button" class="cfm-layout-menu-check ${menuChecked} ${menuCfg.enabled ? "" : "cfm-layout-menu-check-hidden"}" data-action-menu-toggle="${a.id}" title="收纳到按钮菜单" aria-pressed="${a.menu === true ? "true" : "false"}">
+            <i class="fa-solid fa-check"></i>
+          </button>
           <span class="cfm-layout-drag"><i class="fa-solid fa-grip-vertical"></i></span>
           <span class="cfm-layout-icon"><i class="fa-solid ${meta.icon}"></i></span>
           <span class="cfm-layout-label">${meta.label}</span>
-          <label class="cfm-layout-toggle"><input type="checkbox" data-action-id="${a.id}" ${checked}><span class="cfm-layout-slider"></span></label>
+          <label class="cfm-layout-toggle" title="显示到按钮栏"><input type="checkbox" data-action-visible="${a.id}" ${visibleChecked}><span class="cfm-layout-slider"></span></label>
           <span class="cfm-layout-arrow cfm-layout-arrow-up" data-dir="up" title="上移"><i class="fa-solid fa-chevron-up"></i></span>
           <span class="cfm-layout-arrow cfm-layout-arrow-down" data-dir="down" title="下移"><i class="fa-solid fa-chevron-down"></i></span>
         </div>`);
       });
       updateActionArrowStyles();
-      // 高亮当前选中的标签页名称
-      section
-        .find(".cfm-layout-tabs-list .cfm-layout-item")
-        .removeClass("cfm-layout-item-highlight");
-      section
-        .find(`.cfm-layout-tabs-list .cfm-layout-item[data-id="${tabId}"]`)
-        .addClass("cfm-layout-item-highlight");
+      section.find(".cfm-layout-tabs-list .cfm-layout-item").removeClass("cfm-layout-item-highlight");
+      section.find(`.cfm-layout-tabs-list .cfm-layout-item[data-id="${tabId}"]`).addClass("cfm-layout-item-highlight");
     }
 
     function updateActionArrowStyles() {
       const items = section.find(".cfm-layout-actions-list .cfm-layout-item");
       items.find(".cfm-layout-arrow").removeClass("cfm-layout-arrow-disabled");
-      items
-        .first()
-        .find(".cfm-layout-arrow-up")
-        .addClass("cfm-layout-arrow-disabled");
-      items
-        .last()
-        .find(".cfm-layout-arrow-down")
-        .addClass("cfm-layout-arrow-disabled");
+      items.first().find(".cfm-layout-arrow-up").addClass("cfm-layout-arrow-disabled");
+      items.last().find(".cfm-layout-arrow-down").addClass("cfm-layout-arrow-disabled");
     }
 
     function saveActionOrder() {
       const newOrder = [];
-      section
-        .find(".cfm-layout-actions-list .cfm-layout-item")
-        .each(function () {
-          const id = $(this).data("id");
-          const visible = $(this).find("input[type=checkbox]").prop("checked");
-          newOrder.push({ id, visible });
-        });
+      section.find(".cfm-layout-actions-list .cfm-layout-item").each(function () {
+        const id = $(this).data("id");
+        const visible = $(this).find("input[data-action-visible]").prop("checked");
+        const menu = $(this).find(".cfm-layout-menu-check").hasClass("cfm-layout-menu-check-checked");
+        newOrder.push({ id, visible, menu });
+      });
       layout.tabActions[selectedLayoutTab] = newOrder;
+      layout.tabMenus = layout.tabMenus || {};
+      layout.tabMenus[selectedLayoutTab] = layout.tabMenus[selectedLayoutTab] || { enabled: false };
+      layout.tabMenus[selectedLayoutTab].enabled = !!section.find("#cfm-layout-menu-enabled").prop("checked");
       getContext().saveSettingsDebounced();
       updateActionArrowStyles();
     }
 
-    // 子功能可见性切换
-    section
-      .find(".cfm-layout-actions-list")
-      .on("change", "input[type=checkbox]", function () {
-        saveActionOrder();
-      });
+    section.find(".cfm-layout-actions-list").on("change", "input[data-action-visible]", function () {
+      saveActionOrder();
+      applyAllToolbarVisibility();
+    });
+    section.find(".cfm-layout-actions-list").on("click touchend", ".cfm-layout-menu-check", function (e) {
+      if (e.type === "touchend") {
+        cfmLayoutMenuTouchStamp = Date.now();
+        e.preventDefault();
+      } else if (Date.now() - cfmLayoutMenuTouchStamp < 450) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      e.stopPropagation();
+      if ($(this).hasClass("cfm-layout-menu-check-hidden")) return;
+      $(this).toggleClass("cfm-layout-menu-check-checked");
+      $(this).attr(
+        "aria-pressed",
+        $(this).hasClass("cfm-layout-menu-check-checked") ? "true" : "false",
+      );
+      saveActionOrder();
+      applyAllToolbarVisibility();
+    });
+    section.find("#cfm-layout-menu-enabled").on("change", function () {
+      layout.tabMenus = layout.tabMenus || {};
+      layout.tabMenus[selectedLayoutTab] = layout.tabMenus[selectedLayoutTab] || { enabled: false };
+      layout.tabMenus[selectedLayoutTab].enabled = !!$(this).prop("checked");
+      getContext().saveSettingsDebounced();
+      renderActionsPanel(selectedLayoutTab);
+      applyAllToolbarVisibility();
+      cfmToastr.success($(this).prop("checked") ? "已开启按钮收纳" : "已关闭按钮收纳");
+    });
 
     // 子功能箭头移动
     section
@@ -32458,11 +33203,7 @@ jQuery(async () => {
     // 恢复默认按钮
     section.find(".cfm-layout-reset-btn").on("click touchend", function (e) {
       e.preventDefault();
-      if (
-        !cfmConfirm(
-          "确定要恢复默认布局吗？当前的标签页顺序和子功能开关设置将被重置。",
-        )
-      )
+      if (!cfmConfirm("确定要恢复默认布局吗？当前的标签页顺序和子功能开关设置将被重置。"))
         return;
       const defaultLayout = {
         tabs: [
@@ -32475,52 +33216,78 @@ jQuery(async () => {
         ],
         tabActions: {
           chars: [
-            { id: "import", visible: true },
-            { id: "chatmode", visible: true },
-            { id: "quickedit", visible: true },
-            { id: "export", visible: true },
-            { id: "delete", visible: true },
+            { id: "import", visible: true, menu: false },
+            { id: "chatmode", visible: true, menu: false },
+            { id: "regexmode", visible: true, menu: false },
+            { id: "quickedit", visible: true, menu: false },
+            { id: "export", visible: true, menu: false },
+            { id: "delete", visible: true, menu: false },
           ],
           worldinfo: [
-            { id: "import", visible: true },
-            { id: "note", visible: true },
-            { id: "rename", visible: true },
-            { id: "export", visible: true },
-            { id: "delete", visible: true },
+            { id: "import", visible: true, menu: false },
+            { id: "note", visible: true, menu: false },
+            { id: "rename", visible: true, menu: false },
+            { id: "export", visible: true, menu: false },
+            { id: "delete", visible: true, menu: false },
           ],
           presets: [
-            { id: "import", visible: true },
-            { id: "note", visible: true },
-            { id: "rename", visible: true },
-            { id: "export", visible: true },
-            { id: "delete", visible: true },
+            { id: "import", visible: true, menu: false },
+            { id: "regexmode", visible: true, menu: false },
+            { id: "note", visible: true, menu: false },
+            { id: "rename", visible: true, menu: false },
+            { id: "export", visible: true, menu: false },
+            { id: "delete", visible: true, menu: false },
           ],
           themes: [
-            { id: "import", visible: true },
-            { id: "note", visible: true },
-            { id: "rename", visible: true },
-            { id: "export", visible: true },
-            { id: "delete", visible: true },
+            { id: "import", visible: true, menu: false },
+            { id: "note", visible: true, menu: false },
+            { id: "rename", visible: true, menu: false },
+            { id: "export", visible: true, menu: false },
+            { id: "delete", visible: true, menu: false },
           ],
           backgrounds: [
-            { id: "import", visible: true },
-            { id: "note", visible: true },
-            { id: "rename", visible: true },
-            { id: "default", visible: true },
-            { id: "export", visible: true },
-            { id: "delete", visible: true },
+            { id: "import", visible: true, menu: false },
+            { id: "note", visible: true, menu: false },
+            { id: "rename", visible: true, menu: false },
+            { id: "default", visible: true, menu: false },
+            { id: "export", visible: true, menu: false },
+            { id: "delete", visible: true, menu: false },
           ],
           personas: [
-            { id: "import", visible: true },
-            { id: "note", visible: true },
-            { id: "export", visible: true },
-            { id: "delete", visible: true },
+            { id: "import", visible: true, menu: false },
+            { id: "note", visible: true, menu: false },
+            { id: "export", visible: true, menu: false },
+            { id: "delete", visible: true, menu: false },
           ],
+          regex: [
+            { id: "import", visible: true, menu: false },
+            { id: "create", visible: true, menu: false },
+            { id: "transfer", visible: true, menu: false },
+            { id: "export", visible: true, menu: false },
+            { id: "delete", visible: true, menu: false },
+            { id: "sort", visible: true, menu: false },
+          ],
+          quickreply: [
+            { id: "import", visible: true, menu: false },
+            { id: "note", visible: true, menu: false },
+            { id: "rename", visible: true, menu: false },
+            { id: "export", visible: true, menu: false },
+            { id: "delete", visible: true, menu: false },
+          ],
+        },
+        tabMenus: {
+          chars: { enabled: false },
+          worldinfo: { enabled: false },
+          presets: { enabled: false },
+          themes: { enabled: false },
+          backgrounds: { enabled: false },
+          personas: { enabled: false },
+          regex: { enabled: false },
+          quickreply: { enabled: false },
         },
       };
       extension_settings[extensionName].customLayout = defaultLayout;
       getContext().saveSettingsDebounced();
-      // 重新渲染整个设置面板（保持位置）
       renderConfigBody();
       cfmToastr.success("已恢复默认布局");
     });
@@ -32532,7 +33299,60 @@ jQuery(async () => {
     body.append(section);
   }
 
-  function renderConfigBody() {
+  function createConfigTabShell(defaultTab = "settings") {
+    const shell = $(`
+      <div class="cfm-config-tab-shell">
+        <div class="cfm-config-top-tabs">
+          <button class="cfm-config-top-tab" data-tab="settings"><i class="fa-solid fa-sliders"></i> 设置</button>
+          <button class="cfm-config-top-tab" data-tab="layout"><i class="fa-solid fa-table-cells-large"></i> 布局</button>
+          <button class="cfm-config-top-tab" data-tab="create"><i class="fa-solid fa-folder-plus"></i> 新建文件夹</button>
+        </div>
+        <div class="cfm-config-tab-panel" data-panel="settings"></div>
+        <div class="cfm-config-tab-panel" data-panel="layout"></div>
+        <div class="cfm-config-tab-panel" data-panel="create"></div>
+      </div>
+    `);
+
+    const switchTab = (tab) => {
+      const currentTab = ["settings", "layout", "create"].includes(tab)
+        ? tab
+        : "settings";
+      shell
+        .find(".cfm-config-top-tab")
+        .removeClass("cfm-mode-active cfm-config-top-tab-active");
+      shell
+        .find(`.cfm-config-top-tab[data-tab="${currentTab}"]`)
+        .addClass("cfm-mode-active cfm-config-top-tab-active");
+      shell.find(".cfm-config-tab-panel").hide();
+      shell.find(`.cfm-config-tab-panel[data-panel="${currentTab}"]`).show();
+    };
+
+    let cfmConfigTopTabTouchStamp = 0;
+    shell.find(".cfm-config-top-tab").on("click touchend", function (e) {
+      if (e.type === "touchend") {
+        cfmConfigTopTabTouchStamp = Date.now();
+        e.preventDefault();
+      } else if (Date.now() - cfmConfigTopTabTouchStamp < 450) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      e.stopPropagation();
+      switchTab($(this).data("tab"));
+    });
+
+    switchTab(defaultTab);
+
+    return {
+      shell,
+      settingsPanel: shell.find('.cfm-config-tab-panel[data-panel="settings"]'),
+      layoutPanel: shell.find('.cfm-config-tab-panel[data-panel="layout"]'),
+      createPanel: shell.find('.cfm-config-tab-panel[data-panel="create"]'),
+      switchTab,
+    };
+  }
+
+  function renderConfigBody(defaultTab = null) {
     const body = $("#cfm-config-body");
     body.empty();
 
@@ -32545,15 +33365,24 @@ jQuery(async () => {
       currentResourceType === "personas" ||
       currentResourceType === "quickreply"
     ) {
-      renderResourceConfigBody(body, currentResourceType);
+      renderResourceConfigBody(body, currentResourceType, defaultTab);
       return;
     }
     if (currentResourceType === "regex") {
-      renderRegexConfigBody(body);
+      renderRegexConfigBody(body, defaultTab);
       return;
     }
 
     // ===== 以下为角色卡（chars）配置 =====
+    const currentTabFromUi =
+      defaultTab ||
+      $("#cfm-config-body .cfm-config-top-tab-active").data("tab") ||
+      "settings";
+    const tabShell = createConfigTabShell(currentTabFromUi);
+    const settingsBody = tabShell.settingsPanel;
+    const layoutBody = tabShell.layoutPanel;
+    const createBody = tabShell.createPanel;
+    body.append(tabShell.shell);
 
     // 0. 按钮位置设置
     const currentMode = getButtonMode();
@@ -32581,20 +33410,24 @@ jQuery(async () => {
       modeSection.find(".cfm-mode-btn").removeClass("cfm-mode-active");
       $(this).addClass("cfm-mode-active");
     });
-    body.append(modeSection);
+    settingsBody.append(modeSection);
 
     // 0.5 自定义顶栏图标（共享函数）
-    renderTopbarIconConfigSection(body);
+    renderTopbarIconConfigSection(settingsBody);
     // 0.6 默认打开页面（共享函数）
-    renderDefaultPageConfigSection(body);
+    renderDefaultPageConfigSection(settingsBody);
+    // 0.62 默认搜索范围
+    renderDefaultSearchScopeSection(settingsBody);
+    // 0.625 正则互通默认选择模式
+    renderDefaultRegexTransferModeSection(settingsBody);
     // 0.63 条目缝合完成后的跳转策略
-    renderEntryTransferPostActionSection(body);
+    renderEntryTransferPostActionSection(settingsBody);
     // 0.65 移动端顶部栏避让开关
-    renderMobileTopbarAvoidSection(body);
+    renderMobileTopbarAvoidSection(settingsBody);
     // 0.66 界面语言切换
-    renderLanguageSwitchSection(body);
+    renderLanguageSwitchSection(settingsBody);
     // 0.7 自定义布局（共享函数）
-    renderCustomLayoutSection(body);
+    renderCustomLayoutSection(layoutBody);
 
     // 1. 标签导入区域（一键导入 + 单个添加）
     const existingFolderIds = getFolderTagIds();
@@ -32607,7 +33440,11 @@ jQuery(async () => {
                 <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;align-items:center;">
                     <button id="cfm-import-all-btn" class="cfm-btn" style="background:rgba(87,242,135,0.15);color:#57f287;border-color:rgba(87,242,135,0.4);"><i class="fa-solid fa-download"></i> 一键导入所有标签 <span style="opacity:0.6;font-size:11px;">(${availableTags.length} 个可导入)</span></button>
                 </div>
-                <div class="cfm-create-tag-hint">将酒馆中所有尚未注册为文件夹的标签一次性导入。新标签会在每次打开插件时自动检测并导入。</div>
+                <label style="display:flex;align-items:center;gap:8px;margin-top:10px;cursor:pointer;font-weight:normal;">
+                    <input type="checkbox" id="cfm-auto-import-tags" ${extension_settings[extensionName].autoImportTags ? "checked" : ""}>
+                    <span>自动录入新标签为文件夹</span>
+                </label>
+                <div class="cfm-create-tag-hint">将酒馆中所有尚未注册为文件夹的标签一次性导入。关闭上方开关后，新标签不会在打开插件时自动录入，但仍可手动一键导入或单独添加。</div>
                 <details style="margin-top:8px;">
                     <summary style="cursor:pointer;font-size:12px;opacity:0.6;">▸ 手动添加单个标签</summary>
                     <div class="cfm-add-folder-row" style="margin-top:8px;">
@@ -32626,6 +33463,15 @@ jQuery(async () => {
       e.preventDefault();
       const imported = oneClickImportAllTags();
       if (imported > 0) renderConfigBody();
+    });
+    addSection.find("#cfm-auto-import-tags").on("change", function () {
+      extension_settings[extensionName].autoImportTags = !!$(this).prop("checked");
+      getContext().saveSettingsDebounced();
+      cfmToastr.success(
+        extension_settings[extensionName].autoImportTags
+          ? "已开启自动录入新标签"
+          : "已关闭自动录入新标签",
+      );
     });
     addSection.find("#cfm-add-folder-btn").on("click touchend", (e) => {
       e.preventDefault();
@@ -32657,7 +33503,7 @@ jQuery(async () => {
       cfmToastr.success(`已将「${getTagName(tagId)}」添加为${parentHint}`);
       renderConfigBody();
     });
-    body.append(addSection);
+    createBody.append(addSection);
 
     const selectedHintText =
       configSelectedFolderIds.size > 0
@@ -32710,7 +33556,7 @@ jQuery(async () => {
         createSection.find("#cfm-create-tag-btn").trigger("click");
       }
     });
-    body.append(createSection);
+    createBody.append(createSection);
 
     // 1.8 批量创建 & 批量删除
     const batchSection = $(`
@@ -32735,7 +33581,7 @@ jQuery(async () => {
       cfmDeleteLastClickedId = null;
       renderConfigBody();
     });
-    body.append(batchSection);
+    createBody.append(batchSection);
 
     // 删除模式下显示操作栏（紧跟在批量操作区域下方）
     if (cfmDeleteMode) {
@@ -32817,7 +33663,7 @@ jQuery(async () => {
         e.preventDefault();
         executeMultiDelete();
       });
-      body.append(deleteBar);
+      createBody.append(deleteBar);
     }
 
     // 2. 当前文件夹树形展示（支持拖拽 + 点击选中）
@@ -32831,7 +33677,7 @@ jQuery(async () => {
                 <div class="cfm-tree" id="cfm-folder-tree"></div>
             </div>
         `);
-    body.append(treeSection);
+    createBody.append(treeSection);
 
     treeSection.find("#cfm-config-expand-all").on("click touchend", (e) => {
       e.preventDefault();
@@ -32873,7 +33719,7 @@ jQuery(async () => {
   }
 
   // ==================== 预设/世界书/主题配置面板渲染 ====================
-  function renderResourceConfigBody(body, type) {
+  function renderResourceConfigBody(body, type, defaultTab = "settings") {
     const typeLabel =
       type === "presets"
         ? "预设"
@@ -32901,6 +33747,12 @@ jQuery(async () => {
                 ? qrConfigExpandedNodes
                 : worldInfoConfigExpandedNodes;
 
+    const tabShell = createConfigTabShell(defaultTab || "settings");
+    const settingsBody = tabShell.settingsPanel;
+    const layoutBody = tabShell.layoutPanel;
+    const createBody = tabShell.createPanel;
+    body.append(tabShell.shell);
+
     // 0. 按钮位置设置（共享）
     const currentMode = getButtonMode();
     const modeSection = $(`
@@ -32927,20 +33779,24 @@ jQuery(async () => {
       modeSection.find(".cfm-mode-btn").removeClass("cfm-mode-active");
       $(this).addClass("cfm-mode-active");
     });
-    body.append(modeSection);
+    settingsBody.append(modeSection);
 
     // 0.5 自定义顶栏图标（共享函数）
-    renderTopbarIconConfigSection(body);
+    renderTopbarIconConfigSection(settingsBody);
     // 0.6 默认打开页面（共享函数）
-    renderDefaultPageConfigSection(body);
+    renderDefaultPageConfigSection(settingsBody);
+    // 0.62 默认搜索范围
+    renderDefaultSearchScopeSection(settingsBody);
+    // 0.625 正则互通默认选择模式
+    renderDefaultRegexTransferModeSection(settingsBody);
     // 0.63 条目缝合完成后的跳转策略
-    renderEntryTransferPostActionSection(body);
+    renderEntryTransferPostActionSection(settingsBody);
     // 0.65 移动端顶部栏避让开关
-    renderMobileTopbarAvoidSection(body);
+    renderMobileTopbarAvoidSection(settingsBody);
     // 0.66 界面语言切换
-    renderLanguageSwitchSection(body);
+    renderLanguageSwitchSection(settingsBody);
     // 0.7 自定义布局（共享函数）
-    renderCustomLayoutSection(body);
+    renderCustomLayoutSection(layoutBody);
 
     // 1. 创建新文件夹（支持空格分隔批量创建）
     const resSelectedHintText =
@@ -32997,7 +33853,7 @@ jQuery(async () => {
         createSection.find("#cfm-res-create-btn").trigger("click");
       }
     });
-    body.append(createSection);
+    createBody.append(createSection);
 
     // 2. 批量创建 & 批量删除
     const batchSection = $(`
@@ -33023,7 +33879,7 @@ jQuery(async () => {
       resConfigDeleteRangeMode = false;
       renderResourceConfigBody(body.empty(), type);
     });
-    body.append(batchSection);
+    createBody.append(batchSection);
 
     // 删除模式下显示操作栏
     if (resConfigDeleteMode) {
@@ -33115,7 +33971,7 @@ jQuery(async () => {
         resConfigDeleteRangeMode = false;
         renderResourceConfigBody(body.empty(), type);
       });
-      body.append(deleteBar);
+      createBody.append(deleteBar);
     }
 
     // 3. 当前文件夹树形结构
@@ -33129,7 +33985,7 @@ jQuery(async () => {
         <div class="cfm-tree" id="cfm-res-folder-tree"></div>
       </div>
     `);
-    body.append(treeSection);
+    createBody.append(treeSection);
 
     treeSection.find("#cfm-res-config-expand-all").on("click touchend", (e) => {
       e.preventDefault();
@@ -33301,7 +34157,7 @@ jQuery(async () => {
   }
 
   // ==================== 正则配置面板渲染 ====================
-  function renderRegexConfigBody(body) {
+  function renderRegexConfigBody(body, defaultTab = "settings") {
     ensureResourceSettings();
     const folderTree = extension_settings[extensionName].regexFolderTree;
     const globalGroups = extension_settings[extensionName].regexGlobalGroups;
@@ -33381,6 +34237,12 @@ jQuery(async () => {
       return r;
     }
 
+    const tabShell = createConfigTabShell(defaultTab || "settings");
+    const settingsBody = tabShell.settingsPanel;
+    const layoutBody = tabShell.layoutPanel;
+    const createBody = tabShell.createPanel;
+    body.append(tabShell.shell);
+
     // 0. 共享设置
     const currentMode = getButtonMode();
     const modeSection = $(
@@ -33401,13 +34263,15 @@ jQuery(async () => {
       modeSection.find(".cfm-mode-btn").removeClass("cfm-mode-active");
       $(this).addClass("cfm-mode-active");
     });
-    body.append(modeSection);
-    renderTopbarIconConfigSection(body);
-    renderDefaultPageConfigSection(body);
-    renderEntryTransferPostActionSection(body);
-    renderMobileTopbarAvoidSection(body);
-    renderLanguageSwitchSection(body);
-    renderCustomLayoutSection(body);
+    settingsBody.append(modeSection);
+    renderTopbarIconConfigSection(settingsBody);
+    renderDefaultPageConfigSection(settingsBody);
+    renderDefaultSearchScopeSection(settingsBody);
+    renderDefaultRegexTransferModeSection(settingsBody);
+    renderEntryTransferPostActionSection(settingsBody);
+    renderMobileTopbarAvoidSection(settingsBody);
+    renderLanguageSwitchSection(settingsBody);
+    renderCustomLayoutSection(layoutBody);
 
     // 1. 创建新文件夹
     const resSelectedHintText =
@@ -33457,7 +34321,7 @@ jQuery(async () => {
         createSection.find("#cfm-res-create-btn").trigger("click");
       }
     });
-    body.append(createSection);
+    createBody.append(createSection);
 
     // 2. 批量创建 & 删除
     const batchSection = $(
@@ -33480,7 +34344,7 @@ jQuery(async () => {
         resConfigDeleteRangeMode = false;
         renderRegexConfigBody(body.empty());
       });
-    body.append(batchSection);
+    createBody.append(batchSection);
 
     // 删除模式操作栏
     if (resConfigDeleteMode) {
@@ -33542,14 +34406,14 @@ jQuery(async () => {
         cfmToastr.success(`已删除 ${toDelete.length} 个正则文件夹`);
         renderRegexConfigBody(body.empty());
       });
-      body.append(deleteBar);
+      createBody.append(deleteBar);
     }
 
     // 3. 当前文件夹树形结构
     const treeSection = $(
       `<div class="cfm-config-section"><label>当前文件夹结构 <span style="font-size:11px;opacity:0.5;">(${allFolderIds.length} 个)</span> <span style="font-size:11px;opacity:0.5;color:#57f287;">点击选中为目标父级</span></label><div class="cfm-config-tree-actions"><button id="cfm-regex-config-expand-all" class="cfm-btn cfm-btn-sm"><i class="fa-solid fa-angles-down"></i> 展开</button><button id="cfm-regex-config-collapse-all" class="cfm-btn cfm-btn-sm"><i class="fa-solid fa-angles-up"></i> 收起</button></div><div class="cfm-tree" id="cfm-regex-folder-tree"></div></div>`,
     );
-    body.append(treeSection);
+    createBody.append(treeSection);
     treeSection
       .find("#cfm-regex-config-expand-all")
       .on("click touchend", (e) => {
@@ -35051,7 +35915,13 @@ jQuery(async () => {
       uncatNode.removeClass("cfm-drop-target");
       const d = pcGetDropData(e);
       if (d) {
-        if (d.type === "preset") {
+        if (d.type === "res-folder" && d.id && d.resType === "presets") {
+          reorderResFolder("presets", d.id, null, null);
+          cfmToastr.success(
+            `「${getResFolderDisplayName("presets", d.id)}」已移出到根目录`,
+          );
+          renderPresetsView();
+        } else if (d.type === "preset") {
           const presetNames =
             d.multiSelect && d.selectedIds ? d.selectedIds : [d.name];
           const pCount = presetNames.length;
@@ -35980,7 +36850,13 @@ jQuery(async () => {
       );
       uncatNode.removeClass("cfm-drop-target");
       const d = pcGetDropData(e);
-      if (d && d.type === "theme") {
+      if (d?.type === "res-folder" && d.id && d.resType === "themes") {
+        reorderResFolder("themes", d.id, null, null);
+        cfmToastr.success(
+          `「${getResFolderDisplayName("themes", d.id)}」已移出到根目录`,
+        );
+        renderThemesView();
+      } else if (d && d.type === "theme") {
         const names = d.multiSelect && d.selectedIds ? d.selectedIds : [d.name];
         names.forEach((n) => setItemGroup("themes", n, null));
         if (d.multiSelect) clearMultiSelect();
@@ -36600,7 +37476,10 @@ jQuery(async () => {
           (data.type === "res-folder" && data.resType === "backgrounds");
         const isBackgroundFolderDrag =
           data.type === "res-folder" && data.resType === "backgrounds";
-        if (isBackgroundItemDrag && (zone === "into" || isBackgroundFolderDrag)) {
+        if (
+          isBackgroundItemDrag &&
+          (zone === "into" || isBackgroundFolderDrag)
+        ) {
           _pcLastResourceFolderHoverTarget = {
             groupType: "backgrounds",
             targetKind: "folder",
@@ -36771,7 +37650,13 @@ jQuery(async () => {
       );
       uncatNode.removeClass("cfm-drop-target");
       const d = pcGetDropData(e);
-      if (d && d.type === "background") {
+      if (d?.type === "res-folder" && d.id && d.resType === "backgrounds") {
+        reorderResFolder("backgrounds", d.id, null, null);
+        cfmToastr.success(
+          `「${getResFolderDisplayName("backgrounds", d.id)}」已移出到根目录`,
+        );
+        renderBackgroundsView();
+      } else if (d && d.type === "background") {
         const names = d.multiSelect && d.selectedIds ? d.selectedIds : [d.name];
         names.forEach((n) => setItemGroup("backgrounds", n, null));
         if (d.multiSelect) clearMultiSelect();
@@ -37947,7 +38832,13 @@ jQuery(async () => {
       );
       uncatNode.removeClass("cfm-drop-target");
       const d = pcGetDropData(e);
-      if (d && d.type === "worldinfo") {
+      if (d?.type === "res-folder" && d.id && d.resType === "worldinfo") {
+        reorderResFolder("worldinfo", d.id, null, null);
+        cfmToastr.success(
+          `「${getResFolderDisplayName("worldinfo", d.id)}」已移出到根目录`,
+        );
+        renderWorldInfoView();
+      } else if (d && d.type === "worldinfo") {
         const wiNames =
           d.multiSelect && d.selectedIds ? d.selectedIds : [d.name];
         const wCount = wiNames.length;
@@ -37973,6 +38864,7 @@ jQuery(async () => {
     // 如果搜索栏有内容，保持搜索模式（必须在 rightList.empty() 之前检查）
     const wiSearchQuery = $("#cfm-worldinfo-global-search").val();
     if (wiSearchQuery && wiSearchQuery.trim()) {
+      leftTree.empty().append(newLeftTree.children());
       executeWorldInfoSearch();
       return;
     }
@@ -38926,6 +39818,8 @@ jQuery(async () => {
         ? `<div class="cfm-multisel-checkbox ${isMSel ? "cfm-multisel-checked" : ""}"><i class="fa-${isMSel ? "solid" : "regular"} fa-square${isMSel ? "-check" : ""}"></i></div>`
         : "";
       const toggleHtml = `<div class="cfm-wi-toggle ${qrIsActive ? "cfm-wi-toggle-on" : ""}" title="${qrIsActive ? "点击取消激活" : "点击激活"}" data-qr-name="${escapeHtml(n)}"><i class="fa-solid fa-toggle-${qrIsActive ? "on" : "off"}"></i></div>`;
+      const isSetExpanded = qrItemExpandedSets.has(n);
+      const expandArrowHtml = `<div class="cfm-qr-expand-arrow ${isSetExpanded ? "cfm-qr-arrow-expanded" : ""}" title="${isSetExpanded ? "收起快速回复" : "展开快速回复"}" data-qr-set="${escapeHtml(n)}"><i class="fa-solid fa-caret-right"></i></div>`;
       const grpLabel = groups[n]
         ? `<span class="cfm-theme-note">${escapeHtml(getResFolderDisplayName("quickreply", groups[n]))}</span>`
         : "";
@@ -38934,10 +39828,19 @@ jQuery(async () => {
           ${msCheckHtml}
           ${toggleHtml}
           <div class="cfm-row-icon"><i class="fa-solid fa-reply-all" style="font-size:20px;color:#89b4fa;"></i></div>
-          <div class="cfm-row-name"><span class="cfm-qr-name-text">${escapeHtml(n)}</span>${grpLabel}</div>
+          <div class="cfm-row-name"><span class="cfm-char-name-inline cfm-qr-name-inline">${expandArrowHtml}<span class="cfm-qr-name-text">${escapeHtml(n)}</span></span>${grpLabel}</div>
           <div class="cfm-row-star ${fav ? "cfm-star-active" : ""}" title="${fav ? "取消收藏" : "添加收藏"}"><i class="fa-${fav ? "solid" : "regular"} fa-star"></i></div>
         </div>
       `);
+      bindTouchSafeTap(row.find(".cfm-qr-expand-arrow"), () => {
+        cfmQrLastFocusedSetName = n;
+        if (qrItemExpandedSets.has(n)) {
+          qrItemExpandedSets.delete(n);
+        } else {
+          qrItemExpandedSets.add(n);
+        }
+        executeQrSearch();
+      });
       row.find(".cfm-wi-toggle").on("click touchend", function (e) {
         e.preventDefault();
         e.stopPropagation();
@@ -38962,7 +39865,7 @@ jQuery(async () => {
       row.on("click", (e) => {
         if (
           $(e.target).closest(
-            ".cfm-row-star, .cfm-wi-toggle, .cfm-multisel-checkbox",
+            ".cfm-row-star, .cfm-wi-toggle, .cfm-multisel-checkbox, .cfm-qr-expand-arrow",
           ).length
         )
           return;
@@ -38985,6 +39888,41 @@ jQuery(async () => {
         renderQRView();
       });
       rightList.append(row);
+      if (isSetExpanded) {
+        const qrItems = getQrSetItems(n);
+        if (qrItems.length > 0) {
+          const subContainer = $('<div class="cfm-qr-sub-items"></div>');
+          for (let qrIdx = 0; qrIdx < qrItems.length; qrIdx++) {
+            const qr = qrItems[qrIdx];
+            const label = qr.label || qr.title || "(未命名)";
+            const isHidden = qr.isHidden || qr.hidden || false;
+            const subRow = $(`
+              <div class="cfm-qr-sub-item ${isHidden ? "cfm-qr-sub-hidden" : ""}" data-qr-set="${escapeHtml(n)}" data-qr-index="${qrIdx}">
+                <div class="cfm-qr-sub-icon"><i class="fa-solid fa-comment${isHidden ? "-slash" : ""}" style="color:${isHidden ? "#6c7086" : "#a6e3a1"};"></i></div>
+                <div class="cfm-qr-sub-info">
+                  <div class="cfm-qr-sub-label" title="${escapeHtml(label)}">${escapeHtml(label)}</div>
+                </div>
+                <div class="cfm-qr-sub-actions">
+                  <div class="cfm-qr-sub-edit-btn" title="查看/编辑内容"><i class="fa-solid fa-pen-to-square"></i></div>
+                </div>
+              </div>
+            `);
+            subRow
+              .find(".cfm-qr-sub-edit-btn")
+              .on("click touchend", function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                openQrItemEditor(n, qrIdx, qr);
+              });
+            subContainer.append(subRow);
+          }
+          rightList.append(subContainer);
+        } else {
+          rightList.append(
+            '<div class="cfm-qr-sub-items"><div class="cfm-qr-sub-empty">此集合中没有快速回复</div></div>',
+          );
+        }
+      }
     }
 
     if (cfmMultiSelectMode) {
@@ -39177,7 +40115,10 @@ jQuery(async () => {
           (data.type === "res-folder" && data.resType === "quickreply");
         const isQuickReplyFolderDrag =
           data.type === "res-folder" && data.resType === "quickreply";
-        if (isQuickReplyItemDrag && (zone === "into" || isQuickReplyFolderDrag)) {
+        if (
+          isQuickReplyItemDrag &&
+          (zone === "into" || isQuickReplyFolderDrag)
+        ) {
           _pcLastResourceFolderHoverTarget = {
             groupType: "quickreply",
             targetKind: "folder",
@@ -39377,7 +40318,13 @@ jQuery(async () => {
       );
       uncatNode.removeClass("cfm-drop-target");
       const d = pcGetDropData(e);
-      if (d && d.type === "quickreply") {
+      if (d?.type === "res-folder" && d.id && d.resType === "quickreply") {
+        reorderResFolder("quickreply", d.id, null, null);
+        cfmToastr.success(
+          `「${getResFolderDisplayName("quickreply", d.id)}」已移出到根目录`,
+        );
+        renderQRView();
+      } else if (d && d.type === "quickreply") {
         const qrNames =
           d.multiSelect && d.selectedIds ? d.selectedIds : [d.name];
         const wCount = qrNames.length;
@@ -40120,8 +41067,15 @@ jQuery(async () => {
 
     if (isActive) {
       presets.forEach((preset, idx) => {
+        const hasBindings =
+          preset &&
+          ((preset.bindChars && preset.bindChars.length > 0) ||
+            (preset.bindPresets && preset.bindPresets.length > 0) ||
+            (preset.bindChats && preset.bindChats.length > 0));
         if (
           preset &&
+          preset.scope !== "global" &&
+          hasBindings &&
           preset.books.includes(bookName) &&
           preset.books.every((b) => activeSet.has(b)) &&
           !nextApplied.includes(idx)
@@ -41041,6 +41995,7 @@ jQuery(async () => {
 
     function getQrFolderFilterLabel(folderVal) {
       if (!folderVal || folderVal === "__all__") return "显示全部";
+      if (folderVal === "__current_selected__") return "当前分组";
       if (folderVal === "__ungrouped__") return "未归类快速回复集";
       return getResFolderDisplayName("quickreply", folderVal) || folderVal;
     }
@@ -41060,7 +42015,8 @@ jQuery(async () => {
       if (
         folderVal &&
         folderVal !== "__all__" &&
-        folderVal !== "__ungrouped__"
+        folderVal !== "__ungrouped__" &&
+        folderVal !== "__current_selected__"
       ) {
         allowedFolders = new Set();
         function collectChildren(pid) {
@@ -41075,8 +42031,11 @@ jQuery(async () => {
       overlay.find(".cfm-wi-preset-edit-item").each(function () {
         const name = $(this).find("span").text().toLowerCase();
         const folder = $(this).attr("data-folder") || "";
+        const isChecked = $(this).find("input").prop("checked");
         let folderMatch = true;
-        if (folderVal === "__ungrouped__") {
+        if (folderVal === "__current_selected__") {
+          folderMatch = isChecked;
+        } else if (folderVal === "__ungrouped__") {
           folderMatch = !folder || !qrTree[folder];
         } else if (allowedFolders) {
           folderMatch = allowedFolders.has(folder);
@@ -41088,6 +42047,17 @@ jQuery(async () => {
     overlay.find("#cfm-qr-preset-edit-folder-btn").on("click", function (e) {
       e.preventDefault();
       e.stopPropagation();
+      const currentCheckedInput = overlay.find(
+        ".cfm-wi-preset-edit-item input:checked",
+      ).first();
+      const currentCheckedItem = currentCheckedInput.closest(
+        ".cfm-wi-preset-edit-item",
+      );
+      const currentCheckedFolderRaw = currentCheckedItem.attr("data-folder") || "";
+      const currentCheckedFolder =
+        currentCheckedFolderRaw && qrTree[currentCheckedFolderRaw]
+          ? currentCheckedFolderRaw
+          : "__ungrouped__";
       showPresetEditFolderFilterPanel($(this), {
         panelKey: "qr_preset_edit",
         folderTree: qrTree,
@@ -41114,6 +42084,11 @@ jQuery(async () => {
         ungroupedLabel: "未归类快速回复集",
         currentFilter:
           overlay.find("#cfm-qr-preset-edit-folder-filter").val() || "__all__",
+        currentSelectedFilter: "__current_selected__",
+        currentSelectedLabel: "当前分组",
+        currentSelectedCount: overlay.find(
+          ".cfm-wi-preset-edit-item input:checked",
+        ).length,
         onSelect: (folderId) => {
           overlay.find("#cfm-qr-preset-edit-folder-filter").val(folderId);
           applyEditFilters();
@@ -43935,7 +44910,13 @@ jQuery(async () => {
       uncatNode.removeClass("cfm-drop-target");
       const d = pcGetDropData(e);
       if (d) {
-        if (d.type === "persona") {
+        if (d.type === "res-folder" && d.id && d.resType === "personas") {
+          reorderResFolder("personas", d.id, null, null);
+          cfmToastr.success(
+            `「${getResFolderDisplayName("personas", d.id)}」已移出到根目录`,
+          );
+          renderPersonasView();
+        } else if (d.type === "persona") {
           const personaIds =
             d.multiSelect && d.selectedIds ? d.selectedIds : [d.avatarId];
           const pCount = personaIds.length;
@@ -43962,6 +44943,7 @@ jQuery(async () => {
     // 如果搜索栏有内容，保持搜索模式
     const personaSearchQuery = $("#cfm-persona-global-search").val();
     if (personaSearchQuery && personaSearchQuery.trim()) {
+      leftTree.empty().append(newLeftTree.children());
       executePersonaSearch();
       return;
     }
@@ -44939,7 +45921,7 @@ jQuery(async () => {
       return;
     }
     if (scope.type === "preset") {
-      await savePresetRegexScripts(scripts);
+      await savePresetRegexScripts(scripts, scope.name);
     }
   }
 
@@ -44956,10 +45938,17 @@ jQuery(async () => {
     return new Promise((resolve) => {
       const sourceType = sourceScope?.type || "";
       const hasCurrentChar = !!currentCharAvatar;
-      const hasCurrentPreset = !!currentPresetName;
+      const presetItems = getCurrentPresets()
+        .map((preset) => String(preset?.name || "").trim())
+        .filter(Boolean);
+      const availablePresetTargets = presetItems.filter(
+        (name) => !(sourceType === "preset" && name === sourceScope?.name),
+      );
+      const presetGroups = getResourceGroups("presets");
+      const presetTree = getResFolderTree("presets");
       const canUseGlobal = sourceType !== "global";
       const canUseChar = hasCurrentChar && sourceType !== "char";
-      const canUsePreset = hasCurrentPreset && sourceType !== "preset";
+      const canUsePreset = availablePresetTargets.length > 0;
       const enabledTargetTypes = [
         canUseGlobal ? "global" : "",
         canUseChar ? "char" : "",
@@ -44974,7 +45963,8 @@ jQuery(async () => {
         if (canUseGlobal) defaultTargetType = "global";
         else if (canUsePreset) defaultTargetType = "preset";
       } else if (sourceType === "preset") {
-        if (canUseGlobal) defaultTargetType = "global";
+        if (canUsePreset) defaultTargetType = "preset";
+        else if (canUseGlobal) defaultTargetType = "global";
         else if (canUseChar) defaultTargetType = "char";
       }
       if (!enabledTargetTypes.includes(defaultTargetType)) {
@@ -44982,42 +45972,58 @@ jQuery(async () => {
       }
 
       const folderOptions = getRegexTransferGlobalFolderOptions();
+      const defaultTransferMode = getDefaultRegexTransferMode();
       const globalDisabledReason = canUseGlobal ? "" : "（来源位置，不可选）";
       const charDisabledReason = !hasCurrentChar
         ? "（当前未选择角色）"
         : sourceType === "char"
           ? "（来源位置，不可选）"
           : "";
-      const presetDisabledReason = !hasCurrentPreset
-        ? "（当前未选择预设）"
-        : sourceType === "preset"
-          ? "（来源位置，不可选）"
-          : "";
+      const presetDisabledReason = canUsePreset
+        ? ""
+        : presetItems.length === 0
+          ? "（暂无可用预设）"
+          : sourceType === "preset"
+            ? "（除来源外没有其它预设）"
+            : "（暂无可用预设）";
+      let selectedPresetTargetName = "";
+      let presetTransferExpandedFolders = new Set();
+      const PRESET_TRANSFER_TAP_MOVE_THRESHOLD = 10;
       const overlay = $(
         '<div class="cfm-edit-popup-overlay" style="position:absolute;inset:0;background:rgba(0,0,0,0.12);z-index:100000;display:flex;align-items:center;justify-content:center;"></div>',
       );
       const dialog = $(`
-        <div class="cfm-edit-popup" style="width:min(560px,calc(100vw - 32px));max-width:560px;max-height:calc(100vh - 32px);position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);margin:0;z-index:100001;">
+        <div class="cfm-edit-popup cfm-regex-transfer-dialog-popup" style="width:min(560px,calc(100vw - 32px));max-width:560px;max-height:calc(100vh - 32px);position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);margin:0;z-index:100001;display:flex;flex-direction:column;overflow:hidden;">
           <div class="cfm-edit-popup-header">
             <span><i class="fa-solid fa-right-left"></i> 正则互通</span>
           </div>
-          <div class="cfm-edit-popup-body" style="display:flex;flex-direction:column;gap:14px;">
+          <div class="cfm-edit-popup-body" style="display:flex;flex-direction:column;gap:14px;flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;">
             <div style="font-size:13px;line-height:1.6;opacity:0.92;">已选择 <b>${selectedCount}</b> 个正则脚本，来源：<b>${escapeHtml(getRegexTransferScopeLabel(sourceScope))}</b></div>
             <div style="display:flex;flex-direction:column;gap:8px;">
               <div style="font-size:12px;opacity:0.85;">选择模式</div>
-              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="radio" name="cfm-regex-transfer-mode" value="move" checked> <span>移动</span></label>
-              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="radio" name="cfm-regex-transfer-mode" value="copy"> <span>复制</span></label>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="radio" name="cfm-regex-transfer-mode" value="move" ${defaultTransferMode === "move" ? "checked" : ""}> <span>移动</span></label>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="radio" name="cfm-regex-transfer-mode" value="copy" ${defaultTransferMode === "copy" ? "checked" : ""}> <span>复制</span></label>
             </div>
             <div style="display:flex;flex-direction:column;gap:8px;">
               <div style="font-size:12px;opacity:0.85;">选择目标</div>
               <label style="display:flex;align-items:center;gap:8px;cursor:${canUseGlobal ? "pointer" : "not-allowed"};opacity:${canUseGlobal ? "1" : "0.55"};"><input type="radio" name="cfm-regex-transfer-target" value="global" ${defaultTargetType === "global" ? "checked" : ""} ${canUseGlobal ? "" : "disabled"}> <span>全局正则${globalDisabledReason}</span></label>
               <label style="display:flex;align-items:center;gap:8px;cursor:${canUseChar ? "pointer" : "not-allowed"};opacity:${canUseChar ? "1" : "0.55"};"><input type="radio" name="cfm-regex-transfer-target" value="char" ${defaultTargetType === "char" ? "checked" : ""} ${canUseChar ? "" : "disabled"}> <span>角色正则（当前角色：${escapeHtml(currentCharName || "未选择")}）${escapeHtml(charDisabledReason)}</span></label>
-              <label style="display:flex;align-items:center;gap:8px;cursor:${canUsePreset ? "pointer" : "not-allowed"};opacity:${canUsePreset ? "1" : "0.55"};"><input type="radio" name="cfm-regex-transfer-target" value="preset" ${defaultTargetType === "preset" ? "checked" : ""} ${canUsePreset ? "" : "disabled"}> <span>预设正则（当前预设：${escapeHtml(currentPresetName || "未选择")}）${escapeHtml(presetDisabledReason)}</span></label>
+              <label style="display:flex;align-items:center;gap:8px;cursor:${canUsePreset ? "pointer" : "not-allowed"};opacity:${canUsePreset ? "1" : "0.55"};"><input type="radio" name="cfm-regex-transfer-target" value="preset" ${defaultTargetType === "preset" ? "checked" : ""} ${canUsePreset ? "" : "disabled"}> <span>其它预设正则${escapeHtml(presetDisabledReason)}</span></label>
             </div>
             ${enabledTargetTypes.length === 0 ? '<div style="font-size:12px;line-height:1.6;color:#f38ba8;opacity:0.92;">当前没有可用的互通目标，请先切换到角色或预设后再试。</div>' : ""}
             <div class="cfm-regex-transfer-global-folder" style="display:flex;flex-direction:column;gap:8px;">
               <div style="font-size:12px;opacity:0.85;">全局分组</div>
               <select class="text_pole cfm-regex-transfer-folder-select"></select>
+            </div>
+            <div class="cfm-regex-transfer-preset-target" style="display:none;flex-direction:column;gap:8px;min-height:0;">
+              <div style="font-size:12px;opacity:0.85;">选择目标预设</div>
+              <div class="cfm-entry-transfer-search">
+                <input type="text" class="cfm-entry-transfer-search-input cfm-regex-transfer-preset-search-input" placeholder="搜索预设..." />
+                <button class="cfm-entry-transfer-expand-all cfm-regex-transfer-preset-expand-all" title="展开全部"><i class="fa-solid fa-angles-down"></i></button>
+                <button class="cfm-entry-transfer-collapse-all cfm-regex-transfer-preset-collapse-all" title="收起全部"><i class="fa-solid fa-angles-up"></i></button>
+              </div>
+              <div class="cfm-entry-transfer-tree-container cfm-regex-transfer-preset-tree" style="max-height:min(42vh,360px);overflow-y:auto;overflow-x:hidden;"></div>
+              <div class="cfm-entry-transfer-selected-hint cfm-regex-transfer-preset-hint"></div>
             </div>
           </div>
           <div class="cfm-edit-popup-footer">
@@ -45028,6 +46034,13 @@ jQuery(async () => {
       `);
 
       const folderSelect = dialog.find(".cfm-regex-transfer-folder-select");
+      const presetSearchInput = dialog.find(
+        ".cfm-regex-transfer-preset-search-input",
+      );
+      const presetTreeContainer = dialog.find(
+        ".cfm-regex-transfer-preset-tree",
+      );
+      const presetHintEl = dialog.find(".cfm-regex-transfer-preset-hint");
       folderOptions.forEach((item) => {
         folderSelect.append(
           $(
@@ -45037,7 +46050,195 @@ jQuery(async () => {
       });
       folderSelect.val(defaultGlobalFolderId || "__ungrouped__");
 
-      const updateFolderVisibility = () => {
+      function bindPresetTransferTreeTap(target, handler) {
+        target
+          .on("touchstart", function (e) {
+            const touch = e.originalEvent?.touches?.[0];
+            if (!touch) return;
+            $(this).data("cfmPresetTransferTouchStartX", touch.clientX);
+            $(this).data("cfmPresetTransferTouchStartY", touch.clientY);
+          })
+          .on("click touchend", function (e) {
+            const node = $(this);
+            const now = Date.now();
+            const lastTouchAt = Number(
+              node.data("cfmPresetTransferLastTouchAt") || 0,
+            );
+
+            if (e.type === "touchend") {
+              node.data("cfmPresetTransferLastTouchAt", now);
+              const touch = e.originalEvent?.changedTouches?.[0];
+              if (touch) {
+                const startX = Number(
+                  node.data("cfmPresetTransferTouchStartX"),
+                );
+                const startY = Number(
+                  node.data("cfmPresetTransferTouchStartY"),
+                );
+                if (Number.isFinite(startX) && Number.isFinite(startY)) {
+                  const deltaX = Math.abs(touch.clientX - startX);
+                  const deltaY = Math.abs(touch.clientY - startY);
+                  if (
+                    deltaX > PRESET_TRANSFER_TAP_MOVE_THRESHOLD ||
+                    deltaY > PRESET_TRANSFER_TAP_MOVE_THRESHOLD
+                  ) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    return;
+                  }
+                }
+              }
+            } else if (lastTouchAt && now - lastTouchAt < 500) {
+              e.preventDefault();
+              e.stopPropagation();
+              return;
+            }
+
+            e.preventDefault();
+            e.stopPropagation();
+            handler.call(this, e);
+          });
+      }
+
+      function updatePresetTargetHint() {
+        if (selectedPresetTargetName) {
+          presetHintEl.html(
+            `已选目标预设：<strong>${escapeHtml(selectedPresetTargetName)}</strong>`,
+          );
+          return;
+        }
+        presetHintEl.text("请选择一个目标预设");
+      }
+
+      function renderPresetTargetTree() {
+        const query = String(presetSearchInput.val() || "")
+          .trim()
+          .toLowerCase();
+        presetTreeContainer.empty();
+
+        const folderItems = {};
+        const ungrouped = [];
+        for (const name of availablePresetTargets) {
+          if (query && !name.toLowerCase().includes(query)) continue;
+          const fid = presetGroups[name] || null;
+          if (fid && presetTree[fid]) {
+            if (!folderItems[fid]) folderItems[fid] = [];
+            folderItems[fid].push(name);
+          } else {
+            ungrouped.push(name);
+          }
+        }
+
+        function renderFolder(folderId, depth) {
+          const displayName = getResFolderDisplayName("presets", folderId);
+          const isExpanded = presetTransferExpandedFolders.has(folderId);
+          const childFolders = Object.keys(presetTree).filter(
+            (id) => (presetTree[id]?.parentId || null) === folderId,
+          );
+          const itemsInFolder = folderItems[folderId] || [];
+          const hasContent =
+            itemsInFolder.length > 0 || childFolders.length > 0;
+
+          if (
+            query &&
+            !hasContent &&
+            !displayName.toLowerCase().includes(query)
+          ) {
+            return;
+          }
+
+          const folderNode = $(`
+            <div class="cfm-transfer-folder" data-folder-id="${escapeHtml(folderId)}" style="padding-left:${depth * 16 + 8}px;">
+              <span class="cfm-transfer-folder-arrow"><i class="fa-solid fa-caret-${isExpanded ? "down" : "right"}"></i></span>
+              <span class="cfm-transfer-folder-icon"><i class="fa-solid fa-folder${isExpanded ? "-open" : ""}"></i></span>
+              <span class="cfm-transfer-folder-name">${escapeHtml(displayName)}</span>
+              <span class="cfm-transfer-folder-count">${itemsInFolder.length}</span>
+            </div>
+          `);
+          bindPresetTransferTreeTap(folderNode, () => {
+            if (presetTransferExpandedFolders.has(folderId)) {
+              presetTransferExpandedFolders.delete(folderId);
+            } else {
+              presetTransferExpandedFolders.add(folderId);
+            }
+            renderPresetTargetTree();
+          });
+          presetTreeContainer.append(folderNode);
+
+          if (isExpanded || query) {
+            for (const childId of childFolders)
+              renderFolder(childId, depth + 1);
+            for (const name of itemsInFolder) {
+              const isSelected = selectedPresetTargetName === name;
+              const itemNode = $(`
+                <div class="cfm-transfer-item ${isSelected ? "cfm-transfer-item-selected" : ""}" data-name="${escapeHtml(name)}" style="padding-left:${(depth + 1) * 16 + 8}px;">
+                  <span class="cfm-transfer-item-icon"><i class="fa-solid fa-sliders"></i></span>
+                  <span class="cfm-transfer-item-name">${escapeHtml(name)}</span>
+                </div>
+              `);
+              bindPresetTransferTreeTap(itemNode, () => {
+                selectedPresetTargetName = name;
+                renderPresetTargetTree();
+                updatePresetTargetHint();
+              });
+              presetTreeContainer.append(itemNode);
+            }
+          }
+        }
+
+        const rootFolders = Object.keys(presetTree).filter(
+          (id) => !presetTree[id]?.parentId,
+        );
+        for (const fid of rootFolders) renderFolder(fid, 0);
+
+        if (ungrouped.length > 0) {
+          const uncatId = "__ungrouped__";
+          const isUncatExpanded = presetTransferExpandedFolders.has(uncatId);
+          const uncatNode = $(`
+            <div class="cfm-transfer-folder cfm-transfer-folder-ungrouped" style="padding-left:8px;">
+              <span class="cfm-transfer-folder-arrow"><i class="fa-solid fa-caret-${isUncatExpanded ? "down" : "right"}"></i></span>
+              <span class="cfm-transfer-folder-icon"><i class="fa-solid fa-box-open"></i></span>
+              <span class="cfm-transfer-folder-name">未归类</span>
+              <span class="cfm-transfer-folder-count">${ungrouped.length}</span>
+            </div>
+          `);
+          bindPresetTransferTreeTap(uncatNode, () => {
+            if (presetTransferExpandedFolders.has(uncatId)) {
+              presetTransferExpandedFolders.delete(uncatId);
+            } else {
+              presetTransferExpandedFolders.add(uncatId);
+            }
+            renderPresetTargetTree();
+          });
+          presetTreeContainer.append(uncatNode);
+
+          if (isUncatExpanded || query) {
+            for (const name of ungrouped) {
+              const isSelected = selectedPresetTargetName === name;
+              const itemNode = $(`
+                <div class="cfm-transfer-item ${isSelected ? "cfm-transfer-item-selected" : ""}" data-name="${escapeHtml(name)}" style="padding-left:24px;">
+                  <span class="cfm-transfer-item-icon"><i class="fa-solid fa-sliders"></i></span>
+                  <span class="cfm-transfer-item-name">${escapeHtml(name)}</span>
+                </div>
+              `);
+              bindPresetTransferTreeTap(itemNode, () => {
+                selectedPresetTargetName = name;
+                renderPresetTargetTree();
+                updatePresetTargetHint();
+              });
+              presetTreeContainer.append(itemNode);
+            }
+          }
+        }
+
+        if (presetTreeContainer.children().length === 0) {
+          presetTreeContainer.html(
+            '<div style="padding:16px;opacity:0.5;text-align:center;">无可选预设</div>',
+          );
+        }
+      }
+
+      const updateTargetVisibility = () => {
         const targetType =
           dialog
             .find('input[name="cfm-regex-transfer-target"]:checked')
@@ -45045,6 +46246,13 @@ jQuery(async () => {
         dialog
           .find(".cfm-regex-transfer-global-folder")
           .toggle(targetType === "global");
+        dialog
+          .find(".cfm-regex-transfer-preset-target")
+          .css("display", targetType === "preset" ? "flex" : "none");
+        if (targetType === "preset") {
+          renderPresetTargetTree();
+          updatePresetTargetHint();
+        }
       };
 
       function closeDialog(result = null) {
@@ -45055,8 +46263,28 @@ jQuery(async () => {
 
       dialog
         .find('input[name="cfm-regex-transfer-target"]')
-        .on("change", updateFolderVisibility);
-      updateFolderVisibility();
+        .on("change", updateTargetVisibility);
+      dialog
+        .find(".cfm-regex-transfer-preset-expand-all")
+        .on("click touchend", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          for (const id of Object.keys(presetTree)) {
+            presetTransferExpandedFolders.add(id);
+          }
+          presetTransferExpandedFolders.add("__ungrouped__");
+          renderPresetTargetTree();
+        });
+      dialog
+        .find(".cfm-regex-transfer-preset-collapse-all")
+        .on("click touchend", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          presetTransferExpandedFolders.clear();
+          renderPresetTargetTree();
+        });
+      presetSearchInput.on("input", () => renderPresetTargetTree());
+      updateTargetVisibility();
 
       dialog.find(".cfm-regex-transfer-confirm").on("click", (e) => {
         e.preventDefault();
@@ -45069,12 +46297,17 @@ jQuery(async () => {
           cfmToastr.warning("当前没有可用的目标位置");
           return;
         }
+        if (targetType === "preset" && !selectedPresetTargetName) {
+          cfmToastr.warning("请选择目标预设");
+          return;
+        }
         closeDialog({
           mode:
             dialog
               .find('input[name="cfm-regex-transfer-mode"]:checked')
               .val() || "move",
           targetType,
+          selectedPresetName: selectedPresetTargetName,
           globalFolderId:
             folderSelect.val() || defaultGlobalFolderId || "__ungrouped__",
         });
@@ -45319,13 +46552,16 @@ jQuery(async () => {
         name: currentCharName,
       };
     } else if (transferConfig.targetType === "preset") {
-      if (!currentPresetName) {
+      const targetPresetName = String(
+        transferConfig.selectedPresetName || "",
+      ).trim();
+      if (!targetPresetName) {
         cfmToastr.warning("当前没有可用的目标预设");
         return;
       }
       targetScope = {
         type: "preset",
-        name: currentPresetName,
+        name: targetPresetName,
       };
     }
 
@@ -47182,6 +48418,7 @@ jQuery(async () => {
     // 组合过滤函数
     function getRegexFolderFilterLabel(folderVal) {
       if (!folderVal || folderVal === "__all__") return "显示全部";
+      if (folderVal === "__current_selected__") return "当前分组";
       if (folderVal === "__ungrouped__") return "未归类正则脚本";
       return folderTree[folderVal]?.displayName || folderVal;
     }
@@ -47201,7 +48438,8 @@ jQuery(async () => {
       if (
         folderVal &&
         folderVal !== "__all__" &&
-        folderVal !== "__ungrouped__"
+        folderVal !== "__ungrouped__" &&
+        folderVal !== "__current_selected__"
       ) {
         allowedFolders = new Set();
         function collectChildren(pid) {
@@ -47216,8 +48454,11 @@ jQuery(async () => {
       overlay.find(".cfm-wi-preset-edit-item").each(function () {
         const name = $(this).find("span").text().toLowerCase();
         const folder = $(this).attr("data-folder") || "";
+        const isChecked = $(this).find("input").prop("checked");
         let folderMatch = true;
-        if (folderVal === "__ungrouped__") {
+        if (folderVal === "__current_selected__") {
+          folderMatch = isChecked;
+        } else if (folderVal === "__ungrouped__") {
           folderMatch = !folder || !folderTree[folder];
         } else if (allowedFolders) {
           folderMatch = allowedFolders.has(folder);
@@ -47229,6 +48470,17 @@ jQuery(async () => {
     overlay.find("#cfm-regex-preset-edit-folder-btn").on("click", function (e) {
       e.preventDefault();
       e.stopPropagation();
+      const currentCheckedInput = overlay.find(
+        ".cfm-wi-preset-edit-item input:checked",
+      ).first();
+      const currentCheckedItem = currentCheckedInput.closest(
+        ".cfm-wi-preset-edit-item",
+      );
+      const currentCheckedFolderRaw = currentCheckedItem.attr("data-folder") || "";
+      const currentCheckedFolder =
+        currentCheckedFolderRaw && folderTree[currentCheckedFolderRaw]
+          ? currentCheckedFolderRaw
+          : "__ungrouped__";
       showPresetEditFolderFilterPanel($(this), {
         panelKey: "regex_preset_edit",
         folderTree,
@@ -47257,6 +48509,11 @@ jQuery(async () => {
         currentFilter:
           overlay.find("#cfm-regex-preset-edit-folder-filter").val() ||
           "__all__",
+        currentSelectedFilter: "__current_selected__",
+        currentSelectedLabel: "当前分组",
+        currentSelectedCount: overlay.find(
+          ".cfm-wi-preset-edit-item input:checked",
+        ).length,
         onSelect: (folderId) => {
           overlay.find("#cfm-regex-preset-edit-folder-filter").val(folderId);
           applyEditFilters();
@@ -48006,13 +49263,20 @@ jQuery(async () => {
         selectedRegexNode = folderId;
         renderRegexView();
       });
-      // 树节点作为拖放目标（接收脚本）
+      // 树节点作为拖放目标（接收脚本/文件夹）
       node.on("dragover", (e) => {
         e.preventDefault();
         node.addClass("cfm-drop-target");
         e.originalEvent.dataTransfer.dropEffect = "move";
         const data = _pcDragData || {};
         if (data.type === "regex-script") {
+          _pcLastResourceFolderHoverTarget = {
+            groupType: "regex",
+            targetKind: "folder",
+            folderId,
+            zone: "into",
+          };
+        } else if (data.type === "regex-folder" && data.id !== folderId) {
           _pcLastResourceFolderHoverTarget = {
             groupType: "regex",
             targetKind: "folder",
@@ -48030,6 +49294,7 @@ jQuery(async () => {
         node.removeClass("cfm-drop-target");
         const data = pcGetDropData(e);
         if (!data) return;
+        const fname = folderTree[folderId]?.displayName || folderId;
         if (data.type === "regex-script") {
           const scriptIds =
             data.multiSelect && data.selectedIds
@@ -48040,12 +49305,21 @@ jQuery(async () => {
           });
           if (data.multiSelect) clearMultiSelect();
           getContext().saveSettingsDebounced();
-          const fname = folderTree[folderId]?.displayName || folderId;
           cfmToastr.success(
             scriptIds.length > 1
               ? `已将 ${scriptIds.length} 个脚本移入「${fname}」`
               : `已将「${data.scriptName}」移入「${fname}」`,
           );
+          renderRegexView();
+        } else if (data.type === "regex-folder") {
+          const moved = moveRegexFolder(data, {
+            groupType: "regex",
+            targetKind: "folder",
+            folderId,
+            zone: "into",
+          });
+          if (!moved.length) return;
+          cfmToastr.success(`已将「${data.name || data.id}」移入「${fname}」`);
           renderRegexView();
         }
       });
@@ -48125,7 +49399,16 @@ jQuery(async () => {
       uncatNode.removeClass("cfm-drop-target");
       const data = pcGetDropData(e);
       if (!data) return;
-      if (data.type === "regex-script") {
+      if (data.type === "regex-folder" && data.id) {
+        const moved = moveRegexFolder(data, {
+          groupType: "regex",
+          targetKind: "ungrouped",
+          zone: "into",
+        });
+        if (!moved.length) return;
+        cfmToastr.success(`「${data.name || data.id}」已移出到根目录`);
+        renderRegexView();
+      } else if (data.type === "regex-script") {
         const scriptIds =
           data.multiSelect && data.selectedIds
             ? data.selectedIds
@@ -48294,6 +49577,18 @@ jQuery(async () => {
               scriptIds.length > 1
                 ? `已将 ${scriptIds.length} 个脚本移入「${childDisplayName}」`
                 : `已将「${data.scriptName}」移入「${childDisplayName}」`,
+            );
+            renderRegexView();
+          } else if (data.type === "regex-folder") {
+            const moved = moveRegexFolder(data, {
+              groupType: "regex",
+              targetKind: "folder",
+              folderId: childId,
+              zone: "into",
+            });
+            if (!moved.length) return;
+            cfmToastr.success(
+              `已将「${data.name || data.id}」移入「${childDisplayName}」`,
             );
             renderRegexView();
           }
@@ -49644,6 +50939,9 @@ jQuery(async () => {
       getItemCount,
       ungroupedLabel,
       currentFilter,
+      currentSelectedFilter = null,
+      currentSelectedLabel = "当前选中",
+      currentSelectedCount = null,
       onSelect,
     } = config;
 
@@ -49716,6 +51014,29 @@ jQuery(async () => {
       <i class="fa-solid fa-layer-group cfm-nf-icon"></i>
       <span class="cfm-nf-name">显示全部</span>
     </div>`);
+    const effectiveCurrentSelectedFilter =
+      currentSelectedFilter === "__ungrouped__"
+        ? "__ungrouped__"
+        : currentSelectedFilter && currentSelectedFilter !== "__all__"
+          ? currentSelectedFilter
+          : null;
+    const effectiveCurrentSelectedLabel =
+      effectiveCurrentSelectedFilter === "__ungrouped__"
+        ? ungroupedLabel
+        : currentSelectedLabel ||
+          (effectiveCurrentSelectedFilter
+            ? getDisplayName(effectiveCurrentSelectedFilter)
+            : "当前选中");
+    const effectiveCurrentSelectedCount = effectiveCurrentSelectedFilter
+      ? currentSelectedCount ?? getItemCount(effectiveCurrentSelectedFilter)
+      : null;
+    const currentSelectedBtn = effectiveCurrentSelectedFilter
+      ? $(`<div class="cfm-nf-item cfm-nf-current-selected${currentFilter === effectiveCurrentSelectedFilter ? " cfm-nf-active" : ""}" data-folder-id="${escapeHtml(effectiveCurrentSelectedFilter)}">
+      <i class="fa-solid fa-location-crosshairs cfm-nf-icon"></i>
+      <span class="cfm-nf-name">${escapeHtml(effectiveCurrentSelectedLabel)}</span>
+      <span class="cfm-nf-count">${effectiveCurrentSelectedCount}</span>
+    </div>`)
+      : null;
     const treeContainer = $('<div class="cfm-nf-tree"></div>');
 
     function renderTree(activeId) {
@@ -49723,7 +51044,11 @@ jQuery(async () => {
     }
 
     renderTree(currentFilter);
-    panel.append(toolbar, showAllBtn, treeContainer);
+    if (currentSelectedBtn) {
+      panel.append(toolbar, showAllBtn, currentSelectedBtn, treeContainer);
+    } else {
+      panel.append(toolbar, showAllBtn, treeContainer);
+    }
     panel.on("mousedown mouseup click touchstart touchend", (e) =>
       e.stopPropagation(),
     );
