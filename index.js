@@ -12103,7 +12103,7 @@ jQuery(async () => {
         const d = n.lastIndexOf(".");
         return d > 0 ? n.substring(0, d) : n;
       });
-      const popupHtml = `<div class="cfm-edit-popup-overlay"><div class="cfm-edit-popup"><div class="cfm-edit-popup-title">批量重命名背景</div><div class="cfm-edit-popup-names">${nameListHtml}</div><div class="cfm-edit-popup-field"><label>操作类型</label><select class="cfm-edit-input" id="cfm-rename-action"><option value="add-prefix">增加前缀</option><option value="add-suffix">增加后缀(扩展名前)</option><option value="del-prefix">删除前缀</option><option value="del-suffix">删除后缀(扩展名前)</option></select></div><div class="cfm-edit-popup-field"><label id="cfm-rename-text-label">前缀内容</label><input type="text" class="cfm-edit-input" id="cfm-rename-text" placeholder="输入前缀内容"></div><div class="cfm-edit-popup-field cfm-rename-auto-detect" style="display:none;"><label>自动检测到的公共前/后缀</label><div id="cfm-rename-detected" class="cfm-rename-detected"></div></div><div class="cfm-edit-popup-actions"><button class="cfm-btn cfm-edit-popup-cancel">取消</button><button class="cfm-btn cfm-edit-popup-confirm">确认</button></div></div></div>`;
+      const popupHtml = `<div class="cfm-edit-popup-overlay"><div class="cfm-edit-popup"><div class="cfm-edit-popup-title">批量重命名背景</div><div class="cfm-edit-popup-names">${nameListHtml}</div><div class="cfm-edit-popup-field"><label>操作类型</label><select class="cfm-edit-input" id="cfm-rename-action"><option value="add-prefix">增加前缀</option><option value="add-suffix">增加后缀(扩展名前)</option><option value="del-prefix">删除前缀</option><option value="del-suffix">删除后缀(扩展名前)</option><option value="same-name-suffix">重命名为同名并自动后缀</option></select></div><div class="cfm-edit-popup-field" id="cfm-rename-base-field"><label id="cfm-rename-base-label">新名称</label><input type="text" class="cfm-edit-input" id="cfm-rename-base" placeholder="输入新名称"></div><div class="cfm-edit-popup-field" id="cfm-rename-text-field"><label id="cfm-rename-text-label">前缀内容</label><input type="text" class="cfm-edit-input" id="cfm-rename-text" placeholder="输入前缀内容"></div><div class="cfm-edit-popup-field cfm-rename-auto-detect" style="display:none;"><label>自动检测到的公共前/后缀</label><div id="cfm-rename-detected" class="cfm-rename-detected"></div></div><div class="cfm-edit-popup-actions"><button class="cfm-btn cfm-edit-popup-cancel">取消</button><button class="cfm-btn cfm-edit-popup-confirm">确认</button></div></div></div>`;
       const overlay = $(popupHtml);
       $("body").append(overlay);
       function updateRenameUI() {
@@ -12112,15 +12112,32 @@ jQuery(async () => {
         const textInput = overlay.find("#cfm-rename-text");
         const autoDetect = overlay.find(".cfm-rename-auto-detect");
         const detected = overlay.find("#cfm-rename-detected");
-        if (action === "add-prefix") {
+        const baseField = overlay.find("#cfm-rename-base-field");
+        const textField = overlay.find("#cfm-rename-text-field");
+        const baseInput = overlay.find("#cfm-rename-base");
+        if (action === "same-name-suffix") {
+          baseField.show();
+          textField.show();
+          overlay.find("#cfm-rename-base-label").text("新名称");
+          baseInput.attr("placeholder", "例如 xxx");
+          textLabel.text("后缀格式");
+          textInput.attr("placeholder", "例如 (1) 或 -1，第一项保持原名");
+          autoDetect.hide();
+        } else if (action === "add-prefix") {
+          baseField.hide();
+          textField.show();
           textLabel.text("前缀内容");
           textInput.attr("placeholder", "输入要添加的前缀");
           autoDetect.hide();
         } else if (action === "add-suffix") {
+          baseField.hide();
+          textField.show();
           textLabel.text("后缀内容(扩展名前)");
           textInput.attr("placeholder", "输入要添加的后缀");
           autoDetect.hide();
         } else if (action === "del-prefix") {
+          baseField.hide();
+          textField.show();
           textLabel.text("要删除的前缀");
           textInput.attr(
             "placeholder",
@@ -12134,6 +12151,8 @@ jQuery(async () => {
           );
           autoDetect.show();
         } else if (action === "del-suffix") {
+          baseField.hide();
+          textField.show();
           textLabel.text("要删除的后缀(扩展名前)");
           textInput.attr(
             "placeholder",
@@ -12153,7 +12172,7 @@ jQuery(async () => {
       overlay.on("click", ".cfm-rename-detect-item", function () {
         overlay.find("#cfm-rename-text").val($(this).data("value"));
       });
-      overlay.find("#cfm-rename-text").focus();
+      overlay.find("#cfm-rename-base").focus().select();
       return new Promise((resolve) => {
         overlay.find(".cfm-edit-popup-cancel").on("click", () => {
           overlay.remove();
@@ -12167,17 +12186,24 @@ jQuery(async () => {
         });
         overlay.find(".cfm-edit-popup-confirm").on("click", () => {
           const action = overlay.find("#cfm-rename-action").val();
+          const base = overlay.find("#cfm-rename-base").val().trim();
           const text = overlay.find("#cfm-rename-text").val().trim();
           overlay.remove();
-          resolve({ mode: "batch", action, text });
+          resolve({ mode: "batch", action, base, text });
+        });
+        overlay.find("#cfm-rename-base").on("keydown", (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            overlay.find(".cfm-edit-popup-confirm").trigger("click");
+          }
+          if (e.key === "Escape") overlay.find(".cfm-edit-popup-cancel").trigger("click");
         });
         overlay.find("#cfm-rename-text").on("keydown", (e) => {
           if (e.key === "Enter") {
             e.preventDefault();
             overlay.find(".cfm-edit-popup-confirm").trigger("click");
           }
-          if (e.key === "Escape")
-            overlay.find(".cfm-edit-popup-cancel").trigger("click");
+          if (e.key === "Escape") overlay.find(".cfm-edit-popup-cancel").trigger("click");
         });
       });
     }
@@ -12225,8 +12251,12 @@ jQuery(async () => {
         return;
       }
     } else if (result.mode === "batch") {
-      const { action, text } = result;
-      if (!text) {
+      const { action, base, text } = result;
+      if (action === "same-name-suffix" && !base) {
+        cfmToastr.warning("请输入新名称");
+        return;
+      }
+      if (action !== "same-name-suffix" && !text) {
         cfmToastr.warning("请输入内容");
         return;
       }
@@ -12234,14 +12264,17 @@ jQuery(async () => {
         skipped = 0,
         failed = 0;
       cfmToastr.info(`正在批量重命名 ${names.length} 个背景...`);
-      for (const oldName of names) {
+      for (let i = 0; i < names.length; i++) {
+        const oldName = names[i];
         const dotIdx = oldName.lastIndexOf(".");
         const baseName = dotIdx > 0 ? oldName.substring(0, dotIdx) : oldName;
         const ext = dotIdx > 0 ? oldName.substring(dotIdx) : "";
         let newBase;
         if (action === "add-prefix") newBase = text + baseName;
         else if (action === "add-suffix") newBase = baseName + text;
-        else if (action === "del-prefix") {
+        else if (action === "same-name-suffix") {
+          newBase = i === 0 ? base : `${base}${buildAutoIncrementSuffix(text, i)}`;
+        } else if (action === "del-prefix") {
           if (!baseName.startsWith(text)) {
             skipped++;
             continue;
@@ -15575,6 +15608,17 @@ jQuery(async () => {
       }
     }
     return suffix.split("").reverse().join("");
+  }
+
+  function buildAutoIncrementSuffix(pattern, index) {
+    if (index <= 0) return "";
+    const suffix = String(pattern || "");
+    if (index === 1) return suffix;
+    const hasNumber = /(\d+)(?!.*\d)/.test(suffix);
+    if (hasNumber) {
+      return suffix.replace(/(\d+)(?!.*\d)/, String(index));
+    }
+    return `${suffix}${index}`;
   }
 
   // 执行预设重命名
@@ -28081,7 +28125,9 @@ jQuery(async () => {
     popup.find("#cfm-import-char-btn").on("click touchend", function (e) {
       e.preventDefault();
       e.stopPropagation();
-      $("#cfm-import-char-file").val("").trigger("click");
+      const input = popup.find("#cfm-import-char-file");
+      input.val("");
+      input[0]?.click();
     });
 
     popup.find("#cfm-import-char-file").on("change", async function (e) {
@@ -28220,7 +28266,9 @@ jQuery(async () => {
     popup.find("#cfm-import-preset-btn").on("click touchend", function (e) {
       e.preventDefault();
       e.stopPropagation();
-      $("#cfm-import-preset-file").val("").trigger("click");
+      const input = popup.find("#cfm-import-preset-file");
+      input.val("");
+      input[0]?.click();
     });
 
     popup.find("#cfm-import-preset-file").on("change", async function (e) {
@@ -28421,7 +28469,9 @@ jQuery(async () => {
     popup.find("#cfm-import-qr-btn").on("click touchend", function (e) {
       e.preventDefault();
       e.stopPropagation();
-      $("#cfm-import-qr-file").val("").trigger("click");
+      const input = popup.find("#cfm-import-qr-file");
+      input.val("");
+      input[0]?.click();
     });
 
     popup.find("#cfm-import-qr-file").on("change", async function (e) {
@@ -28661,7 +28711,9 @@ jQuery(async () => {
     popup.find("#cfm-import-persona-btn").on("click touchend", function (e) {
       e.preventDefault();
       e.stopPropagation();
-      $("#cfm-import-persona-file").val("").trigger("click");
+      const input = popup.find("#cfm-import-persona-file");
+      input.val("");
+      input[0]?.click();
     });
 
     popup.find("#cfm-import-persona-file").on("change", async function (e) {
@@ -28683,7 +28735,9 @@ jQuery(async () => {
     popup.find("#cfm-import-regex-btn").on("click touchend", function (e) {
       e.preventDefault();
       e.stopPropagation();
-      $("#cfm-import-regex-file").val("").trigger("click");
+      const input = popup.find("#cfm-import-regex-file");
+      input.val("");
+      input[0]?.click();
     });
 
     popup.find("#cfm-import-regex-file").on("change", async function (e) {
@@ -28824,7 +28878,9 @@ jQuery(async () => {
     popup.find("#cfm-import-theme-btn").on("click touchend", function (e) {
       e.preventDefault();
       e.stopPropagation();
-      $("#cfm-import-theme-file").val("").trigger("click");
+      const input = popup.find("#cfm-import-theme-file");
+      input.val("");
+      input[0]?.click();
     });
 
     popup.find("#cfm-import-theme-file").on("change", async function (e) {
@@ -28962,7 +29018,9 @@ jQuery(async () => {
     popup.find("#cfm-import-bg-btn").on("click touchend", function (e) {
       e.preventDefault();
       e.stopPropagation();
-      $("#cfm-import-bg-file").val("").trigger("click");
+      const input = popup.find("#cfm-import-bg-file");
+      input.val("");
+      input[0]?.click();
     });
 
     popup.find("#cfm-import-bg-file").on("change", async function (e) {
@@ -29138,7 +29196,9 @@ jQuery(async () => {
     popup.find("#cfm-import-worldinfo-btn").on("click touchend", function (e) {
       e.preventDefault();
       e.stopPropagation();
-      $("#cfm-import-worldinfo-file").val("").trigger("click");
+      const input = popup.find("#cfm-import-worldinfo-file");
+      input.val("");
+      input[0]?.click();
     });
 
     popup.find("#cfm-import-worldinfo-file").on("change", async function (e) {
@@ -33845,7 +33905,7 @@ jQuery(async () => {
       if (totalSkipped > 0)
         cfmToastr.warning(`${totalSkipped} 个文件夹已存在（跳过）`);
       createSection.find("#cfm-res-create-input").val("");
-      renderResourceConfigBody(body.empty(), type);
+      renderResourceConfigBody(body.empty(), type, "create");
     });
     createSection.find("#cfm-res-create-input").on("keydown", (e) => {
       if (e.key === "Enter") {
@@ -33877,7 +33937,7 @@ jQuery(async () => {
       resConfigDeleteCascade = false;
       resConfigDeleteLastClickedId = null;
       resConfigDeleteRangeMode = false;
-      renderResourceConfigBody(body.empty(), type);
+      renderResourceConfigBody(body.empty(), type, "create");
     });
     createBody.append(batchSection);
 
@@ -33922,18 +33982,18 @@ jQuery(async () => {
         e.preventDefault();
         if (allSelected) resConfigDeleteSelected.clear();
         else allFolderIds.forEach((f) => resConfigDeleteSelected.add(f));
-        renderResourceConfigBody(body.empty(), type);
+        renderResourceConfigBody(body.empty(), type, "create");
       });
       deleteBar.find("#cfm-res-cascade-toggle").on("click touchend", (e) => {
         e.preventDefault();
         resConfigDeleteCascade = !resConfigDeleteCascade;
-        renderResourceConfigBody(body.empty(), type);
+        renderResourceConfigBody(body.empty(), type, "create");
       });
       deleteBar.find("#cfm-res-range-toggle").on("click touchend", (e) => {
         e.preventDefault();
         resConfigDeleteRangeMode = !resConfigDeleteRangeMode;
         if (resConfigDeleteRangeMode) resConfigDeleteLastClickedId = null;
-        renderResourceConfigBody(body.empty(), type);
+        renderResourceConfigBody(body.empty(), type, "create");
       });
       deleteBar.find("#cfm-res-invert-scope").on("change", function () {
         resConfigInvertScope = $(this).val();
@@ -33961,7 +34021,7 @@ jQuery(async () => {
             }
           }
         }
-        renderResourceConfigBody(body.empty(), type);
+        renderResourceConfigBody(body.empty(), type, "create");
       });
       deleteBar.find("#cfm-res-confirm-delete").on("click touchend", (e) => {
         e.preventDefault();
@@ -33969,7 +34029,7 @@ jQuery(async () => {
         resConfigDeleteCascade = false;
         resConfigDeleteLastClickedId = null;
         resConfigDeleteRangeMode = false;
-        renderResourceConfigBody(body.empty(), type);
+        renderResourceConfigBody(body.empty(), type, "create");
       });
       createBody.append(deleteBar);
     }
@@ -33990,14 +34050,14 @@ jQuery(async () => {
     treeSection.find("#cfm-res-config-expand-all").on("click touchend", (e) => {
       e.preventDefault();
       for (const id of allFolderIds) expandedSet.add(id);
-      renderResourceConfigBody(body.empty(), type);
+      renderResourceConfigBody(body.empty(), type, "create");
     });
     treeSection
       .find("#cfm-res-config-collapse-all")
       .on("click touchend", (e) => {
         e.preventDefault();
         expandedSet.clear();
-        renderResourceConfigBody(body.empty(), type);
+        renderResourceConfigBody(body.empty(), type, "create");
       });
 
     const treeContainer = treeSection.find("#cfm-res-folder-tree");
@@ -34012,7 +34072,7 @@ jQuery(async () => {
       selectedHint.find(".cfm-btn-deselect").on("click touchend", (e) => {
         e.preventDefault();
         resConfigSelectedFolderIds.clear();
-        renderResourceConfigBody(body.empty(), type);
+        renderResourceConfigBody(body.empty(), type, "create");
       });
       treeContainer.append(selectedHint);
     }
@@ -34058,7 +34118,7 @@ jQuery(async () => {
           if (!hasChildren) return;
           if (expandedSet.has(folderId)) expandedSet.delete(folderId);
           else expandedSet.add(folderId);
-          renderResourceConfigBody(body.empty(), type);
+          renderResourceConfigBody(body.empty(), type, "create");
         });
 
         if (resConfigDeleteMode) {
@@ -34110,7 +34170,7 @@ jQuery(async () => {
               toggleResFolder(folderId);
             }
             resConfigDeleteLastClickedId = folderId;
-            renderResourceConfigBody(body.empty(), type);
+            renderResourceConfigBody(body.empty(), type, "create");
           };
           item.on("click touchend", handleResDeleteClick);
         } else {
@@ -34127,7 +34187,7 @@ jQuery(async () => {
             } else {
               resConfigSelectedFolderIds.add(folderId);
             }
-            renderResourceConfigBody(body.empty(), type);
+            renderResourceConfigBody(body.empty(), type, "create");
           });
           item.find(".cfm-res-remove-folder").on("click touchend", (e) => {
             e.preventDefault();
@@ -34136,7 +34196,7 @@ jQuery(async () => {
               removeResFolder(type, folderId);
               resConfigSelectedFolderIds.delete(folderId);
               cfmToastr.success(`已删除${typeLabel}文件夹「${folderId}」`);
-              renderResourceConfigBody(body.empty(), type);
+              renderResourceConfigBody(body.empty(), type, "create");
             });
           });
         }
@@ -34761,7 +34821,7 @@ jQuery(async () => {
       resConfigDeleteMode = false;
       cfmToastr.success(`已删除 ${toDelete.length} 个${typeLabel}文件夹`);
       const body = $("#cfm-config-body");
-      renderResourceConfigBody(body.empty(), type);
+      renderResourceConfigBody(body.empty(), type, "create");
     });
   }
 
@@ -34943,7 +35003,7 @@ jQuery(async () => {
       cfmToastr.success(
         `已创建 ${created} 个文件夹${skipped > 0 ? `，${skipped} 个跳过` : ""}`,
       );
-      renderConfigBody();
+      renderConfigBody("create");
     });
   }
 
