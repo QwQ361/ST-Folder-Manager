@@ -33359,6 +33359,8 @@ jQuery(async () => {
     body.append(section);
   }
 
+  let cfmConfigTopActiveTab = "settings";
+
   function createConfigTabShell(defaultTab = "settings") {
     const shell = $(`
       <div class="cfm-config-tab-shell">
@@ -33377,6 +33379,7 @@ jQuery(async () => {
       const currentTab = ["settings", "layout", "create"].includes(tab)
         ? tab
         : "settings";
+      cfmConfigTopActiveTab = currentTab;
       shell
         .find(".cfm-config-top-tab")
         .removeClass("cfm-mode-active cfm-config-top-tab-active");
@@ -33437,6 +33440,7 @@ jQuery(async () => {
     const currentTabFromUi =
       defaultTab ||
       $("#cfm-config-body .cfm-config-top-tab-active").data("tab") ||
+      cfmConfigTopActiveTab ||
       "settings";
     const tabShell = createConfigTabShell(currentTabFromUi);
     const settingsBody = tabShell.settingsPanel;
@@ -33807,7 +33811,7 @@ jQuery(async () => {
                 ? qrConfigExpandedNodes
                 : worldInfoConfigExpandedNodes;
 
-    const tabShell = createConfigTabShell(defaultTab || "settings");
+    const tabShell = createConfigTabShell(defaultTab || cfmConfigTopActiveTab || "settings");
     const settingsBody = tabShell.settingsPanel;
     const layoutBody = tabShell.layoutPanel;
     const createBody = tabShell.createPanel;
@@ -34297,7 +34301,7 @@ jQuery(async () => {
       return r;
     }
 
-    const tabShell = createConfigTabShell(defaultTab || "settings");
+    const tabShell = createConfigTabShell(defaultTab || cfmConfigTopActiveTab || "settings");
     const settingsBody = tabShell.settingsPanel;
     const layoutBody = tabShell.layoutPanel;
     const createBody = tabShell.createPanel;
