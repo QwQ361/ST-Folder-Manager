@@ -5642,6 +5642,23 @@ option.cfm-nf-hidden {
   display: none !important;
 }
 
+/* 第三方插件接管全局世界书选择器时（百宝箱 .bai-bai-wi-global-selector、
+   GR 插件 .gr-select2-display / [data-gr-select-id] 等），原生 select2 容器退化为空壳。
+   空壳内部块级元素（clear/rendered/search）会垂直堆叠，导致选择区被拉伸成高条。
+   此处兜底：当自定义选择器存在时，隐藏 select2 空壳并让其占满剩余空间。
+   JS 注入逻辑已做同样处理，此规则用于兜底异步接管（DOM 稍后渲染选择器）的场景。 */
+.range-block-range:has(.bai-bai-wi-global-selector) .select2-container,
+.range-block-range:has(.gr-select2-display) .select2-container,
+.range-block-range:has([data-gr-select-id]) .select2-container {
+  display: none !important;
+}
+.range-block-range .bai-bai-wi-global-selector,
+.range-block-range .gr-select2-display,
+.range-block-range [data-gr-select-id] {
+  flex: 1;
+  min-width: 0;
+}
+
 /* 未归类节点样式 */
 .cfm-nf-uncat {
   border-top: 1px solid rgba(255, 255, 255, 0.08);

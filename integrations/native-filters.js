@@ -124,6 +124,187 @@ export function createNativeFiltersApiCore(deps) {
             : "worldinfo";
   }
 
+  // ==================== 全局世界书自定义选择器检测 ====================
+  /**
+   * 检测 .range-block-range 内是否存在第三方插件渲染的自定义选择器
+   * （接管了原生 select2 的显示，此时原生 select2 容器退化为空壳）。
+   *
+   * 已知接管插件：
+   * - 百宝箱：.bai-bai-wi-global-selector
+   * - GR 插件：.gr-select2-display（带 data-gr-select-id 属性）
+   *
+   * 通用兜底：任意「非 select2 容器、非原生 select」的可见子元素，
+   * 只要它包含已选中的 chips/值，就视为自定义选择器。
+   * @param {jQuery} rangeBlock - #world_info 所在的 .range-block-range
+   * @returns {jQuery|null} 匹配到的自定义选择器元素，无则返回 null
+   */
+  function resolveGlobalWICustomSelector(rangeBlock) {
+    if (!rangeBlock || !rangeBlock.length) return null;
+
+    // 1. 已知插件：百宝箱
+    const baiSelector = rangeBlock.find(".bai-bai-wi-global-selector").first();
+    if (baiSelector.length) return baiSelector;
+
+    // 2. 已知插件：GR 自定义选择器（gr-select2-display / data-gr-select-id）
+    const grSelector = rangeBlock
+      .find(".gr-select2-display, [data-gr-select-id]")
+      .first();
+    if (grSelector.length) return grSelector;
+
+    // 3. 通用兜底：rangeBlock 的直接可见子元素中，
+    //    排除原生 select、select2 容器和我们的按钮列，
+    //    若存在一个可见的、非空的元素，则视为自定义选择器。
+    const excluded =
+      ".select2-container, .cfm-native-global-wi-tool-column, select";
+    const candidates = rangeBlock
+      .children()
+      .not(excluded)
+      .filter(function () {
+        const $el = $(this);
+        const isVisible =
+          $el.is(":visible") && $el.width() > 50 && $el.height() > 10;
+        if (!isVisible) return false;
+        // 必须是 flex 布局且内部有内容（chips/placeholder 等）
+        return $el.children().length > 0 || $el.text().trim().length > 0;
+      });
+    if (candidates.length > 0) return candidates.first();
+
+    return null;
+  }
+
+  /**
+   * 统一处理全局世界书选择区布局：
+   * - 若存在第三方自定义选择器接管，隐藏 select2 空壳并让自定义选择器占满剩余空间；
+   * - 否则由原生 select2 容器占满剩余空间。
+   * @param {jQuery} rangeBlock - #world_info 所在的 .range-block-range
+   */
+  function applyGlobalWILayout(rangeBlock) {
+    if (!rangeBlock || !rangeBlock.length) return;
+    const customSelector = resolveGlobalWICustomSelector(rangeBlock);
+    const select2Container = rangeBlock.find(".select2-container");
+    if (customSelector) {
+      select2Container.css({ display: "none" });
+      customSelector.css({ flex: "1", minWidth: "0", width: "auto" });
+    } else {
+      select2Container.css({ flex: "1", minWidth: "0" });
+    }
+  }
+
+  // ==================== 第三方弹窗互斥 ====================
+  /**
+   * 关闭第三方插件打开的下拉/浮层（GR 插件、百宝箱插件、select2 下拉等）。
+   *
+   * 背景：GR 插件等第三方插件会将自定义选择器下拉挂载到 body，
+   * 并使用极高的 z-index（如 2147483647）渲染选项列表。
+   * 当它们处于打开状态时，会完全覆盖我们插件的过滤面板（z-index: 10000），
+   * 导致面板被遮挡无法操作。因此在打开过滤面板前必须先关闭这些第三方浮层。
+   *
+   * 关闭策略（尽量使用插件自身语义，避免破坏其状态）：
+   * - GR 插件：移除 .open 类（其内部样式据此隐藏 .gr-options 下拉），
+   *   并隐藏容器本身（width/height 由插件计算，移除 open 后容器可能仍占位）。
+   * - select2：移除 .select2-container--open 类（原生 select2 的打开标记）。
+   * - 百宝箱插件：隐藏其已知下拉容器。
+   */
+  function closeThirdPartyPopups() {
+    // 0. 模拟点击 body，让依赖 document click 关闭的第三方浮层（GR 等）走正常关闭流程。
+    //    GR 正常关闭时会移除其下拉容器 DOM（而非仅隐藏），可避免 inline 样式残留影响下次打开。
+    try {
+      document.body.click();
+    } catch (e) {
+      /* 忽略：某些环境下 body.click 可能抛错 */
+    }
+
+    // 1. GR 插件：全局下拉容器（#gr-global-dropdown-container / .gr-container-enhanced）。
+    // 注意：不要隐藏 .gr-select2-display / [data-gr-select-id]（那是 GR 插件的选择器本体，
+    // 用户需要点击它重新打开下拉），只隐藏打开状态的下拉容器与选项列表。
+    // 以下为兜底：若 GR 未按预期移除容器（如 body.click 未生效），则移除 .open 类并隐藏。
+    document
+      .querySelectorAll("#gr-global-dropdown-container, .gr-container-enhanced")
+      .forEach((el) => {
+        if (el.classList.contains("open")) el.classList.remove("open");
+        el.style.setProperty("display", "none", "important");
+      });
+    // GR 选项列表容器
+    document.querySelectorAll(".gr-options").forEach((el) => {
+      el.style.setProperty("display", "none", "important");
+    });
+
+    // 2. select2 打开中的下拉容器
+    document.querySelectorAll(".select2-container--open").forEach((el) => {
+      el.classList.remove("select2-container--open");
+    });
+
+    // 3. 百宝箱插件下拉（若有）
+    document
+      .querySelectorAll(".bai-dropdown, .bai-popup, .bai-select2-dropdown")
+      .forEach((el) => {
+        el.style.setProperty("display", "none", "important");
+      });
+  }
+
+  /**
+   * 反向互斥：当用户点击第三方插件选择器（GR / 百宝箱 / select2 容器）
+   * 打开其下拉时，自动关闭我们插件的过滤面板。
+   *
+   * 由于过滤面板内部事件使用 e.stopPropagation() 阻止冒泡，
+   * 第三方插件自身的 document click 关闭逻辑无法收到点击事件，
+   * 因此需要在本插件内用「捕获阶段」监听，确保在第三方插件处理前执行。
+   *
+   * 仅在面板打开期间生效；面板关闭时自动移除监听，避免常驻开销。
+   */
+  function setupThirdPartyPopupExclusiveCapture() {
+    const handler = function (e) {
+      const t = e.target;
+      if (!t || !t.closest) return;
+      // 点击目标在第三方选择器/下拉区域内，而非我们的面板或按钮
+      if (
+        t.closest(
+          ".gr-select2-display, [data-gr-select-id], .gr-container-enhanced, " +
+            ".bai-bai-wi-global-selector, .select2-container, .select2-selection",
+        )
+      ) {
+        if ($(".cfm-nf-panel").length) {
+          $(".cfm-nf-panel").remove();
+          $(document).off("mousedown.cfmNfPanel touchstart.cfmNfPanel");
+          $(document).off(
+            "mousedown.cfmPresetEditFolderPanel touchstart.cfmPresetEditFolderPanel",
+          );
+          // 同时移除本捕获监听自身，避免常驻泄漏（事件处理中移除自身是安全的）
+          cleanupNativeFilterPanelClose();
+        }
+      }
+    };
+    document.addEventListener("click", handler, true);
+    return handler;
+  }
+
+  /** 打开过滤面板前统一处理：关闭第三方浮层 + 注册反向互斥捕获监听 */
+  function prepareNativeFilterPanelOpen() {
+    closeThirdPartyPopups();
+    // 注册捕获阶段互斥监听；面板关闭时由调用处移除
+    const handler = setupThirdPartyPopupExclusiveCapture();
+    if (prepareNativeFilterPanelOpen._handler) {
+      document.removeEventListener(
+        "click",
+        prepareNativeFilterPanelOpen._handler,
+        true,
+      );
+    }
+    prepareNativeFilterPanelOpen._handler = handler;
+  }
+
+  /** 过滤面板关闭时清理：移除反向互斥捕获监听 */
+  function cleanupNativeFilterPanelClose() {
+    if (prepareNativeFilterPanelOpen._handler) {
+      document.removeEventListener(
+        "click",
+        prepareNativeFilterPanelOpen._handler,
+        true,
+      );
+      prepareNativeFilterPanelOpen._handler = null;
+    }
+  }
+
   // ==================== 文件夹树 HTML 构建 ====================
   /**
    * 构建原生文件夹树的 HTML（递归）
@@ -259,6 +440,10 @@ export function createNativeFiltersApiCore(deps) {
     $(document).off(
       "mousedown.cfmPresetEditFolderPanel touchstart.cfmPresetEditFolderPanel",
     );
+
+    // 互斥：打开本面板前关闭第三方浮层（GR 下拉 / select2 / 百宝箱），
+    // 并注册捕获阶段监听，实现「点击第三方选择器时关闭本面板」
+    prepareNativeFilterPanelOpen();
 
     if (!showPresetEditFolderFilterPanel._expanded)
       showPresetEditFolderFilterPanel._expanded = {};
@@ -409,6 +594,7 @@ export function createNativeFiltersApiCore(deps) {
       $(document).off(
         "mousedown.cfmPresetEditFolderPanel touchstart.cfmPresetEditFolderPanel",
       );
+      cleanupNativeFilterPanelClose();
     });
 
     panel.on("click", ".cfm-nf-item", function (e) {
@@ -419,6 +605,7 @@ export function createNativeFiltersApiCore(deps) {
       $(document).off(
         "mousedown.cfmPresetEditFolderPanel touchstart.cfmPresetEditFolderPanel",
       );
+      cleanupNativeFilterPanelClose();
     });
 
     setTimeoutFn(() => {
@@ -430,6 +617,7 @@ export function createNativeFiltersApiCore(deps) {
             $(document).off(
               "mousedown.cfmPresetEditFolderPanel touchstart.cfmPresetEditFolderPanel",
             );
+            cleanupNativeFilterPanelClose();
           }
         },
       );
@@ -444,6 +632,10 @@ export function createNativeFiltersApiCore(deps) {
   function showNativeFolderPanel(anchorEl, type) {
     // 移除已有面板
     $(".cfm-nf-panel").remove();
+
+    // 互斥：打开本面板前关闭第三方浮层（GR 下拉 / select2 / 百宝箱），
+    // 并注册捕获阶段监听，实现「点击第三方选择器时关闭本面板」
+    prepareNativeFilterPanelOpen();
 
     // globalworldinfo 共享 worldinfo 的文件夹结构
     const treeType = type === "globalworldinfo" ? "worldinfo" : type;
@@ -587,6 +779,7 @@ export function createNativeFiltersApiCore(deps) {
       applyNativeFilter(type);
       panel.remove();
       $(document).off("mousedown.cfmNfPanel touchstart.cfmNfPanel");
+      cleanupNativeFilterPanelClose();
       updateNativeFilterBtnState(type);
     });
 
@@ -605,6 +798,7 @@ export function createNativeFiltersApiCore(deps) {
       applyNativeFilter(type);
       panel.remove();
       $(document).off("mousedown.cfmNfPanel touchstart.cfmNfPanel");
+      cleanupNativeFilterPanelClose();
       updateNativeFilterBtnState(type);
     });
 
@@ -616,6 +810,7 @@ export function createNativeFiltersApiCore(deps) {
           if (!$(e.target).closest(".cfm-nf-panel, .cfm-nf-btn").length) {
             $(".cfm-nf-panel").remove();
             $(document).off("mousedown.cfmNfPanel touchstart.cfmNfPanel");
+            cleanupNativeFilterPanelClose();
           }
         },
       );
@@ -1324,8 +1519,12 @@ export function createNativeFiltersApiCore(deps) {
       );
       const rangeBlock = $("#world_info").closest(".range-block-range");
       rangeBlock.css({ display: "flex", alignItems: "center", gap: "4px" });
-      // 把 select2 容器设为 flex:1
-      rangeBlock.find(".select2-container").css({ flex: "1", minWidth: "0" });
+      // 第三方插件（百宝箱 / GR 等）接管后会额外渲染自定义选择器，
+      // 此时原生 select2 容器退化为空壳，若仍设 flex:1 会被内部块级元素垂直撑高
+      // （clean/rendered/search 纵向堆叠），导致世界书选择区被拉伸成高条。
+      // 统一通过 applyGlobalWILayout 处理：检测到接管时隐藏 select2 空壳，
+      // 让自定义选择器占满剩余空间。
+      applyGlobalWILayout(rangeBlock);
       const toolColumn = $(
         `<div class="cfm-native-global-wi-tool-column" style="display:flex;flex-direction:column;align-items:center;gap:4px;flex-shrink:0;"></div>`,
       );
@@ -1436,7 +1635,9 @@ export function createNativeFiltersApiCore(deps) {
       // 更新 flex 样式（select2 重建后容器会变）
       const rangeBlock = select.closest(".range-block-range");
       if (rangeBlock.length) {
-        rangeBlock.find(".select2-container").css({ flex: "1", minWidth: "0" });
+        // 统一处理第三方插件接管（百宝箱 / GR 等）：
+        // 检测到自定义选择器时隐藏 select2 空壳，让其占满剩余空间
+        applyGlobalWILayout(rangeBlock);
       }
     }
   }
